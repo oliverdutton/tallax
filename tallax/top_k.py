@@ -106,28 +106,6 @@ def blockwise_topk(
   )
 
 
-def dense_gather_kernel(values_ref, indices_ref, output_ref):
-  """Gather values by indexing in to all of value with a mask, rather than a single gather per index."""
-  for token_offset in range(0, values_ref.shape[0], NUM_SUBLANES):
-    token_slice = pl.dslice(token_offset, NUM_SUBLANES)
-    output = jnp.zeros((NUM_SUBLANES, NUM_LANES), values_ref.dtype)
-    indices = indices_ref[token_offset: token_offset + NUM_SUBLANES]
-
-    for block_offset in range(0, values_ref.shape[1], NUM_LANES):
-      mask = (indices >= block_offset) & (indices < block_offset + NUM_LANES)
-      output = jnp.where(
-          mask,
-          jax.vmap(lambda x, y: x[y])(
-              values_ref[
-                  token_offset: token_offset + NUM_SUBLANES,
-                  block_offset: block_offset + NUM_LANES
-              ],
-              indices % NUM_LANES
-          ),
-          output,
-      )
-
-    output_ref[token_slice] = output[:, :output_ref.shape[1]].astype(output_ref.dtype)
 
 
 def topk_blockwise_superset_kernel(
