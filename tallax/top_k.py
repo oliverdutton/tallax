@@ -7,10 +7,10 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from .sort import bitonic_sort
-from .utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
+from .utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
 
 
-def blockwise_topk(
+def _blockwise_topk(
     logits,
     k: int,
     block_topk_values=None,
@@ -98,7 +98,7 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  return _unrolled_fori_loop(
+  return unrolled_fori_loop(
       logits.shape[-1] // num_blocks,
       process_block,
       (block_topk_values, block_topk_indices),
@@ -106,31 +106,7 @@ def blockwise_topk(
   )
 
 
-def dense_gather_kernel(values_ref, indices_ref, output_ref):
-  """Gather values by indexing in to all of value with a mask, rather than a single gather per index."""
-  for token_offset in range(0, values_ref.shape[0], NUM_SUBLANES):
-    token_slice = pl.dslice(token_offset, NUM_SUBLANES)
-    output = jnp.zeros((NUM_SUBLANES, NUM_LANES), values_ref.dtype)
-    indices = indices_ref[token_offset: token_offset + NUM_SUBLANES]
-
-    for block_offset in range(0, values_ref.shape[1], NUM_LANES):
-      mask = (indices >= block_offset) & (indices < block_offset + NUM_LANES)
-      output = jnp.where(
-          mask,
-          jax.vmap(lambda x, y: x[y])(
-              values_ref[
-                  token_offset: token_offset + NUM_SUBLANES,
-                  block_offset: block_offset + NUM_LANES
-              ],
-              indices % NUM_LANES
-          ),
-          output,
-      )
-
-    output_ref[token_slice] = output[:, :output_ref.shape[1]].astype(output_ref.dtype)
-
-
-def topk_blockwise_superset_kernel(
+def _topk_blockwise_superset_kernel(
     logits_ref,
     topk_values_ref,
     topk_indices_ref,
@@ -176,7 +152,7 @@ def topk_blockwise_superset_kernel(
     @pl.when(termination_flag_ref[0] == 0)
     def _():
       # Compute blockwise top-m
-      topk_vals, topk_idxs = blockwise_topk(
+      topk_vals, topk_idxs = _blockwise_topk(
           logits_ref,
           block_topk_values=[
               block_topm_values_ref[
@@ -321,7 +297,7 @@ def topk_pallas(
 
   topk_vals, topk_idxs, depths = pl.pallas_call(
       functools.partial(
-          topk_blockwise_superset_kernel,
+          _topk_blockwise_superset_kernel,
           k=k,
           block_topk_schedule=block_topk_schedule,
           topk_schedule=topk_schedule,
