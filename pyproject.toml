@@ -1,0 +1,8 @@
+
+[project]
+name = "tallax"
+version = "0.0.1"
+dependencies = [
+    "jax[tpu]",
+    "pandas"
+]

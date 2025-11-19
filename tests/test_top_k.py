@@ -5,11 +5,12 @@ import json
 import os
 from glob import glob
 import pandas as pd
+import tempfile
 
 import jax
 import jax.numpy as jnp
 
-from top_k import topk_pallas
+from tallax import topk_pallas
 
 
 k = 64
@@ -43,14 +44,15 @@ def benchmark(_run):
   def run():
     return jax.block_until_ready(_run())
   run()
-  with jax.profiler.trace("/content/"):
-    run()
+  with tempfile.TemporaryDirectory() as tmpdir:
+    with jax.profiler.trace(tmpdir):
+      run()
 
-  path = sorted(glob("/content/plugins/profile/*/**.json.gz"), key=os.path.getmtime)[-1]
-  trace = json.load(gzip.open(path))
-  df = pd.DataFrame(trace["traceEvents"])
-  df = df[~df.name.isna()]
-  print(df[df.name.str.contains("jit_")][['name', 'dur']])
+    path = sorted(glob(f"{tmpdir}/plugins/profile/*/**.json.gz", recursive=True), key=os.path.getmtime)[-1]
+    trace = json.load(gzip.open(path))
+    df = pd.DataFrame(trace["traceEvents"])
+    df = df[~df.name.isna()]
+    print(df[df.name.str.contains("jit_")][['name', 'dur']])
 
 check = True
 

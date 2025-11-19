@@ -6,8 +6,8 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from sort import bitonic_sort
-from utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES
+from .sort import bitonic_sort
+from .utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES
 
 
 def blockwise_topk(

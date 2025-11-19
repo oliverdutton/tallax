@@ -8,7 +8,7 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from utils import (
+from .utils import (
     _log2,
     _max_int,
     _all_concrete_ints,
