@@ -12,7 +12,6 @@ import jax.numpy as jnp
 
 from tallax import topk_pallas
 
-
 k = 64
 num_queries = 32
 vocab_size = 201088
@@ -27,8 +26,7 @@ logits = jax.random.normal(
 
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
 approx_topk_xla = jax.jit(jax.lax.approx_max_k, static_argnames=("k",))
-sort_xla = jax.jit(jnp.sort)
-argsort_xla = jax.jit(jnp.argsort)
+
 @jax.jit
 def add_one(x):
   return x+1
@@ -54,24 +52,16 @@ def benchmark(_run):
     df = df[~df.name.isna()]
     print(df[df.name.str.contains("jit_")][['name', 'dur']])
 
-check = True
-
-def _run():
-  return (
-    add_one(logits),
-    topk_xla(logits, k=k),
-    topk_pallas(logits, k=k, block_size=8),
-    # Not exact. Runtime varies with recall, here run with default 0.95
-    approx_topk_xla(logits, k=k),
-  )
-
-if check:
+def run_benchmarks():
+  def _run():
+    return (
+      add_one(logits),
+      topk_xla(logits, k=k),
+      topk_pallas(logits, k=k, block_size=8),
+      # Not exact. Runtime varies with recall, here run with default 0.95
+      approx_topk_xla(logits, k=k),
+    )
   benchmark(_run)
-  print('topk', logits.shape, logits.dtype, k)
-  print("XLA: ", topk_xla(logits, k=k))
-  print("\nPallas:", topk_pallas(logits, k=k))
-  print(
-  [
-  (topk_xla(logits, k=k)[i] == topk_pallas(logits, k=k)[i]).mean() for i in range(2)
-  ]
-  )
+
+if __name__ == "__main__":
+  run_benchmarks()

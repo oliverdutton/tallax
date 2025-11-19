@@ -1,46 +1,10 @@
 
 import functools
-import gzip
-import json
-import os
-from glob import glob
-import tempfile
 
 import jax
 import jax.numpy as jnp
-import pandas as pd
 
 from tallax import lax_sort_pallas
-
-### Testing and Benchmarking Utilities
-
-topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
-approx_topk_xla = jax.jit(jax.lax.approx_max_k, static_argnames=("k",))
-sort_xla = jax.jit(jnp.sort, static_argnames=('stable',))
-argsort_xla = jax.jit(jnp.argsort, static_argnames=('stable',))
-lax_sort_xla = jax.jit(jax.lax.sort, static_argnames=('is_stable', 'num_keys'))
-
-
-def benchmark(_run):
-  """Benchmark function and print timing from profiler trace."""
-  def run():
-    return jax.block_until_ready(_run())
-
-  run()
-  with tempfile.TemporaryDirectory() as tmpdir:
-    with jax.profiler.trace(tmpdir):
-      run()
-
-    path = sorted(
-        glob(f"{tmpdir}/plugins/profile/*/**.json.gz", recursive=True),
-        key=os.path.getmtime
-    )[-1]
-    trace = json.load(gzip.open(path))
-    df = pd.DataFrame(trace["traceEvents"])
-    df = df[~df.name.isna()]
-    df['name'] = df.name.apply(lambda s: s.split('(')[0])
-    print(df[df.name.str.contains("jit_")][['name', 'dur']].to_string(index=False))
-
 
 @jax.jit
 def exact_match(xs, ys):
@@ -148,16 +112,8 @@ def check_lax_sort_pallas(
     print('out_pallas is permute of input: ', valid_permute)
     valid &= valid_permute
 
-  def _run():
-    return (
-        lax_sort_pallas(operand, **kwargs),
-        _equiv_xla_based_sort(operand, **kwargs)
-    )
-
-  benchmark(_run)
-
   if print_outputs:
-    o_pallas, o_xla = _run()
+    o_pallas, o_xla = _equiv_xla_based_sort(operand, **kwargs)
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 def tests():
@@ -165,7 +121,6 @@ def tests():
   for num_operands in range(1,2):
     for num_keys in range(1, num_operands+1):
       for n in (
-          #*(2**i for i in range(3,15)),
           2**9,
           2**8+1,
           313,
@@ -191,3 +146,6 @@ def tests():
             print(f'\n{(x.shape, x.dtype)}\n{num_operands=} {num_keys=} {kwargs=}')
             check_lax_sort_pallas(operands, num_keys=num_keys, **kwargs,
             )
+
+if __name__ == "__main__":
+  tests()

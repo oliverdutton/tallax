@@ -7,7 +7,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from .sort import bitonic_sort
-from .utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES
+from .utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
 
 
 def blockwise_topk(
@@ -340,6 +340,7 @@ def topk_pallas(
       compiler_params=pltpu.CompilerParams(
         vmem_limit_bytes=int(0.9 * 2**27)
       ),
+      interpret=is_cpu_platform(),
   )(logits)
 
   return topk_vals[:, :k], topk_idxs[:, :k]

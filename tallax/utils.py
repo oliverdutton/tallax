@@ -10,6 +10,8 @@ from jax.experimental import pallas as pl
 NUM_SUBLANES = 8
 NUM_LANES = 128
 
+def is_cpu_platform():
+  return jax.default_backend() == "cpu"
 
 def _log2(x: int) -> int:
   """Returns ceiling of log2(x)."""

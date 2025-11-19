@@ -9,6 +9,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from .utils import (
+    is_cpu_platform,
     _log2,
     _max_int,
     _all_concrete_ints,
@@ -672,6 +673,7 @@ def _sort_pallas_vmem(
       compiler_params=pltpu.CompilerParams(
           vmem_limit_bytes=int(0.9 * 2**27),
       ),
+      interpret=is_cpu_platform(),
   )(operands, stage)[0]
 
 
@@ -857,6 +859,7 @@ def _compute_substage_hbm(
       compiler_params=pltpu.CompilerParams(
           vmem_limit_bytes=int(0.9 * 2**27)
       ),
+      interpret=is_cpu_platform(),
   )(operands, substage[None], stage[None])[0]
 
 
