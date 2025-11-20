@@ -104,10 +104,9 @@ def _compare(lefts, rights, is_descending: jax.Array | None, is_right_half=None,
 
   if is_descending is not None and type(is_descending) != bool:
     # Dynamic descending mask
-    if num_arrs > 1:
-      mask = mask.astype(bool)
-      is_descending = is_descending.astype(bool)
-      mask = mask ^ is_descending
+    mask = mask.astype(bool)
+    is_descending = is_descending.astype(bool)
+    mask = mask ^ is_descending
 
   return jax.tree.map(
       lambda left, right: (
@@ -876,7 +875,7 @@ def _compute_substage_hbm(
 )
 def lax_sort_pallas(
     operand: jax.Array | Sequence[jax.Array],
-    num_keys: int = 1,
+    num_keys: int,
     is_stable: bool = False,
     return_argsort: bool = False,
     descending: bool = False,
