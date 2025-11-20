@@ -901,6 +901,8 @@ def lax_sort_pallas(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
+  if interpret is None:
+    interpret = is_cpu_platform()
   operands, shape = _canonicalize_operand(operand)
   num_stages = _log2(shape[1])
 

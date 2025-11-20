@@ -4,28 +4,23 @@
 
 ## Installation
 
-The installation process depends on your JAX backend (CPU or TPU).
+The installation process for `tallax` depends on your JAX backend (CPU or TPU). For `tallax` to function correctly, you must first install the appropriate version of JAX for your hardware.
 
-### CPU Installation
+### 1. Install JAX
 
-For a CPU-only environment, you can install the package and its dependencies directly with pip:
+Follow the [official JAX installation guide](https://github.com/google/jax#installation) to install `jax` and `jaxlib` for your specific accelerator (CPU, GPU, or TPU).
+
+For example, to install JAX for a TPU environment, you might run:
+```bash
+pip install --upgrade "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+```
+
+### 2. Install tallax
+
+Once JAX is installed, you can install `tallax` using pip:
 
 ```bash
 pip install .
 ```
 
-### TPU Installation
-
-To use `tallax` on a TPU, you must first install the appropriate nightly JAX release.
-
-1.  **Install the nightly JAX TPU wheel:**
-
-    ```bash
-    pip install --upgrade "jax[tpu]" -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-    ```
-
-2.  **Install `tallax`:**
-
-    ```bash
-    pip install .
-    ```
+If you installed `jax[tpu]`, the `tallax` installation will automatically use it. Otherwise, it will use the CPU version of JAX.
