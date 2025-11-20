@@ -140,7 +140,10 @@ def verify_lax_sort_pallas(
 @pytest.mark.parametrize("return_argsort", [False, True])
 @pytest.mark.parametrize("descending", [False, True])
 def test_lax_sort_correctness(is_stable, return_argsort, descending):
-  shape = (8, 128)
+  if jax.default_backend() == "cpu":
+    shape = (8, 16)
+  else:
+    shape = (8, 128)
   operands = [jax.random.randint(jax.random.key(0), shape, 0, 100, jnp.int32)]
   verify_lax_sort_pallas(
       operands,

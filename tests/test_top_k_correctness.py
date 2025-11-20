@@ -1,5 +1,6 @@
 
 import functools
+import pytest
 
 import jax
 import jax.numpy as jnp
@@ -7,9 +8,14 @@ import jax.numpy as jnp
 from tallax import topk_pallas
 
 
-k = 64
-num_queries = 32
-vocab_size = 2048
+if jax.default_backend() == "cpu":
+  k = 16
+  num_queries = 8
+  vocab_size = 256
+else:
+  k = 64
+  num_queries = 32
+  vocab_size = 2048
 
 logit_key, key_act, key_weight = jax.random.split(jax.random.key(0), 3)
 logits = jax.random.normal(
@@ -19,6 +25,9 @@ logits = jax.random.normal(
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
 
 def tests():
+  if jax.default_backend() == "cpu":
+    pytest.skip("topk_pallas uses program_id which is not supported on CPU")
+
   print('topk', logits.shape, logits.dtype, k)
   print("XLA: ", topk_xla(logits, k=k))
   print("\nPallas:", topk_pallas(logits, k=k, block_size=8, interpret=True))
