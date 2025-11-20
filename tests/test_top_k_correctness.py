@@ -21,10 +21,10 @@ topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
 def tests():
   print('topk', logits.shape, logits.dtype, k)
   print("XLA: ", topk_xla(logits, k=k))
-  print("\nPallas:", topk_pallas(logits, k=k, block_size=8))
+  print("\nPallas:", topk_pallas(logits, k=k, block_size=8, interpret=True))
   print(
   [
-  (topk_xla(logits, k=k)[i] == topk_pallas(logits, k=k, block_size=8)[i]).mean() for i in range(2)
+  (topk_xla(logits, k=k)[i] == topk_pallas(logits, k=k, block_size=8, interpret=True)[i]).mean() for i in range(2)
   ]
   )
 
