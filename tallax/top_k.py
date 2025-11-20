@@ -152,8 +152,9 @@ def topk_blockwise_superset_kernel(
   # Initialize buffers
   block_size = logits_ref.shape[0]
   shape = (block_size, block_topm_values_ref.shape[1])
+  pid = pl.program_id(0)
 
-  token_slice = pl.dslice(pl.program_id(0) * block_size, block_size)
+  token_slice = pl.dslice(pid * block_size, block_size)
 
   block_topm_values_ref[token_slice] = jnp.full(
       shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
@@ -161,7 +162,7 @@ def topk_blockwise_superset_kernel(
   block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
 
   for i in range(block_size):
-    max_depth_ref[pl.program_id(0) * block_size + i] = k
+    max_depth_ref[pid * block_size + i] = k
 
   termination_flag_ref[0] = 0
 
@@ -221,7 +222,7 @@ def topk_blockwise_superset_kernel(
         termination_flag_ref[0] += contains_topk
 
         # Record depth when criterion was met
-        token_idx = pl.program_id(0) * block_size + i
+        token_idx = pid * block_size + i
         current_max = max_depth_ref[token_idx]
         max_depth_ref[token_idx] = jnp.where(
             contains_topk & (current_max == k),
