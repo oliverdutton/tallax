@@ -222,23 +222,6 @@ def convert_from_sublane_sort_format(tiles, shape):
   )
 
 
-### Gather Operations
-
-gather_sublane = lambda x, index: jax.lax.gather(
-    x, index[..., None],
-    jax.lax.GatherDimensionNumbers(
-        offset_dims=(),
-        collapsed_slice_dims=(0,),
-        start_index_map=(0,),
-        operand_batching_dims=(1,),
-        start_indices_batching_dims=(1,),
-    ),
-    slice_sizes=(1, 1)
-)
-
-gather_lane = jax.vmap(lambda x, index: x[index])
-
-
 ### Loop Utilities
 
 def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
