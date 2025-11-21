@@ -7,7 +7,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from .sort import bitonic_sort
-from .utils import _unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
+from .utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
 
 
 def blockwise_topk(
@@ -98,7 +98,7 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  return _unrolled_fori_loop(
+  return unrolled_fori_loop(
       logits.shape[-1] // num_blocks,
       process_block,
       (block_topk_values, block_topk_indices),
@@ -277,13 +277,13 @@ def topk_blockwise_superset_kernel(
     jit,
     static_argnames=("k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
 )
-def topk_pallas(
+def lax_topk_pallas(
     logits,
     k: int,
     block_size: int = 8,
     block_topk_schedule=None,
     topk_schedule=None,
-    interpret: bool | None = None,
+    interpret: bool = False,
 ):
   """
   High-level interface for adaptive blockwise top-k on TPU.
@@ -298,8 +298,6 @@ def topk_pallas(
   Returns:
       Tuple of (values, indices) for top-k elements
   """
-  if interpret is None:
-    interpret = is_cpu_platform()
   num_tokens, vocab_size = logits.shape
 
   if num_tokens % block_size != 0:

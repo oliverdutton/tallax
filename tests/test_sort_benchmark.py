@@ -11,6 +11,7 @@ import jax.numpy as jnp
 import pandas as pd
 
 from tallax import lax_sort_pallas
+from tallax.utils import is_cpu_platform
 from tests.test_sort_correctness import _equiv_xla_based_sort
 
 def benchmark(_run):
@@ -35,6 +36,7 @@ def benchmark(_run):
 
 def run_benchmarks():
   ntoken = 8
+  interpret = is_cpu_platform()
   for num_operands in range(1,2):
     for num_keys in range(1, num_operands+1):
       for n in (
@@ -57,7 +59,7 @@ def run_benchmarks():
             print(f'\n{(x.shape, x.dtype)}\n{num_operands=} {num_keys=} {kwargs=}')
             def _run():
               return (
-                  lax_sort_pallas(operands, num_keys=num_keys, **kwargs),
+                  lax_sort_pallas(operands, num_keys=num_keys, interpret=interpret, **kwargs),
                   _equiv_xla_based_sort(operands, num_keys=num_keys, **kwargs)
               )
             benchmark(_run)
