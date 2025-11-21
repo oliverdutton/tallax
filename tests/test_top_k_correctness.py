@@ -4,7 +4,8 @@ import functools
 import jax
 import jax.numpy as jnp
 
-from tallax import topk_pallas
+from tallax import lax_topk_pallas
+from tallax.utils import is_cpu_platform
 
 
 k = 64
@@ -19,12 +20,13 @@ logits = jax.random.normal(
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
 
 def tests():
+  interpret = is_cpu_platform()
   print('topk', logits.shape, logits.dtype, k)
   print("XLA: ", topk_xla(logits, k=k))
-  print("\nPallas:", topk_pallas(logits, k=k, block_size=8, interpret=True))
+  print("\nPallas:", lax_topk_pallas(logits, k=k, block_size=8, interpret=interpret))
   print(
   [
-  (topk_xla(logits, k=k)[i] == topk_pallas(logits, k=k, block_size=8, interpret=True)[i]).mean() for i in range(2)
+  (topk_xla(logits, k=k)[i] == lax_topk_pallas(logits, k=k, block_size=8, interpret=interpret)[i]).mean() for i in range(2)
   ]
   )
 

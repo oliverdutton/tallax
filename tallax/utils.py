@@ -13,24 +13,24 @@ NUM_LANES = 128
 def is_cpu_platform():
   return jax.default_backend() == "cpu"
 
-def _log2(x: int) -> int:
+def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
   return math.ceil(math.log2(x))
 
 
-def _max_int(a, b):
+def max_int(a, b):
   """Max of two values, accepts both static and dynamic ints."""
   if not all(map(lambda v: type(v) == int, (a, b))):
     return jnp.maximum(a, b)
   return max(a, b)
 
 
-def _all_concrete_ints(*args):
+def all_concrete_ints(*args):
   """Check if all arguments are concrete Python integers."""
   return all(map(lambda v: type(v) == int, args))
 
 
-def _get_dtype_info(x):
+def get_dtype_info(x):
   """Get finfo or iinfo for array dtype."""
   dtype = x.dtype
   if jnp.issubdtype(dtype, jnp.floating):
@@ -41,7 +41,7 @@ def _get_dtype_info(x):
     raise ValueError('Only int and float supported')
 
 
-def _pad(x, descending=False):
+def pad(x, descending=False):
   """Pad array to satisfy alignment requirements.
 
   Pads to multiple of NUM_SUBLANES in dim0 and power of 2 in dim1.
@@ -49,9 +49,9 @@ def _pad(x, descending=False):
   """
   dim0, dim1 = x.shape
   pad_dim0 = pl.cdiv(dim0, NUM_SUBLANES) * NUM_SUBLANES
-  pad_dim1 = max(2**_log2(dim1), NUM_LANES)
+  pad_dim1 = max(2**log2(dim1), NUM_LANES)
 
-  pad_val = _get_dtype_info(x).max
+  pad_val = get_dtype_info(x).max
   if jnp.issubdtype(x.dtype, jnp.floating):
     pad_val = jnp.nan
 
@@ -64,23 +64,23 @@ def _pad(x, descending=False):
   )
 
 
-def _standardize(x):
+def standardize(x):
   """Standardize float values for sorting.
 
   Converts NaNs to a specific value and normalizes +/-0.
   """
-  nan_val = _sortable_int_to_float(jnp.iinfo(jnp.int32).max - 1)
+  nan_val = sortable_int_to_float(jnp.iinfo(jnp.int32).max - 1)
   x = jnp.where(jnp.isnan(x), nan_val, x)
   x = jnp.where(x == 0, 0, x)
   return x
 
 
-def _is_32bit(x):
+def is_32bit(x):
   """Check if array has 32-bit dtype."""
   return x.dtype.itemsize == 4
 
 
-def _to_32bit_dtype(operand_dtype):
+def to_32bit_dtype(operand_dtype):
   """Convert dtype to corresponding 32-bit dtype."""
   for dtype_class, dtype_32bit in {
       jnp.floating: jnp.float32,
@@ -92,12 +92,12 @@ def _to_32bit_dtype(operand_dtype):
   raise ValueError('dtype not recognized')
 
 
-def _same_shape_dtype(ref1, ref2):
+def same_shape_dtype(ref1, ref2):
   """Check if two refs have same shape and dtype."""
   return (ref1.dtype == ref2.dtype) and (ref1.shape == ref2.shape)
 
 
-def _canonicalize_operand(operand):
+def canonicalize_operand(operand):
   """Convert operand to list of arrays and validate shapes."""
   operands = jax.tree.leaves(operand)
   shapes = [x.shape for x in operands]
@@ -111,44 +111,44 @@ def _canonicalize_operand(operand):
 
 ### Float-Int Conversion for Sortable Representation
 
-def _float_to_sortable_int(x: jnp.ndarray, standardize=True) -> jnp.ndarray:
+def float_to_sortable_int(x: jnp.ndarray, standardize_input=True) -> jnp.ndarray:
   """Transform float32 bits into sortable int32 representation.
 
   Positive floats map to [INT_MIN, -1].
   Negative floats map to [INT_MAX, 0] with reversed order.
   """
-  if standardize:
-    x = _standardize(x)
+  if standardize_input:
+    x = standardize(x)
   i = x.view(jnp.int32)
   return jnp.where(i < 0, i ^ 0x7FFFFFFF, i)
 
 
-def _sortable_int_to_float(i: jnp.ndarray) -> jnp.ndarray:
+def sortable_int_to_float(i: jnp.ndarray) -> jnp.ndarray:
   """Inverse transformation from sortable int32 back to float32."""
   return jnp.where(i < 0, i ^ 0x7FFFFFFF, i).view(jnp.float32)
 
 
 ### BF16-U16 Packing for Optimization
 
-def _pack_bf16_u16_to_i32(val, index):
+def pack_bf16_u16_to_i32(val, index):
   """Pack bfloat16 value and uint16 index into single int32.
 
   BF16 in F32 has empty lower 16 bits where we pack the index.
   This allows sorting while preserving original indices.
   """
   assert index.dtype == jnp.int32
-  val_f32 = _standardize(val.astype(jnp.float32))
+  val_f32 = standardize(val.astype(jnp.float32))
   index = jnp.where(val_f32 < 0, index.shape[1] - index, index)
-  return _float_to_sortable_int(
+  return float_to_sortable_int(
       ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
-      standardize=False
+      standardize_input=False
   )
 
 
-def _unpack_bf16_u16_from_i32(packed):
+def unpack_bf16_u16_from_i32(packed):
   """Extract original bfloat16 value and uint16 index from packed int32."""
   assert packed.dtype == jnp.int32, f'found {packed.dtype}'
-  packed = _sortable_int_to_float(packed)
+  packed = sortable_int_to_float(packed)
   val = (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
   index = packed.view(jnp.int32) & 0xFFFF
   index = jnp.where(val < 0, index.shape[1] - index, index)
@@ -157,7 +157,7 @@ def _unpack_bf16_u16_from_i32(packed):
 
 ### Tile Operations
 
-def _split_array_to_tiles(arr):
+def split_array_to_tiles(arr):
   """Split 2D array into flat list of (NUM_SUBLANES, NUM_LANES) tiles."""
   num_rows, num_cols = arr.shape
   tile_rows = num_rows // NUM_SUBLANES
@@ -174,7 +174,7 @@ def _split_array_to_tiles(arr):
   return tiles
 
 
-def _join_tiles_to_array(target_shape, tiles):
+def join_tiles_to_array(target_shape, tiles):
   """Reconstruct 2D array from flat list of tiles."""
   num_rows, num_cols = target_shape
   tile_rows, tile_cols = tiles[0].shape
@@ -188,12 +188,12 @@ def _join_tiles_to_array(target_shape, tiles):
   return jnp.concatenate(rows, axis=-2)
 
 
-def _iota_tile(dim):
+def iota_tile(dim):
   """Create iota array with tile shape."""
   return lax.broadcasted_iota(jnp.int32, (NUM_SUBLANES, NUM_LANES), dim)
 
 
-def _convert_to_sublane_sort_format(arr):
+def convert_to_sublane_sort_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
   arrs = [
       arr[:, i * NUM_LANES:(i + 1) * NUM_LANES]
@@ -201,18 +201,18 @@ def _convert_to_sublane_sort_format(arr):
   ]
   arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
   if arr.shape[1] < NUM_LANES:
-    arr = _pad(arr)
-  tiles = _split_array_to_tiles(arr)
+    arr = pad(arr)
+  tiles = split_array_to_tiles(arr)
   return tiles
 
 
-def _convert_from_sublane_sort_format(tiles, shape):
+def convert_from_sublane_sort_format(tiles, shape):
   """Convert from sublane format back to original layout."""
   b, m = shape
   assert m >= NUM_LANES
   n = m // NUM_LANES
   dim1 = len(tiles) * NUM_SUBLANES
-  arr = _join_tiles_to_array((NUM_LANES, dim1), tiles) # (128, n*b)
+  arr = join_tiles_to_array((NUM_LANES, dim1), tiles) # (128, n*b)
   if dim1 != n * b:
     arr = arr[..., :n * b]
   arr = arr.T
@@ -224,7 +224,7 @@ def _convert_from_sublane_sort_format(tiles, shape):
 
 ### Gather Operations
 
-_gather_sublane = lambda x, index: jax.lax.gather(
+gather_sublane = lambda x, index: jax.lax.gather(
     x, index[..., None],
     jax.lax.GatherDimensionNumbers(
         offset_dims=(),
@@ -236,12 +236,12 @@ _gather_sublane = lambda x, index: jax.lax.gather(
     slice_sizes=(1, 1)
 )
 
-_gather_lane = jax.vmap(lambda x, index: x[index])
+gather_lane = jax.vmap(lambda x, index: x[index])
 
 
 ### Loop Utilities
 
-def _unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
+def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
   """Execute for loop with manual unrolling for better performance."""
   unroll = min(length, unroll)
 
@@ -257,7 +257,7 @@ def _unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
   return carry
 
 
-def _transpose_list_of_lists(tree):
+def transpose_list_of_lists(tree):
   """Transpose nested list structure."""
   outer = jax.tree.structure(type(tree)('*') * len(tree))
   inner = jax.tree.structure(type(tree[0])('*') * len(tree[0]))

@@ -10,7 +10,8 @@ import tempfile
 import jax
 import jax.numpy as jnp
 
-from tallax import topk_pallas
+from tallax import lax_topk_pallas
+from tallax.utils import is_cpu_platform
 
 k = 64
 num_queries = 32
@@ -53,11 +54,12 @@ def benchmark(_run):
     print(df[df.name.str.contains("jit_")][['name', 'dur']])
 
 def run_benchmarks():
+  interpret = is_cpu_platform()
   def _run():
     return (
       add_one(logits),
       topk_xla(logits, k=k),
-      topk_pallas(logits, k=k, block_size=8),
+      lax_topk_pallas(logits, k=k, block_size=8, interpret=interpret),
       # Not exact. Runtime varies with recall, here run with default 0.95
       approx_topk_xla(logits, k=k),
     )

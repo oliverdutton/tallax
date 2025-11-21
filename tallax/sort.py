@@ -10,26 +10,26 @@ from jax.experimental.pallas import tpu as pltpu
 
 from .utils import (
     is_cpu_platform,
-    _log2,
-    _max_int,
-    _all_concrete_ints,
-    _pad,
-    _float_to_sortable_int,
-    _sortable_int_to_float,
-    _pack_bf16_u16_to_i32,
-    _unpack_bf16_u16_from_i32,
-    _split_array_to_tiles,
-    _join_tiles_to_array,
-    _iota_tile,
-    _convert_to_sublane_sort_format,
-    _convert_from_sublane_sort_format,
-    _gather_sublane,
-    _gather_lane,
-    _transpose_list_of_lists,
-    _to_32bit_dtype,
-    _same_shape_dtype,
-    _canonicalize_operand,
-    _is_32bit,
+    log2,
+    max_int,
+    all_concrete_ints,
+    pad,
+    float_to_sortable_int,
+    sortable_int_to_float,
+    pack_bf16_u16_to_i32,
+    unpack_bf16_u16_from_i32,
+    split_array_to_tiles,
+    join_tiles_to_array,
+    iota_tile,
+    convert_to_sublane_sort_format,
+    convert_from_sublane_sort_format,
+    gather_sublane,
+    gather_lane,
+    transpose_list_of_lists,
+    to_32bit_dtype,
+    same_shape_dtype,
+    canonicalize_operand,
+    is_32bit,
     NUM_LANES,
     NUM_SUBLANES,
 )
@@ -43,31 +43,29 @@ def _create_bit_indicator(bit_position: int, index=None):
   Returns int format for ALU operations rather than mask operations.
   """
   if index is None:
-    index = _iota_tile(1)
+    index = iota_tile(1)
   if type(bit_position) == int:
     bit = (index & (1 << bit_position))
     return bit > 0
   return (index >> bit_position) & 1
 
 
-def _compare(lefts, rights, is_descending: jax.Array | None, is_right_half=None,
-             num_keys=None, has_unique_key=False):
+def _compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
+             has_unique_key=False):
   """Compare and conditionally swap array pairs.
 
   Args:
     lefts: Tuple of left arrays to compare
     rights: Tuple of right arrays to compare
+    num_keys: Number of arrays to use as sort keys
     is_descending: Boolean mask for sort direction
     is_right_half: Mask for within-tile comparisons
-    num_keys: Number of arrays to use as sort keys
     has_unique_key: Whether first key is guaranteed unique
 
   Returns:
     Tuple of (sorted_lefts, sorted_rights) or sorted values for within-tile.
   """
   num_arrs = len(lefts)
-  if num_keys is None:
-    num_keys = num_arrs
 
   def _compare_pair(i, left, right):
     handle_subtile_ties = (
@@ -124,9 +122,9 @@ def _compute_crosstile_substage(
     refs,
     substage: int,
     stage: int,
+    num_keys: int,
     unroll: int = 16,
     dim1_offset: int = 0,
-    num_keys: int | None = None,
 ):
   """Perform substage of sort with comparisons between tiles.
 
@@ -134,9 +132,9 @@ def _compute_crosstile_substage(
     refs: References to arrays being sorted
     substage: Current substage within stage
     stage: Current sorting stage
+    num_keys: Number of arrays to use as keys
     unroll: Loop unrolling factor
     dim1_offset: Offset for bitonic order calculation
-    num_keys: Number of arrays to use as keys
   """
   assert (unroll % 2) == 0, 'Static sort order requires even unroll factor'
 
@@ -193,12 +191,12 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
   """Perform substage using sublane or lane permutations."""
   if permute_dim == 0: # sublane
     assert b is not None
-    index = _iota_tile(0)
-    global_base_index = _iota_tile(0) + (((_iota_tile(1) // b) * NUM_LANES))
+    index = iota_tile(0)
+    global_base_index = iota_tile(0) + (((iota_tile(1) // b) * NUM_LANES))
     tile_rows = NUM_LANES // NUM_SUBLANES
     tile_cols = len(arrs_tiles[0]) // tile_rows
   elif permute_dim == 1: # lane
-    index = global_base_index = _iota_tile(1)
+    index = global_base_index = iota_tile(1)
     tile_rows = b // NUM_SUBLANES
     tile_cols = len(arrs_tiles[0]) // tile_rows
   else:
@@ -208,15 +206,15 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
   permutation = jnp.bitwise_xor(index, 1 << substage)
 
   arrs_tiles_permuted = jax.tree.map(
-      lambda tile: (_gather_sublane(tile, permutation) if permute_dim == 0
-                    else _gather_lane(tile, permutation)),
+      lambda tile: (gather_sublane(tile, permutation) if permute_dim == 0
+                    else gather_lane(tile, permutation)),
       arrs_tiles
   )
 
   outs_tiles = [[] for _ in arrs_tiles]
 
   for tile_idx, (lefts, rights) in enumerate(zip(
-      *map(_transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+      *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
       strict=True
   )):
     if permute_dim == 0:
@@ -233,9 +231,9 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
 
     if type(stage) == int:
       # Performance optimizations for early, statically compiled stages
-      if stage < _log2(NUM_SUBLANES):
+      if stage < log2(NUM_SUBLANES):
         is_descending = _create_bit_indicator(stage, global_base_index)
-      elif stage < _log2(NUM_LANES):
+      elif stage < log2(NUM_LANES):
         is_descending = _create_bit_indicator(stage, tile_offset)
 
     for i, o in enumerate(_compare(lefts, rights,
@@ -248,10 +246,10 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
 
 
 def _compute_substage_by_crosstile_comparison(
-    arrs_tiles, substage, b, dim1_offset=0, stage=None, num_keys: int | None = None
+    arrs_tiles, substage, b, num_keys: int, dim1_offset=0, stage=None
 ):
   """Perform substage by comparing explicit tile pairs."""
-  global_base_index = _iota_tile(0) + (((_iota_tile(1) // b) * NUM_LANES))
+  global_base_index = iota_tile(0) + (((iota_tile(1) // b) * NUM_LANES))
   num_tiles = len(arrs_tiles[0])
   tile_rows = NUM_LANES // NUM_SUBLANES
   tile_cols = num_tiles // tile_rows
@@ -267,7 +265,7 @@ def _compute_substage_by_crosstile_comparison(
     pair_offset = (tile_row * NUM_SUBLANES +
                    tile_col * (NUM_LANES * (NUM_LANES // b)))
     lefts, rights = (
-        _transpose_list_of_lists(arrs_tiles)[j]
+        transpose_list_of_lists(arrs_tiles)[j]
         for j in (idx, idx + separation)
     )
 
@@ -275,7 +273,7 @@ def _compute_substage_by_crosstile_comparison(
         stage, dim1_offset + pair_offset + global_base_index
     )
 
-    if type(stage) == int and stage < _log2(NUM_LANES):
+    if type(stage) == int and stage < log2(NUM_LANES):
       is_descending = _create_bit_indicator(stage, pair_offset)
 
     for i, (o_left, o_right) in enumerate(_compare(
@@ -297,11 +295,11 @@ def _compute_subtile_substages_inner(
     stage: int,
     b: int,
     use_lane_permute: bool,
+    num_keys: int,
     dim1_offset: int = 0,
-    num_keys: int | None = None,
 ):
   """Execute multiple substages within tiles."""
-  assert num_substages <= _log2(NUM_LANES)
+  assert num_substages <= log2(NUM_LANES)
 
   for substage in range(num_substages)[::-1]:
     if use_lane_permute:
@@ -309,7 +307,7 @@ def _compute_subtile_substages_inner(
           substage, arrs_tiles, stage=stage, permute_dim=1,
           b=b, dim1_offset=dim1_offset, num_keys=num_keys
       )
-    elif substage >= _log2(NUM_SUBLANES):
+    elif substage >= log2(NUM_SUBLANES):
       # Inter-tile comparisons
       arrs_tiles = _compute_substage_by_crosstile_comparison(
           arrs_tiles, substage=substage, b=b, dim1_offset=dim1_offset,
@@ -365,8 +363,8 @@ def _compute_subtile_substages(
     b = slice_shape[0]
 
     arrs_tiles = jax.tree.map(
-        (_split_array_to_tiles if use_lane_permute
-         else _convert_to_sublane_sort_format),
+        (split_array_to_tiles if use_lane_permute
+         else convert_to_sublane_sort_format),
         ref_slices
     )
 
@@ -396,8 +394,8 @@ def _compute_subtile_substages(
         )
 
     outs = [
-        (_join_tiles_to_array(slice_shape, tiles) if use_lane_permute
-         else _convert_from_sublane_sort_format(tiles, shape=slice_shape))
+        (join_tiles_to_array(slice_shape, tiles) if use_lane_permute
+         else convert_from_sublane_sort_format(tiles, shape=slice_shape))
         for tiles in arrs_tiles
     ]
 
@@ -411,14 +409,14 @@ def _compute_stages(
     start_stage: int,
     end_stage: int,
     refs,
+    num_keys: int,
     unroll_crosstile: int = 64,
     unroll_subtile: int = 64,
     dim1_offset: int = 0,
-    num_keys: int | None = None,
     start_stage_static_lower_bound: int | None = None
 ):
   """Execute range of bitonic sorting stages."""
-  log_n = _log2(refs[0].shape[1])
+  log_n = log2(refs[0].shape[1])
 
   if start_stage_static_lower_bound is None:
     start_stage_static_lower_bound = start_stage
@@ -427,14 +425,14 @@ def _compute_stages(
   if start_stage_static_lower_bound == 1:
     _compute_subtile_substages(
         refs,
-        num_substages=min(_log2(NUM_LANES), end_stage),
+        num_substages=min(log2(NUM_LANES), end_stage),
         stage=None,
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )
-  elif (_all_concrete_ints(start_stage, end_stage)
-        and start_stage <= _log2(NUM_LANES) and end_stage == start_stage + 1):
+  elif (all_concrete_ints(start_stage, end_stage)
+        and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
     _compute_subtile_substages(
         refs,
         num_substages=start_stage,
@@ -445,13 +443,13 @@ def _compute_stages(
     )
     return
   else:
-    assert start_stage_static_lower_bound > _log2(NUM_LANES), \
-        'stages 1 to _log2(NUM_LANES) only triggered as fully unrolled code block'
+    assert start_stage_static_lower_bound > log2(NUM_LANES), \
+        'stages 1 to log2(NUM_LANES) only triggered as fully unrolled code block'
 
   # Run stages 8 and upwards
-  @pl.loop(_max_int(start_stage, _log2(NUM_LANES) + 1), end_stage)
+  @pl.loop(max_int(start_stage, log2(NUM_LANES) + 1), end_stage)
   def run_stage(stage):
-    for substage in range(_log2(NUM_LANES), log_n)[::-1]:
+    for substage in range(log2(NUM_LANES), log_n)[::-1]:
       # Run substages 7 and up
       @pl.when(stage > substage)
       def _():
@@ -467,7 +465,7 @@ def _compute_stages(
     # Run substages 0-6 inclusive
     _compute_subtile_substages(
         refs,
-        num_substages=_log2(NUM_LANES),
+        num_substages=log2(NUM_LANES),
         stage=stage,
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
@@ -491,7 +489,7 @@ def bitonic_sort(
   # Second term controls whether final stage is descending or ascending
   dim1 = refs[0].shape[1]
   if log_n is None:
-    log_n = _log2(dim1)
+    log_n = log2(dim1)
   if dim1_offset is None:
     dim1_offset = (pl.program_id(1) * dim1 +
                    int(descending) * pl.num_programs(1) * dim1)
@@ -524,19 +522,17 @@ def _sort_kernel(
     *,
     descending: bool,
     is_stable: bool,
-    num_keys: int | None = None,
+    num_keys: int,
     log_n: int | None = None,
 ):
   """Pallas kernel for sorting."""
   shape = in_refs[0].shape
   assert len(shape) == 2
   k = out_refs[0].shape[-1]
-  if num_keys is None:
-    num_keys = len(in_refs)
 
   if log_n is None:
-    log_n = _log2(shape[1])
-  if 2**_log2(shape[1]) != shape[1]:
+    log_n = log2(shape[1])
+  if 2**log2(shape[1]) != shape[1]:
     raise ValueError("Size along sort dimension must be a power of 2")
 
   return_argsort = len(out_refs) > len(in_refs)
@@ -552,18 +548,18 @@ def _sort_kernel(
 
   # Reuse in/out VMEM buffers to reduce memory usage
   for i in range(len(in_refs)):
-    if _same_shape_dtype(in_refs[i], refs[i]):
+    if same_shape_dtype(in_refs[i], refs[i]):
       refs[i] = in_refs[i]
     else:
       refs[i][...] = in_refs[i][...].astype(refs[i].dtype)
 
   if jnp.issubdtype(refs[i].dtype, jnp.floating) and i < num_keys:
-    f32_in_sortable_i32 = _float_to_sortable_int(refs[i][...])
+    f32_in_sortable_i32 = float_to_sortable_int(refs[i][...])
     refs[i] = refs[i].bitcast(jnp.int32)
     refs[i][...] = f32_in_sortable_i32
 
   if use_indices:
-    if _same_shape_dtype(indices_ref, out_refs[-1]):
+    if same_shape_dtype(indices_ref, out_refs[-1]):
       indices_ref = out_refs[-1]
     indices_ref[...] = indices
     refs.insert(num_keys, indices_ref)
@@ -597,12 +593,12 @@ def _sort_kernel(
 )
 def _sort_pallas_vmem(
     operand: jax.Array | Sequence[jax.Array],
+    num_keys: int,
     k: int | None = None,
     block_token: int | None = None,
     block_seq: int | None = None,
     return_argsort: bool = False,
     descending: bool = False,
-    num_keys: int | None = None,
     is_stable: bool = False,
     stage: int | None = None,
     log_n: int | None = None,
@@ -612,12 +608,12 @@ def _sort_pallas_vmem(
 
   Args:
     operand: Input array(s) to sort (2D)
+    num_keys: Number of arrays to use as sort keys
     k: Return only first k elements from sorted arrays
     block_token: Token blocking size for memory efficiency
     block_seq: Sequence blocking size for use if subsorting operands
     return_argsort: Whether to return argsort indices
     descending: Sort in descending order
-    num_keys: Number of arrays to use as sort keys
     is_stable: Whether to perform stable sort
     stage: Specific stage to run (for multi-stage sorting)
     log_n: Length of sorted axis if array is padded
@@ -625,9 +621,7 @@ def _sort_pallas_vmem(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
-  if interpret is None:
-    interpret = is_cpu_platform()
-  operands, shape = _canonicalize_operand(operand)
+  operands, shape = canonicalize_operand(operand)
 
   if k is None:
     k = shape[-1]
@@ -657,7 +651,7 @@ def _sort_pallas_vmem(
   )
 
   scratch_shapes = (
-      [pltpu.VMEM(block_shape, _to_32bit_dtype(ref.dtype)) for ref in operands],
+      [pltpu.VMEM(block_shape, to_32bit_dtype(ref.dtype)) for ref in operands],
       pltpu.VMEM(block_shape, jnp.int32),
   )
 
@@ -763,14 +757,14 @@ def _substage_hbm_kernel(
 
     refs = []
     for input_ref, scratch_ref in zip(input_vmem_refs, scratch_vmem_refs):
-      if _same_shape_dtype(input_ref, scratch_ref):
+      if same_shape_dtype(input_ref, scratch_ref):
         refs.append(tuple(input_ref[slot]))
       else:
         scratch_ref[slot] = input_ref[slot].astype(scratch_ref.dtype)
         refs.append(tuple(scratch_ref[slot]))
     is_descending = _create_bit_indicator(stage, start_idx + int(descending) * shape[1])
     outputs = _compare(
-        *_transpose_list_of_lists(refs),
+        *transpose_list_of_lists(refs),
         is_descending=is_descending,
         num_keys=num_keys
     )
@@ -823,9 +817,9 @@ def _compute_substage_hbm(
     interpret: bool = False,
 ):
   """Run substage without loading full lane dimension into VMEM."""
-  operands, shape = _canonicalize_operand(operand)
+  operands, shape = canonicalize_operand(operand)
   if block_shape is None:
-    block_shape = (NUM_SUBLANES, 2**(16 - _log2(len(operands))))
+    block_shape = (NUM_SUBLANES, 2**(16 - log2(len(operands))))
 
   input_specs = (
       [pl.BlockSpec(memory_space=pltpu.ANY) for _ in operands],
@@ -841,7 +835,7 @@ def _compute_substage_hbm(
       lambda x: pltpu.VMEM((2, 2, *block_shape), x.dtype), operands
   )
   scratch_vmems = jax.tree.map(
-      lambda x: pltpu.VMEM((2, 2, *block_shape), _to_32bit_dtype(x.dtype)),
+      lambda x: pltpu.VMEM((2, 2, *block_shape), to_32bit_dtype(x.dtype)),
       operands
   )
 
@@ -881,7 +875,7 @@ def lax_sort_pallas(
     descending: bool = False,
     num_vmem_substages: int | None = None,
     block_token: int | None = None,
-    interpret: bool | None = None,
+    interpret: bool = False,
 ) -> tuple[jax.Array, ...]:
   """Sort large arrays using hybrid HBM-VMEM approach.
 
@@ -900,10 +894,8 @@ def lax_sort_pallas(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
-  if interpret is None:
-    interpret = is_cpu_platform()
-  operands, shape = _canonicalize_operand(operand)
-  num_stages = _log2(shape[1])
+  operands, shape = canonicalize_operand(operand)
+  num_stages = log2(shape[1])
 
   if (shape[1] != 2**num_stages and
       any(not jnp.issubdtype(x.dtype, jnp.floating) for x in operands)):
@@ -924,8 +916,8 @@ def lax_sort_pallas(
 
   if num_vmem_substages is None:
     # Heuristic to fit 128MB VMEM
-    num_vmem_substages = 18 - _log2(
-        len(operands) + sum(not _is_32bit(x) for x in operands) * 0.5
+    num_vmem_substages = 18 - log2(
+        len(operands) + sum(not is_32bit(x) for x in operands) * 0.5
     )
 
   dtypes = [x.dtype for x in operands]
@@ -937,19 +929,19 @@ def lax_sort_pallas(
        (use_indices and shape[1] <= 2**16))
   )
   if use_packed_bf16_u16:
-    operands = [_pack_bf16_u16_to_i32(*operands)]
+    operands = [pack_bf16_u16_to_i32(*operands)]
     num_keys = 1
 
   # Convert float keys to sortable int representation
   operands = [
-      _float_to_sortable_int(x)
+      float_to_sortable_int(x)
       if jnp.issubdtype(x.dtype, jnp.floating) and i < num_keys
       else x
       for i, x in enumerate(operands)
   ]
 
   # Pad to required dimensions
-  operands = [_pad(x, descending=descending) for x in operands]
+  operands = [pad(x, descending=descending) for x in operands]
 
   # Sort based on array size
   if num_stages <= num_vmem_substages:
@@ -1014,11 +1006,11 @@ def lax_sort_pallas(
 
   # Unpack bf16-u16 if used
   if use_packed_bf16_u16:
-    operands = _unpack_bf16_u16_from_i32(operands[0])
+    operands = unpack_bf16_u16_from_i32(operands[0])
 
   # Convert sortable ints back to floats
   operands = tuple(
-      _sortable_int_to_float(x)
+      sortable_int_to_float(x)
       if (jnp.issubdtype(dtype, jnp.floating) and
           jnp.issubdtype(x.dtype, jnp.integer))
       else x
