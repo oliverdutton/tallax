@@ -23,8 +23,6 @@ from .utils import (
     iota_tile,
     convert_to_sublane_sort_format,
     convert_from_sublane_sort_format,
-    gather_sublane,
-    gather_lane,
     transpose_list_of_lists,
     to_32bit_dtype,
     same_shape_dtype,
@@ -206,8 +204,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
   permutation = jnp.bitwise_xor(index, 1 << substage)
 
   arrs_tiles_permuted = jax.tree.map(
-      lambda tile: (gather_sublane(tile, permutation) if permute_dim == 0
-                    else gather_lane(tile, permutation)),
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=permute_dim),
       arrs_tiles
   )
 
