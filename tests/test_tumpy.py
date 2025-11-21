@@ -2,19 +2,22 @@ import jax
 import jax.numpy as jnp
 import pytest
 import numpy as np
-from tallax import tumpy
+from tallax import tumpy as tnp
+from tallax.utils import is_cpu_platform
 
-def test_sort_correctness():
+def test_sort():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(0)
     shape = (2, 16)
     a = jax.random.randint(key, shape, 0, 100)
 
     expected = jnp.sort(a, axis=-1)
-    result = tumpy.sort(a, axis=-1)
+    result = tnp.sort(a, axis=-1, interpret=interpret)
 
     np.testing.assert_array_equal(result, expected)
 
-def test_argsort_correctness():
+def test_argsort():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(1)
     shape = (2, 16)
     a = jax.random.randint(key, shape, 0, 100)
@@ -23,43 +26,46 @@ def test_argsort_correctness():
     a = jax.random.permutation(key, jnp.arange(32)).reshape(shape)
 
     expected = jnp.argsort(a, axis=-1)
-    result = tumpy.argsort(a, axis=-1)
+    result = tnp.argsort(a, axis=-1, interpret=interpret)
 
     np.testing.assert_array_equal(result, expected)
 
 def test_multidimensional_reshape():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(2)
     shape = (2, 2, 2, 16)
 
     a = jax.random.randint(key, shape, 0, 100)
 
     expected = jnp.sort(a, axis=-1)
-    result = tumpy.sort(a, axis=-1)
+    result = tnp.sort(a, axis=-1, interpret=interpret)
 
     assert result.shape == shape
     np.testing.assert_array_equal(result, expected)
 
 def test_1d_array():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(3)
     a = jax.random.randint(key, (16,), 0, 100)
 
     expected = jnp.sort(a, axis=-1)
-    result = tumpy.sort(a, axis=-1)
+    result = tnp.sort(a, axis=-1, interpret=interpret)
 
     assert result.shape == (16,)
     np.testing.assert_array_equal(result, expected)
 
 def test_descending():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(4)
     a = jax.random.randint(key, (2, 16), 0, 100)
 
     expected = jnp.sort(a, axis=-1, descending=True)
-    result = tumpy.sort(a, axis=-1, descending=True)
+    result = tnp.sort(a, axis=-1, descending=True, interpret=interpret)
 
     np.testing.assert_array_equal(result, expected)
 
     expected_args = jnp.argsort(a, axis=-1, descending=True)
-    result_args = tumpy.argsort(a, axis=-1, descending=True)
+    result_args = tnp.argsort(a, axis=-1, descending=True, interpret=interpret)
 
     result_vals = jnp.take_along_axis(a, result_args, axis=-1)
     expected_vals = jnp.take_along_axis(a, expected_args, axis=-1)
@@ -67,56 +73,46 @@ def test_descending():
     np.testing.assert_array_equal(result_vals, expected_vals)
 
 def test_axis_validation():
+    interpret = is_cpu_platform()
     a = jnp.zeros((4, 4))
 
     # Valid axes
-    tumpy.sort(a, axis=-1)
-    tumpy.sort(a, axis=1)
+    tnp.sort(a, axis=-1, interpret=interpret)
+    tnp.sort(a, axis=1, interpret=interpret)
 
     # Invalid axes
     with pytest.raises(ValueError, match="only supports sorting along the last axis"):
-        tumpy.sort(a, axis=0)
+        tnp.sort(a, axis=0, interpret=interpret)
 
     with pytest.raises(ValueError):
-        tumpy.argsort(a, axis=0)
+        tnp.argsort(a, axis=0, interpret=interpret)
 
-def test_kind_ignored():
+def test_kind_and_order_ignored():
+    interpret = is_cpu_platform()
     a = jnp.array([3, 1, 2])
     # Should run without error
-    tumpy.sort(a, kind='mergesort')
-    tumpy.argsort(a, kind='heapsort')
+    tnp.sort(a, kind='mergesort', interpret=interpret)
+    tnp.argsort(a, kind='heapsort', interpret=interpret)
 
-def test_order_parameter():
-    key = jax.random.PRNGKey(5)
-    a = jax.random.randint(key, (2, 16), 0, 100)
-
-    # Test order='descending' implies descending=True
-    expected = jnp.sort(a, axis=-1, descending=True)
-    result = tumpy.sort(a, axis=-1, order='descending')
-
-    np.testing.assert_array_equal(result, expected)
-
-    expected_args = jnp.argsort(a, axis=-1, descending=True)
-    result_args = tumpy.argsort(a, axis=-1, order='descending')
-
-    result_vals = jnp.take_along_axis(a, result_args, axis=-1)
-    expected_vals = jnp.take_along_axis(a, expected_args, axis=-1)
-    np.testing.assert_array_equal(result_vals, expected_vals)
+    # Order should also be ignored (not raise error)
+    tnp.sort(a, order='descending', interpret=interpret)
+    tnp.argsort(a, order='something', interpret=interpret)
 
 def test_axis_none_flatten():
+    interpret = is_cpu_platform()
     key = jax.random.PRNGKey(6)
     shape = (2, 16)
     a = jax.random.randint(key, shape, 0, 100)
 
     expected = jnp.sort(a, axis=None)
-    result = tumpy.sort(a, axis=None)
+    result = tnp.sort(a, axis=None, interpret=interpret)
 
     assert result.ndim == 1
     assert result.shape == (32,)
     np.testing.assert_array_equal(result, expected)
 
     expected_args = jnp.argsort(a, axis=None)
-    result_args = tumpy.argsort(a, axis=None)
+    result_args = tnp.argsort(a, axis=None, interpret=interpret)
 
     # Argsort on flattened array returns indices into flattened array
     assert result_args.ndim == 1
