@@ -323,7 +323,7 @@ def top_k(
     topk_schedule = None,
     interpret: bool = False,
 ):
-  return top_dynamic_k(
+  val, index, _ = top_dynamic_k(
     logits,
     k=k,
     max_k=k,
@@ -332,3 +332,4 @@ def top_k(
     topk_schedule=topk_schedule,
     interpret=interpret,
   )
+  return val[:,:k], index[:,:k]
