@@ -1,4 +1,3 @@
-
 import functools
 import jax
 import jax.numpy as jnp
@@ -7,85 +6,57 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
 
 
 def blockwise_topk(
     logits,
-    k: int,
-    block_topk_values=None,
-    block_topk_indices=None,
+    k,
+    max_k: int,
+    block_topk_values,
+    block_topk_indices,
     start_k: int = 0,
     num_blocks: int = NUM_LANES,
-    mode: str = "jax",
 ):
   """
   Compute blockwise top-k using a sinking sort approach.
-
+  
   Args:
-      logits: Input logits to find top-k from
-      k: Number of top elements to find
-      block_topk_values: Pre-allocated buffers for values
-      block_topk_indices: Pre-allocated buffers for indices
+      logits: Input logits [num_tokens, num_blocks] (or similar slice)
+      k: SMEM array of shape (num_tokens,) containing k for each row
+      max_k: Static integer loop bound (maximum possible k)
+      block_topk_values: Required pre-allocated buffers for values
+      block_topk_indices: Required pre-allocated buffers for indices
       start_k: Starting position (for incremental top-k)
       num_blocks: Number of blocks to process
-      mode: "jax" or "pallas" execution mode
   """
   num_tokens = logits.shape[0]
-
-  if start_k != 0 and (block_topk_values is None or block_topk_indices is None):
-    raise ValueError(
-        "start_k > 0 requires pre-computed buffers in "
-        "block_topk_values and block_topk_indices"
-    )
-
-  if mode == "jax":
-    block_topk_values = [
-        jnp.full(
-            (num_tokens, num_blocks),
-            jnp.finfo(logits.dtype).min,
-            dtype=logits.dtype
-        )
-        for _ in range(k)
-    ]
-    block_topk_indices = [
-        jnp.full((num_tokens, num_blocks), 0, dtype=jnp.int32)
-        for _ in range(k)
-    ]
-  elif mode == "pallas":
-    if block_topk_values is None or block_topk_indices is None:
-      raise ValueError(
-          "Pallas mode requires pre-allocated buffers"
-      )
 
   def process_block(block_idx, carry):
     """Process a single tile with sinking sort."""
     values_list, indices_list = carry
 
     # Extract current block
-    if mode == "pallas":
-      current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    elif mode == "jax":
-      current_values = jax.lax.dynamic_slice_in_dim(
-          logits, block_idx * num_blocks, num_blocks, axis=1
-      )
-    else:
-      raise ValueError("mode must be 'pallas' or 'jax'")
-
+    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
     current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
 
-    # Sinking sort: compare and swap through k levels
-    for level in range(k):
+    # Sinking sort: compare and swap through max_k levels
+    for level in range(max_k):
+      # Active mask: only swap if the current level is within the specific k for this row
+      is_active = (level < k)[:, None]
+
       if level < start_k:
         # Invalidate already-found elements
+        # We use the indices list to check identity
         current_values = jnp.where(
-            current_indices == indices_list[level],
+            (current_indices == indices_list[level]),
             float("-inf"),
             current_values
         )
       else:
         # Exchange with stored top-k
-        mask = current_values > values_list[level]
+        # Only perform the swap if the value is larger AND we are within the valid k range
+        mask = (current_values > values_list[level]) & is_active
 
         values_list[level], current_values = (
             jnp.where(m, current_values, values_list[level])
@@ -108,6 +79,7 @@ def blockwise_topk(
 
 def topk_blockwise_superset_kernel(
     logits_ref,
+    k_ref,
     topk_values_ref,
     topk_indices_ref,
     max_depth_ref,
@@ -115,15 +87,14 @@ def topk_blockwise_superset_kernel(
     block_topm_indices_ref,
     termination_flag_ref,
     *,
-    k: int = 64,
-    block_topk_schedule: tuple[int] | None = None,
-    topk_schedule: tuple[int] | None = None,
+    max_k: int,
+    block_topk_schedule: tuple[int],
+    topk_schedule: tuple[int],
 ):
   """
   Compute blockwise top-k supersets until global top-k is guaranteed.
-
-  This uses an adaptive algorithm that incrementally increases m until
-  the blockwise top-m's provably contain the global top-k.
+  
+  Accepts dynamic k per row (k_ref) and uses static max_k for scheduling.
   """
   # Initialize buffers
   block_size = logits_ref.shape[0]
@@ -131,21 +102,17 @@ def topk_blockwise_superset_kernel(
   pid = pl.program_id(0)
 
   token_slice = pl.dslice(pid * block_size, block_size)
-
+  
   block_topm_values_ref[token_slice] = jnp.full(
       shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
   )
   block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
 
-  for i in range(block_size):
-    max_depth_ref[pid * block_size + i] = k
+  # Initialize max_depth with the target k+1 for each row
+  for i in range(block_size): 
+    max_depth_ref[pid * block_size + i] = max_k
 
   termination_flag_ref[0] = 0
-
-  # Schedule of progressively larger m values
-  if block_topk_schedule is None:
-    block_topk_schedule = (5, 7, 9, 12)
-  block_topk_schedule = (0,) + block_topk_schedule + (k,)
 
   # Incremental blockwise top-k computation
   for completed_m, target_m in zip(block_topk_schedule, block_topk_schedule[1:]):
@@ -153,8 +120,11 @@ def topk_blockwise_superset_kernel(
     @pl.when(termination_flag_ref[0] == 0)
     def _():
       # Compute blockwise top-m
+      # We pass k_local (dynamic) but set max_k=target_m (static loop bound)
       topk_vals, topk_idxs = blockwise_topk(
           logits_ref,
+          k=k_local,
+          max_k=target_m,
           block_topk_values=[
               block_topm_values_ref[
                   token_slice, pl.dslice(i * NUM_LANES, NUM_LANES)
@@ -167,10 +137,8 @@ def topk_blockwise_superset_kernel(
               ]
               for i in range(target_m)
           ],
-          k=target_m,
           num_blocks=NUM_LANES,
           start_k=completed_m,
-          mode="pallas",
       )
 
       # Store results
@@ -194,14 +162,15 @@ def topk_blockwise_superset_kernel(
 
       termination_flag_ref[0] = 0
       for i in range(block_size):
-        contains_topk = num_larger[i] >= k
+        token_idx = pid * block_size + i
+        # Dynamic check against k
+        contains_topk = num_larger[i] >= k_ref[token_idx]
         termination_flag_ref[0] += contains_topk
 
         # Record depth when criterion was met
-        token_idx = pid * block_size + i
         current_max = max_depth_ref[token_idx]
         max_depth_ref[token_idx] = jnp.where(
-            contains_topk & (current_max == k),
+            contains_topk & (current_max == max_k),
             target_m - 1,
             current_max
         )
@@ -215,9 +184,10 @@ def topk_blockwise_superset_kernel(
   @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
   def _():
     # Find maximum depth across all tokens
-    max_depth = jnp.array(0)
+    max_depth_global = jnp.array(0)
     for i in range(max_depth_ref.shape[0]):
-      max_depth = jnp.maximum(max_depth, max_depth_ref[i])
+      max_depth_global = jnp.maximum(max_depth_global, max_depth_ref[i])
+      
     # convert to global indices from local
     block_topm_indices_ref[...] = (
         block_topm_indices_ref[...] * NUM_LANES
@@ -229,9 +199,9 @@ def topk_blockwise_superset_kernel(
         ) % NUM_LANES
     )
 
-    # Use appropriate sorting depth based on max_depth
+    # Use appropriate sorting depth based on max_depth_global
     for depth_lower, depth_upper in zip(topk_schedule, topk_schedule[1:]):
-      @pl.when((max_depth > depth_lower) & (max_depth <= depth_upper))
+      @pl.when((max_depth_global > depth_lower) & (max_depth_global <= depth_upper))
       def _():
         # Sort the blockwise superset
         bitonic_sort(
@@ -248,17 +218,17 @@ def topk_blockwise_superset_kernel(
           out_ref[...] = ref[...,:out_ref.shape[1]].astype(out_ref.dtype)
 
 
-
 @functools.partial(
     jit,
-    static_argnames=("k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
+    static_argnames=("max_k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
 )
 def top_k(
     logits,
-    k: int,
+    k,
+    max_k: int,
     block_size: int = 8,
-    block_topk_schedule=None,
-    topk_schedule=None,
+    block_topk_schedule = None,
+    topk_schedule = None,
     interpret: bool = False,
 ):
   """
@@ -266,24 +236,40 @@ def top_k(
 
   Args:
       logits: Input logits [num_tokens, vocab_size]
-      k: Number of top elements to find
-      block_size: Token blocking size
-      block_topk_schedule: Schedule of m values for blockwise top-m
-      topk_schedule: Schedule for final sorting depth
+      k: JAX Array [num_tokens] containing k per row.
+      max_k: Static integer maximum k (used for buffer sizing and compilation).
+      block_size: Token blocking size.
+      block_topk_schedule: Schedule of m values for blockwise top-m.
+      topk_schedule: Schedule for final sorting depth.
 
   Returns:
-      Tuple of (values, indices) for top-k elements
+      Tuple of (values, indices) for top-k elements.
+      Output shape is fixed at [num_tokens, max_k].
   """
   num_tokens, vocab_size = logits.shape
 
   if num_tokens % block_size != 0:
     raise ValueError("num_tokens must be divisible by block_size")
 
-  if topk_schedule is None:
-    topk_schedule = (0, 8, k)
+  # If k is passed as a scalar integer (not array), broadcast it
+  if isinstance(k, int):
+      k = jnp.full((num_tokens,), k, dtype=jnp.int32)
 
-  if k > NUM_LANES:
-    raise ValueError(f"k cannot exceed {NUM_LANES}")
+  if topk_schedule is None:
+    topk_schedule = (8, max_k)
+  topk_schedule = (0,) + topk_schedule
+ 
+  if block_topk_schedule is None:
+    block_topk_schedule = (5, 7, 9, 12, max_k)
+  block_topk_schedule = (0,) + block_topk_schedule
+
+  if topk_schedule[-1] < block_topk_schedule[-1]:
+    raise ValueError('Top k max must cover block top m search')
+    
+  max_block_k_search = block_topk_schedule[-1]
+
+  if max_k > NUM_LANES:
+    raise ValueError(f"max_k cannot exceed {NUM_LANES}")
 
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, NUM_LANES), logits.dtype),
@@ -300,17 +286,18 @@ def top_k(
   topk_vals, topk_idxs, depths = pl.pallas_call(
       functools.partial(
           topk_blockwise_superset_kernel,
-          k=k,
+          max_k=max_k,
           block_topk_schedule=block_topk_schedule,
           topk_schedule=topk_schedule,
       ),
       in_specs=(
           pl.BlockSpec((block_size, vocab_size), lambda i: (i, 0)),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
       ),
       out_shape=output_shapes,
       scratch_shapes=(
-          pltpu.VMEM((num_tokens, k * NUM_LANES), jnp.float32),
-          pltpu.VMEM((num_tokens, k * NUM_LANES), jnp.int32),
+          pltpu.VMEM((num_tokens, max_block_k_search * NUM_LANES), jnp.float32),
+          pltpu.VMEM((num_tokens, max_block_k_search * NUM_LANES), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
       ),
       grid=(num_tokens // block_size,),
@@ -319,6 +306,12 @@ def top_k(
         vmem_limit_bytes=int(0.9 * 2**27)
       ),
       interpret=interpret,
-  )(logits)
-
-  return topk_vals[:, :k], topk_idxs[:, :k]
+  )(logits, k)
+  
+  if max_block_k_search == max_k:
+    # must have converged
+    valid = jnp.ones(num_tokens // block_size, dtype=bool)
+  else:
+    valid = (depths.reshape(-1, block_size) < max_k).all(1)
+    
+  return topk_vals, topk_idxs, valid
