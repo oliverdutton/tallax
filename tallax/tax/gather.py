@@ -6,42 +6,55 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.utils import NUM_LANES, NUM_SUBLANES
+from tallax.utils import NUM_LANES, NUM_SUBLANES, pad_to_tiles
 
 
 def dense_gather_kernel(values_ref, indices_ref, output_ref):
   """Gather values by indexing in to all of value with a mask.
 
-  This kernel processes a single tile of output (NUM_SUBLANES x NUM_LANES).
-  It scans across the entire values_ref (which contains full vocab for the corresponding tokens).
+  This kernel processes multiple tiles of output (NUM_SUBLANES x K).
+  It scans across the entire values_ref (which contains full vocab for the corresponding tokens)
+  once, updating all output tiles.
   """
-  # values_ref: (NUM_SUBLANES, VocabSize) - VocabSize must be multiple of NUM_LANES
-  # indices_ref: (NUM_SUBLANES, NUM_LANES)
-  # output_ref: (NUM_SUBLANES, NUM_LANES)
+  # values_ref: (NUM_SUBLANES, VocabSize)
+  # indices_ref: (NUM_SUBLANES, K)
+  # output_ref: (NUM_SUBLANES, K)
 
-  output = jnp.zeros_like(output_ref)
-  indices = indices_ref[...]
+  num_k_blocks = indices_ref.shape[1] // NUM_LANES
+
+  # Initialize accumulators
+  accumulators = [
+      jnp.zeros((NUM_SUBLANES, NUM_LANES), dtype=output_ref.dtype)
+      for _ in range(num_k_blocks)
+  ]
 
   # Iterate over blocks of values
   for block_offset in range(0, values_ref.shape[1], NUM_LANES):
     block_vals_slice = pl.dslice(block_offset, NUM_LANES)
 
-    # Check if indices fall within this block
-    mask = (indices >= block_offset) & (indices < block_offset + NUM_LANES)
-
-    # Load values for this block
-    # Note: values_ref corresponds to the rows for this token block
+    # Load values for this block once
     fetched_vals = values_ref[:, block_vals_slice]
 
-    # Gather from the loaded block using local indices
-    gathered = jax.vmap(lambda x, y: x[y])(
-        fetched_vals,
-        indices % NUM_LANES
-    )
+    # Apply to all K blocks
+    for k_idx in range(num_k_blocks):
+        k_offset = k_idx * NUM_LANES
+        k_slice = pl.dslice(k_offset, NUM_LANES)
 
-    output = jnp.where(mask, gathered, output)
+        indices = indices_ref[:, k_slice]
 
-  output_ref[...] = output
+        mask = (indices >= block_offset) & (indices < block_offset + NUM_LANES)
+
+        gathered = jax.vmap(lambda x, y: x[y])(
+            fetched_vals,
+            indices % NUM_LANES
+        )
+
+        accumulators[k_idx] = jnp.where(mask, gathered, accumulators[k_idx])
+
+  # Write out results
+  for k_idx in range(num_k_blocks):
+      k_offset = k_idx * NUM_LANES
+      output_ref[:, pl.dslice(k_offset, NUM_LANES)] = accumulators[k_idx]
 
 
 @functools.partial(jit, static_argnames=("interpret",))
@@ -70,46 +83,43 @@ def gather(
     )
 
   # Pad dimensions to be multiples of hardware constants
+  values = pad_to_tiles(values)
+  # indices might need padding only in dim0 and dim1, but dim0 must match values.
+  # pad_to_tiles handles both dims.
+  indices = pad_to_tiles(indices)
 
-  # Pad tokens to NUM_SUBLANES
-  pad_tokens = (num_tokens + NUM_SUBLANES - 1) // NUM_SUBLANES * NUM_SUBLANES
-  if pad_tokens != num_tokens:
-    values = jnp.pad(values, ((0, pad_tokens - num_tokens), (0, 0)), constant_values=0)
-    indices = jnp.pad(indices, ((0, pad_tokens - num_tokens), (0, 0)), constant_values=0)
+  # If values and indices have different dim0 padding (e.g. one was already padded),
+  # pad_to_tiles handles it based on shape.
+  # But we need them to have SAME dim0 length if we want to block them together.
+  # pad_to_tiles ensures dim0 is multiple of NUM_SUBLANES.
+  # If num_tokens was 13, both become 16. Correct.
 
-  # Pad vocab to NUM_LANES
-  pad_vocab = (vocab_size + NUM_LANES - 1) // NUM_LANES * NUM_LANES
-  if pad_vocab != vocab_size:
-    values = jnp.pad(values, ((0, 0), (0, pad_vocab - vocab_size)), constant_values=0)
-
-  # Pad K to NUM_LANES
-  pad_k = (k + NUM_LANES - 1) // NUM_LANES * NUM_LANES
-  if pad_k != k:
-    indices = jnp.pad(indices, ((0, 0), (0, pad_k - k)), constant_values=0)
+  pad_tokens = values.shape[0]
+  pad_vocab = values.shape[1]
+  pad_k = indices.shape[1]
 
   # Define grid
   # Grid dim 0: Token blocks
-  # Grid dim 1: Output K blocks
-  grid = (pad_tokens // NUM_SUBLANES, pad_k // NUM_LANES)
+  # Grid dim 1: None (we process all K in one go)
+  grid = (pad_tokens // NUM_SUBLANES,)
 
   # Block Specs
-  # values: Map (block_idx_0, any) -> (NUM_SUBLANES, pad_vocab)
-  # We want the token block corresponding to dim0 of grid, and ALL of dim1 (Vocab)
+  # values: Map (block_idx, ...) -> (NUM_SUBLANES, pad_vocab)
   in_spec_values = pl.BlockSpec(
       (NUM_SUBLANES, pad_vocab),
-      lambda i, j: (i, 0)
+      lambda i: (i, 0)
   )
 
-  # indices: Map (block_idx_0, block_idx_1) -> (NUM_SUBLANES, NUM_LANES)
+  # indices: Map (block_idx, ...) -> (NUM_SUBLANES, pad_k)
   in_spec_indices = pl.BlockSpec(
-      (NUM_SUBLANES, NUM_LANES),
-      lambda i, j: (i, j)
+      (NUM_SUBLANES, pad_k),
+      lambda i: (i, 0)
   )
 
   # output: Same as indices
   out_spec = pl.BlockSpec(
-      (NUM_SUBLANES, NUM_LANES),
-      lambda i, j: (i, j)
+      (NUM_SUBLANES, pad_k),
+      lambda i: (i, 0)
   )
 
   # Call Pallas

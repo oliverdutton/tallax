@@ -24,11 +24,11 @@ def test_gather_correctness(num_tokens, vocab_size, k):
 
     assert jnp.allclose(result, expected)
 
-def test_gather_large_k():
-    # k larger than multiple tiles
-    num_tokens = 32
-    vocab_size = 1024
-    k = 512
+def test_gather_large_k_explicit():
+    # Explicitly test (8, 1024) as requested in review
+    num_tokens = 8
+    vocab_size = 2048
+    k = 1024
 
     key = jax.random.PRNGKey(1)
     values = jax.random.normal(key, (num_tokens, vocab_size))

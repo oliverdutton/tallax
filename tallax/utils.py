@@ -64,6 +64,22 @@ def pad(x, descending=False):
   )
 
 
+def pad_to_tiles(x, val=0):
+  """Pad array to multiple of NUM_SUBLANES in dim0 and NUM_LANES in dim1."""
+  dim0, dim1 = x.shape
+  pad_dim0 = pl.cdiv(dim0, NUM_SUBLANES) * NUM_SUBLANES
+  pad_dim1 = pl.cdiv(dim1, NUM_LANES) * NUM_LANES
+
+  if dim0 == pad_dim0 and dim1 == pad_dim1:
+    return x
+
+  return jnp.pad(
+      x,
+      ((0, pad_dim0 - dim0), (0, pad_dim1 - dim1)),
+      constant_values=val
+  )
+
+
 def standardize(x):
   """Standardize float values for sorting.
 
