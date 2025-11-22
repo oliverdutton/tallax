@@ -42,21 +42,18 @@ def blockwise_topk(
 
     # Sinking sort: compare and swap through max_k levels
     for level in range(max_k):
-      # Active mask: only swap if the current level is within the specific k for this row
-      is_active = (level < k)[:, None]
-
       if level < start_k:
         # Invalidate already-found elements
         # We use the indices list to check identity
         current_values = jnp.where(
-            (current_indices == indices_list[level]),
+            current_indices == indices_list[level],
             float("-inf"),
             current_values
         )
       else:
         # Exchange with stored top-k
-        # Only perform the swap if the value is larger AND we are within the valid k range
-        mask = (current_values > values_list[level]) & is_active
+        # Only perform the swap if the value is larger
+        mask = current_values > values_list[level]
 
         values_list[level], current_values = (
             jnp.where(m, current_values, values_list[level])
@@ -99,19 +96,16 @@ def topk_blockwise_superset_kernel(
   # Initialize buffers
   block_size = logits_ref.shape[0]
   shape = (block_size, block_topm_values_ref.shape[1])
-  pid = pl.program_id(0)
 
+  pid = pl.program_id(0)
   token_slice = pl.dslice(pid * block_size, block_size)
   
   block_topm_values_ref[token_slice] = jnp.full(
       shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
   )
   block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
-
-  # Initialize max_depth with the target k+1 for each row
   for i in range(block_size): 
     max_depth_ref[pid * block_size + i] = max_k
-
   termination_flag_ref[0] = 0
 
   # Incremental blockwise top-k computation
