@@ -8,7 +8,7 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from .utils import (
+from tallax.utils import (
     is_cpu_platform,
     log2,
     max_int,
@@ -864,7 +864,7 @@ def _compute_substage_hbm(
     static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
                      'is_stable', 'num_keys', 'block_token', 'interpret')
 )
-def lax_sort_pallas(
+def sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int,
     is_stable: bool = False,

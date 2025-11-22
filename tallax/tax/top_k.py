@@ -6,8 +6,8 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from .sort import bitonic_sort
-from .utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
+from tallax.tax.sort import bitonic_sort
+from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, is_cpu_platform
 
 
 def blockwise_topk(
@@ -277,7 +277,7 @@ def topk_blockwise_superset_kernel(
     jit,
     static_argnames=("k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
 )
-def lax_topk_pallas(
+def top_k(
     logits,
     k: int,
     block_size: int = 8,

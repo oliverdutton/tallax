@@ -5,7 +5,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from tallax import lax_sort_pallas
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 @jax.jit
@@ -62,7 +62,7 @@ def _equiv_xla_based_sort(
   return tuple(outs)
 
 
-def verify_lax_sort_pallas(
+def verify_sort(
     operand,
     num_keys: int,
     block_token: int | None = None,
@@ -72,7 +72,7 @@ def verify_lax_sort_pallas(
     print_outputs: bool = False,
     interpret: bool | None = None,
 ):
-  """Validate lax_sort_pallas against XLA reference implementation."""
+  """Validate sort against XLA reference implementation."""
   if interpret is None:
     interpret = is_cpu_platform()
 
@@ -84,7 +84,7 @@ def verify_lax_sort_pallas(
       is_stable=is_stable,
       interpret=interpret
   )
-  out_pallas = lax_sort_pallas(operand, **kwargs)
+  out_pallas = tax.sort(operand, **kwargs)
 
   if is_stable:
     # Exact match required for stable sort
@@ -143,10 +143,10 @@ def verify_lax_sort_pallas(
 @pytest.mark.parametrize("is_stable", [False, True])
 @pytest.mark.parametrize("return_argsort", [False, True])
 @pytest.mark.parametrize("descending", [False, True])
-def test_lax_sort_correctness(is_stable, return_argsort, descending):
+def test_sort(is_stable, return_argsort, descending):
   shape = (8, 16) if is_cpu_platform() else (8, 128)
   operands = [jax.random.randint(jax.random.key(0), shape, 0, 100, jnp.int32)]
-  verify_lax_sort_pallas(
+  verify_sort(
       operands,
       num_keys=1,
       is_stable=is_stable,
