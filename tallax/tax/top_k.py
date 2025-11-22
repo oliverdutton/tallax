@@ -216,7 +216,7 @@ def topk_blockwise_superset_kernel(
     jit,
     static_argnames=("max_k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
 )
-def top_k(
+def top_dynamic_k(
     logits,
     k,
     max_k: int,
@@ -309,3 +309,26 @@ def top_k(
     valid = (depths.reshape(-1, block_size) < max_k).all(1)
     
   return topk_vals, topk_idxs, valid
+
+  
+@functools.partial(
+    jit,
+    static_argnames=("k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
+)
+def top_k(
+    logits,
+    k: int,
+    block_size: int = 8,
+    block_topk_schedule = None,
+    topk_schedule = None,
+    interpret: bool = False,
+):
+  return top_dynamic_k(
+    logits,
+    k=k,
+    max_k=k,
+    block_size=block_size,
+    block_topk_schedule=block_topk_schedule,
+    topk_schedule=topk_schedule,
+    interpret=interpret,
+  )
