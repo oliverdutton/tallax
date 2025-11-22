@@ -6,10 +6,9 @@ import sys
 import os
 
 # Import benchmark utils
-sys.path.append(os.path.dirname(__file__))
 from benchmark_utils import benchmark
 
-from tallax.cumsum import lax_cumsum_pallas
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 def run_benchmarks():
@@ -25,7 +24,7 @@ def run_benchmarks():
   @functools.partial(jax.jit, static_argnames=('m',))
   def jit_cumsum_pallas(x, m):
       with jax.named_scope("jit_cumsum_pallas"):
-          return lax_cumsum_pallas(x, m=m, interpret=interpret)
+          return tax.cumsum(x, m=m, interpret=interpret)
 
   @jax.jit
   def jit_cumsum_jax(x):

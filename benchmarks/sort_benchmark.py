@@ -5,13 +5,16 @@ import jax.numpy as jnp
 import sys
 import os
 
-# Import benchmark utils
-sys.path.append(os.path.dirname(__file__))
+# Add parent directory to path to import tests
+sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+# Import benchmark utils (assuming running from benchmarks dir or added to path)
+import benchmark_utils
 from benchmark_utils import benchmark
 
-from tallax import lax_sort_pallas
+from tallax import tax
 from tallax.utils import is_cpu_platform
-from tests.test_sort_correctness import _equiv_xla_based_sort
+from tests.sort_test import _equiv_xla_based_sort
 
 def run_benchmarks():
   ntoken = 8
@@ -38,7 +41,7 @@ def run_benchmarks():
             print(f'\n{(x.shape, x.dtype)}\n{num_operands=} {num_keys=} {kwargs=}')
             def _run():
               return (
-                  lax_sort_pallas(operands, num_keys=num_keys, interpret=interpret, **kwargs),
+                  tax.sort(operands, num_keys=num_keys, interpret=interpret, **kwargs),
                   _equiv_xla_based_sort(operands, num_keys=num_keys, **kwargs)
               )
             benchmark(_run)

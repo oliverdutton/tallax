@@ -2,7 +2,7 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax.tax import cumsum
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 def test_cumsum_correctness():
@@ -24,7 +24,7 @@ def test_cumsum_correctness():
     interpret = True # Always use interpret for correctness on CPU
 
     for m in ms:
-        actual = cumsum(x, m=m, interpret=interpret)
+        actual = tax.cumsum(x, m=m, interpret=interpret)
 
         diff = jnp.abs(actual - expected)
         if not jnp.all(diff == 0):
