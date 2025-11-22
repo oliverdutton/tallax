@@ -1,38 +1,17 @@
 
 import functools
-import gzip
-import json
-import os
-from glob import glob
-import tempfile
-
 import jax
 import jax.numpy as jnp
-import pandas as pd
+import sys
+import os
+
+# Import benchmark utils
+sys.path.append(os.path.dirname(__file__))
+from benchmark_utils import benchmark
 
 from tallax import lax_sort_pallas
 from tallax.utils import is_cpu_platform
 from tests.test_sort_correctness import _equiv_xla_based_sort
-
-def benchmark(_run):
-  """Benchmark function and print timing from profiler trace."""
-  def run():
-    return jax.block_until_ready(_run())
-
-  run()
-  with tempfile.TemporaryDirectory() as tmpdir:
-    with jax.profiler.trace(tmpdir):
-      run()
-
-    path = sorted(
-        glob(f"{tmpdir}/plugins/profile/*/**.json.gz", recursive=True),
-        key=os.path.getmtime
-    )[-1]
-    trace = json.load(gzip.open(path))
-    df = pd.DataFrame(trace["traceEvents"])
-    df = df[~df.name.isna()]
-    df['name'] = df.name.apply(lambda s: s.split('(')[0])
-    print(df[df.name.str.contains("jit_")][['name', 'dur']].to_string(index=False))
 
 def run_benchmarks():
   ntoken = 8

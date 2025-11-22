@@ -1,14 +1,13 @@
 
 import functools
-import gzip
-import json
-import os
-from glob import glob
-import pandas as pd
-import tempfile
-
 import jax
 import jax.numpy as jnp
+import sys
+import os
+
+# Import benchmark utils
+sys.path.append(os.path.dirname(__file__))
+from benchmark_utils import benchmark
 
 from tallax import lax_topk_pallas
 from tallax.utils import is_cpu_platform
@@ -38,20 +37,6 @@ def add_one(x):
 def matmul_and_topk_xla(x, w, k=k):
   logits = x @ w
   return jax.lax.top_k(logits, k)
-
-def benchmark(_run):
-  def run():
-    return jax.block_until_ready(_run())
-  run()
-  with tempfile.TemporaryDirectory() as tmpdir:
-    with jax.profiler.trace(tmpdir):
-      run()
-
-    path = sorted(glob(f"{tmpdir}/plugins/profile/*/**.json.gz", recursive=True), key=os.path.getmtime)[-1]
-    trace = json.load(gzip.open(path))
-    df = pd.DataFrame(trace["traceEvents"])
-    df = df[~df.name.isna()]
-    print(df[df.name.str.contains("jit_")][['name', 'dur']])
 
 def run_benchmarks():
   interpret = is_cpu_platform()
