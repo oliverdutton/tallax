@@ -5,7 +5,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 
-from tallax.tax.sort import sort
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 @jax.jit
@@ -84,7 +84,7 @@ def verify_sort(
       is_stable=is_stable,
       interpret=interpret
   )
-  out_pallas = sort(operand, **kwargs)
+  out_pallas = tax.sort(operand, **kwargs)
 
   if is_stable:
     # Exact match required for stable sort
@@ -143,7 +143,7 @@ def verify_sort(
 @pytest.mark.parametrize("is_stable", [False, True])
 @pytest.mark.parametrize("return_argsort", [False, True])
 @pytest.mark.parametrize("descending", [False, True])
-def test_sort_correctness(is_stable, return_argsort, descending):
+def test_sort(is_stable, return_argsort, descending):
   shape = (8, 16) if is_cpu_platform() else (8, 128)
   operands = [jax.random.randint(jax.random.key(0), shape, 0, 100, jnp.int32)]
   verify_sort(

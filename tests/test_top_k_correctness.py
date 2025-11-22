@@ -4,7 +4,7 @@ import functools
 import jax
 import jax.numpy as jnp
 
-from tallax.tax.top_k import top_k
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 
@@ -23,10 +23,10 @@ def tests():
   interpret = is_cpu_platform()
   print('topk', logits.shape, logits.dtype, k)
   print("XLA: ", topk_xla(logits, k=k))
-  print("\nPallas:", top_k(logits, k=k, block_size=8, interpret=interpret))
+  print("\nPallas:", tax.top_k(logits, k=k, block_size=8, interpret=interpret))
   print(
   [
-  (topk_xla(logits, k=k)[i] == top_k(logits, k=k, block_size=8, interpret=interpret)[i]).mean() for i in range(2)
+  (topk_xla(logits, k=k)[i] == tax.top_k(logits, k=k, block_size=8, interpret=interpret)[i]).mean() for i in range(2)
   ]
   )
 

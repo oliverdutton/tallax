@@ -1,6 +1,6 @@
 import jax.numpy as jnp
-from .tax.sort import sort as lax_sort_pallas
-from .utils import is_cpu_platform
+from tallax.tax.sort import sort as lax_sort_pallas
+from tallax.utils import is_cpu_platform
 
 def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, interpret=False):
     """
@@ -36,12 +36,11 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
     # Reshape to (-1, sort_dim_size)
     # If 1D, reshapes to (1, sort_dim_size) which matches (1, size) logic.
     # If ND, reshapes to (batch, sort_dim_size).
-    a_reshaped = a_work.reshape((-1, sort_dim_size))
+    a_reshaped = a_work.reshape(-1, sort_dim_size)
 
     # lax_sort_pallas returns a tuple of sorted arrays
-    # operand is passed as a list [a_reshaped]
     (sorted_a,) = lax_sort_pallas(
-        [a_reshaped],
+        a_reshaped,
         num_keys=1,
         is_stable=stable,
         descending=descending,
@@ -82,11 +81,11 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
         target_shape = a.shape
         sort_dim_size = a.shape[-1]
 
-    a_reshaped = a_work.reshape((-1, sort_dim_size))
+    a_reshaped = a_work.reshape(-1, sort_dim_size)
 
     # return_argsort=True returns (sorted_arrays..., indices)
-    results = lax_sort_pallas(
-        [a_reshaped],
+    _, indices = lax_sort_pallas(
+        a_reshaped,
         num_keys=1,
         is_stable=stable,
         descending=descending,
@@ -94,5 +93,4 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
         return_argsort=True
     )
 
-    indices = results[-1]
     return indices.reshape(target_shape)
