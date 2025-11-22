@@ -21,6 +21,7 @@ from tallax.utils import (
     split_array_to_tiles,
     join_tiles_to_array,
     iota_tile,
+    create_bit_indicator,
     convert_to_sublane_sort_format,
     convert_from_sublane_sort_format,
     transpose_list_of_lists,
@@ -34,19 +35,6 @@ from tallax.utils import (
 
 
 ### Bitonic Sort Core Operations
-
-def _create_bit_indicator(bit_position: int, index=None):
-  """Create mask indicating which elements have specific bit set.
-
-  Returns int format for ALU operations rather than mask operations.
-  """
-  if index is None:
-    index = iota_tile(1)
-  if type(bit_position) == int:
-    bit = (index & (1 << bit_position))
-    return bit > 0
-  return (index >> bit_position) & 1
-
 
 def _compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
              has_unique_key=False):
@@ -159,7 +147,7 @@ def _compute_crosstile_substage(
                    i * pair_length + 2 * half_length]
                 for v in ref_slices]
 
-      is_descending = _create_bit_indicator(stage, dim1_offset + pair_offset)
+      is_descending = create_bit_indicator(stage, dim1_offset + pair_offset)
 
       for i, vs in enumerate(_compare(lefts, rights,
                                       is_descending=is_descending,
@@ -200,7 +188,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
   else:
     raise ValueError('dim must be 0 or 1, (sublane or lane)')
 
-  is_right_half = _create_bit_indicator(substage, index)
+  is_right_half = create_bit_indicator(substage, index)
   permutation = jnp.bitwise_xor(index, 1 << substage)
 
   arrs_tiles_permuted = jax.tree.map(
@@ -222,16 +210,16 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
     else: # lane
       tile_offset = (tile_idx % tile_cols) * NUM_LANES
 
-    is_descending = _create_bit_indicator(
+    is_descending = create_bit_indicator(
         stage, dim1_offset + tile_offset + global_base_index
     )
 
     if type(stage) == int:
       # Performance optimizations for early, statically compiled stages
       if stage < log2(NUM_SUBLANES):
-        is_descending = _create_bit_indicator(stage, global_base_index)
+        is_descending = create_bit_indicator(stage, global_base_index)
       elif stage < log2(NUM_LANES):
-        is_descending = _create_bit_indicator(stage, tile_offset)
+        is_descending = create_bit_indicator(stage, tile_offset)
 
     for i, o in enumerate(_compare(lefts, rights,
                                    is_descending=is_descending,
@@ -266,12 +254,12 @@ def _compute_substage_by_crosstile_comparison(
         for j in (idx, idx + separation)
     )
 
-    is_descending = _create_bit_indicator(
+    is_descending = create_bit_indicator(
         stage, dim1_offset + pair_offset + global_base_index
     )
 
     if type(stage) == int and stage < log2(NUM_LANES):
-      is_descending = _create_bit_indicator(stage, pair_offset)
+      is_descending = create_bit_indicator(stage, pair_offset)
 
     for i, (o_left, o_right) in enumerate(_compare(
         lefts, rights, is_descending=is_descending, num_keys=num_keys
@@ -759,7 +747,7 @@ def _substage_hbm_kernel(
       else:
         scratch_ref[slot] = input_ref[slot].astype(scratch_ref.dtype)
         refs.append(tuple(scratch_ref[slot]))
-    is_descending = _create_bit_indicator(stage, start_idx + int(descending) * shape[1])
+    is_descending = create_bit_indicator(stage, start_idx + int(descending) * shape[1])
     outputs = _compare(
         *transpose_list_of_lists(refs),
         is_descending=is_descending,
