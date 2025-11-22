@@ -308,7 +308,7 @@ def top_dynamic_k(
   else:
     valid = (depths.reshape(-1, block_size) < max_k).all(1)
     
-  return topk_vals, topk_idxs, valid
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid
 
   
 @functools.partial(
