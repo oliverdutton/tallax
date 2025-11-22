@@ -209,6 +209,19 @@ def iota_tile(dim):
   return lax.broadcasted_iota(jnp.int32, (NUM_SUBLANES, NUM_LANES), dim)
 
 
+def create_bit_indicator(bit_position: int, index=None):
+  """Create mask indicating which elements have specific bit set.
+
+  Returns int format for ALU operations rather than mask operations.
+  """
+  if index is None:
+    index = iota_tile(1)
+  if type(bit_position) == int:
+    bit = (index & (1 << bit_position))
+    return bit > 0
+  return (index >> bit_position) & 1
+
+
 def convert_to_sublane_sort_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
   arrs = [

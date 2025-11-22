@@ -1,6 +1,5 @@
 
 import functools
-import math
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
@@ -10,7 +9,8 @@ from tallax.utils import (
     iota_tile,
     NUM_LANES,
     NUM_SUBLANES,
-    canonicalize_operand
+    canonicalize_operand,
+    log2
 )
 
 def _cumsum_kernel(x_ref, o_ref, *, m):
@@ -21,7 +21,7 @@ def _cumsum_kernel(x_ref, o_ref, *, m):
 
   # Phase 1: Short distance / Permutes
   # Intra-block Hillis-Steele using take_along_axis
-  for step in range(int(math.log2(eff_m))):
+  for step in range(log2(eff_m)):
     offset = 1 << step
     idx = iota_tile(1)
 
@@ -58,7 +58,7 @@ def _cumsum_kernel(x_ref, o_ref, *, m):
     jax.jit,
     static_argnames=('m', 'interpret')
 )
-def lax_cumsum_pallas(
+def cumsum(
     operand: jax.Array,
     m: int = 64,
     interpret: bool = False,
