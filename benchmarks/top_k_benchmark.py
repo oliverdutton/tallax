@@ -6,10 +6,9 @@ import sys
 import os
 
 # Import benchmark utils
-sys.path.append(os.path.dirname(__file__))
 from benchmark_utils import benchmark
 
-from tallax import lax_topk_pallas
+from tallax import tax
 from tallax.utils import is_cpu_platform
 
 k = 64
@@ -44,7 +43,7 @@ def run_benchmarks():
     return (
       add_one(logits),
       topk_xla(logits, k=k),
-      lax_topk_pallas(logits, k=k, block_size=8, interpret=interpret),
+      tax.top_k(logits, k=k, block_size=8, interpret=interpret),
       # Not exact. Runtime varies with recall, here run with default 0.95
       approx_topk_xla(logits, k=k),
     )
