@@ -11,7 +11,6 @@ from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
 
 def blockwise_topk(
     logits,
-    k,
     max_k: int,
     block_topk_values,
     block_topk_indices,
@@ -23,7 +22,6 @@ def blockwise_topk(
   
   Args:
       logits: Input logits [num_tokens, num_blocks] (or similar slice)
-      k: SMEM array of shape (num_tokens,) containing k for each row
       max_k: Static integer loop bound (maximum possible k)
       block_topk_values: Required pre-allocated buffers for values
       block_topk_indices: Required pre-allocated buffers for indices
@@ -114,10 +112,8 @@ def topk_blockwise_superset_kernel(
     @pl.when(termination_flag_ref[0] == 0)
     def _():
       # Compute blockwise top-m
-      # We pass k_local (dynamic) but set max_k=target_m (static loop bound)
       topk_vals, topk_idxs = blockwise_topk(
           logits_ref,
-          k=k_local,
           max_k=target_m,
           block_topk_values=[
               block_topm_values_ref[
