@@ -44,11 +44,10 @@ def benchmark(_run):
   df['name'] = df.name.apply(lambda s: s.split('(')[0])
 
   # Look for JIT compiled functions
-  # On CPU, they might appear as PjitFunction or jit_<name>
-  #mask = df.name.str.contains("jit_") | (df.name == "PjitFunction")
+  mask = df.name.str.contains("jit_")
   res = df[['name', 'dur']]
 
   if not res.empty:
-    print(res.groupby('name').sum().reset_index().to_string(index=False))
+    print(res.to_string(index=False))
   else:
     print("No jit functions found in trace.")
