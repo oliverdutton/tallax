@@ -241,6 +241,8 @@ def top_dynamic_k(
   if num_tokens % block_size != 0:
     raise ValueError("num_tokens must be divisible by block_size")
 
+  k = jnp.broadcast_to(k, (num_tokens,))
+
   if topk_schedule is None:
     topk_schedule = (8, max_k)
   topk_schedule = (0,) + topk_schedule
