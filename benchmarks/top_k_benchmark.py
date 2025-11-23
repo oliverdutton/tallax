@@ -2,11 +2,9 @@
 import functools
 import jax
 import jax.numpy as jnp
-import sys
-import os
 
 # Import benchmark utils
-from benchmark_utils import benchmark
+from .benchmark_utils import benchmark
 
 from tallax import tax
 from tallax.utils import is_cpu_platform

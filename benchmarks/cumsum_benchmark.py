@@ -2,11 +2,9 @@
 import functools
 import jax
 import jax.numpy as jnp
-import sys
-import os
 
 # Import benchmark utils
-from benchmark_utils import benchmark
+from .benchmark_utils import benchmark
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
@@ -39,18 +37,12 @@ def run_benchmarks():
 
       print("  Pallas:")
       def _run_pallas():
-          out = []
-          for _ in range(5000):
-              out.append(jit_cumsum_pallas(x, m))
-          return out
+          return jit_cumsum_pallas(x, m)
       benchmark(_run_pallas)
 
       print("  JAX:")
       def _run_jax():
-          out = []
-          for _ in range(5000):
-              out.append(jit_cumsum_jax(x))
-          return out
+          return jit_cumsum_jax(x)
       benchmark(_run_jax)
 
 if __name__ == "__main__":

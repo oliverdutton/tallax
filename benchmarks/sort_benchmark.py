@@ -2,15 +2,9 @@
 import functools
 import jax
 import jax.numpy as jnp
-import sys
-import os
-
-# Add parent directory to path to import tests
-sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 # Import benchmark utils (assuming running from benchmarks dir or added to path)
-import benchmark_utils
-from benchmark_utils import benchmark
+from .benchmark_utils import benchmark
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
