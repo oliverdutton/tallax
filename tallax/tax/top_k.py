@@ -9,6 +9,10 @@ from tallax.tax.sort import bitonic_sort
 from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
 
 
+def next_power_of_2(x):
+  return 1 if x == 0 else 1 << (x - 1).bit_length()
+
+
 def blockwise_topk(
     logits,
     max_k: int,
@@ -144,11 +148,14 @@ def topk_blockwise_superset_kernel(
       # If top-(m-1) blocks contain >= k values larger than
       # the m-th largest value, then top-k is guaranteed to be in top-(m-1)
       pivot = topk_vals[target_m - 1].max(-1, keepdims=True)
-      num_larger = (
-          sum([(v >= pivot) for v in topk_vals[:target_m - 1]])
-          .astype(jnp.float32)
-          .sum(-1)
-      )
+      if target_m > 1:
+        num_larger = (
+            sum([(v >= pivot) for v in topk_vals[:target_m - 1]])
+            .astype(jnp.float32)
+            .sum(-1)
+        )
+      else:
+        num_larger = jnp.zeros(block_size, dtype=jnp.float32)
 
       termination_flag_ref[0] = 0
       for i in range(block_size):
@@ -241,12 +248,23 @@ def top_dynamic_k(
   if num_tokens % block_size != 0:
     raise ValueError("num_tokens must be divisible by block_size")
 
+  target_m = next_power_of_2(max_k)
+
   if topk_schedule is None:
-    topk_schedule = (8, max_k)
+    if target_m > 8:
+      topk_schedule = (8, target_m)
+    else:
+      topk_schedule = (target_m,)
   topk_schedule = (0,) + topk_schedule
  
   if block_topk_schedule is None:
-    block_topk_schedule = (5, 7, 9, 12, max_k)
+    # Generate power of 2 schedule
+    sched = []
+    curr = 1
+    while curr <= target_m:
+      sched.append(curr)
+      curr *= 2
+    block_topk_schedule = tuple(sched)
   block_topk_schedule = (0,) + block_topk_schedule
 
   if topk_schedule[-1] < block_topk_schedule[-1]:
@@ -315,6 +333,21 @@ def top_k(
     topk_schedule = None,
     interpret: bool = False,
 ):
+  """
+  Compute top-k elements.
+
+  Note: Unlike jax.lax.top_k, this function does not include NaNs in the top-k results.
+  jax.lax.top_k treats NaNs as larger than all other numbers (sorting them to the top),
+  whereas this implementation treats NaNs as smaller (or ignores them).
+  """
+  vocab_size = logits.shape[-1]
+  if vocab_size % NUM_LANES != 0:
+      pad_len = (NUM_LANES - (vocab_size % NUM_LANES)) % NUM_LANES
+      if pad_len > 0:
+          # Pad with -inf so they don't appear in top-k
+          pad_val = jnp.finfo(logits.dtype).min if jnp.issubdtype(logits.dtype, jnp.floating) else jnp.iinfo(logits.dtype).min
+          logits = jnp.pad(logits, ((0, 0), (0, pad_len)), constant_values=pad_val)
+
   return top_dynamic_k(
     logits,
     k=jnp.full(logits.shape[:1], k, dtype=jnp.int32),
