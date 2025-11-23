@@ -319,7 +319,7 @@ def top_k(
 ):
   return top_dynamic_k(
     logits,
-    k=jnp.full(logits.shape[:1], k, dtype=jnp.int32),
+    k=k,
     max_k=k,
     block_size=block_size,
     block_topk_schedule=block_topk_schedule,
