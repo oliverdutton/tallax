@@ -1,5 +1,6 @@
 
 import math
+import warnings
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -11,7 +12,10 @@ NUM_SUBLANES = 8
 NUM_LANES = 128
 
 def is_cpu_platform():
-  return jax.default_backend() == "cpu"
+  is_cpu = jax.default_backend() == "cpu"
+  if is_cpu:
+    warnings.warn("Running on CPU, interpret=True will be used.")
+  return is_cpu
 
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
