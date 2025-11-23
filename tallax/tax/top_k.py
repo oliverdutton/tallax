@@ -252,16 +252,13 @@ def top_dynamic_k(
   block_topk_schedule = (0,) + block_topk_schedule
 
   if topk_schedule[-1] < block_topk_schedule[-1]:
-    raise ValueError('Top k max must cover block top m search')
-    
-  max_block_k_search = block_topk_schedule[-1]
+    raise ValueError('Global top k sort must cover block top m search')
 
-  if max_k > NUM_LANES:
-    raise ValueError(f"max_k cannot exceed {NUM_LANES}")
+  padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
   output_shapes = (
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
   )
 
@@ -284,8 +281,8 @@ def top_dynamic_k(
       ),
       out_shape=output_shapes,
       scratch_shapes=(
-          pltpu.VMEM((num_tokens, max_block_k_search * NUM_LANES), jnp.float32),
-          pltpu.VMEM((num_tokens, max_block_k_search * NUM_LANES), jnp.int32),
+          pltpu.VMEM((num_tokens, topk_schedule[-1] * NUM_LANES), jnp.float32),
+          pltpu.VMEM((num_tokens, topk_schedule[-1] * NUM_LANES), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
       ),
       grid=(num_tokens // block_size,),
@@ -296,7 +293,7 @@ def top_dynamic_k(
       interpret=interpret,
   )(logits, k)
   
-  if max_block_k_search == max_k:
+  if block_topk_schedule[-1] == max_k:
     # must have converged
     valid = jnp.ones(num_tokens // block_size, dtype=bool)
   else:
