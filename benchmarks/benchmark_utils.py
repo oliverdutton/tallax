@@ -45,7 +45,7 @@ def benchmark(_run):
 
   # Look for JIT compiled functions
   mask = df.name.str.contains("jit_")
-  res = df[['name', 'dur']]
+  res = df[mask][['name', 'dur']]
 
   if not res.empty:
     print(res.to_string(index=False))
