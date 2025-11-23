@@ -241,10 +241,6 @@ def top_dynamic_k(
   if num_tokens % block_size != 0:
     raise ValueError("num_tokens must be divisible by block_size")
 
-  # If k is passed as a scalar integer (not array), broadcast it
-  if isinstance(k, int):
-      k = jnp.full((num_tokens,), k, dtype=jnp.int32)
-
   if topk_schedule is None:
     topk_schedule = (8, max_k)
   topk_schedule = (0,) + topk_schedule
@@ -321,7 +317,7 @@ def top_k(
 ):
   return top_dynamic_k(
     logits,
-    k=k,
+    k=jnp.full((num_tokens,), k, dtype=jnp.int32),
     max_k=k,
     block_size=block_size,
     block_topk_schedule=block_topk_schedule,
