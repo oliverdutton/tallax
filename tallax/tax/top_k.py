@@ -1,3 +1,10 @@
+Here is the updated code.
+I have threaded num_blocks (defaulting to the global NUM_LANES) through top_k \to top_dynamic_k \to topk_blockwise_superset_kernel.
+Key Changes:
+ * Added num_blocks to the static_argnames of both jit compiled functions (top_k and top_dynamic_k).
+ * Updated topk_blockwise_superset_kernel to accept num_blocks and replaced all hardcoded NUM_LANES references with this variable (specifically in pl.dslice, scratch memory calculations, and the bitonic sort offset).
+ * Updated top_dynamic_k to calculate padded_max_k and scratch_shapes based on the dynamic num_blocks.
+<!-- end list -->
 import functools
 import jax
 import jax.numpy as jnp
@@ -19,14 +26,6 @@ def blockwise_topk(
 ):
   """
   Compute blockwise top-k using a sinking sort approach.
-  
-  Args:
-      logits: Input logits [num_tokens, num_blocks] (or similar slice)
-      max_k: Static integer loop bound (maximum possible k)
-      block_topk_values: Required pre-allocated buffers for values
-      block_topk_indices: Required pre-allocated buffers for indices
-      start_k: Starting position (for incremental top-k)
-      num_blocks: Number of blocks to process
   """
   num_tokens = logits.shape[0]
 
@@ -83,6 +82,7 @@ def topk_blockwise_superset_kernel(
     termination_flag_ref,
     *,
     max_k: int,
+    num_blocks: int,
     block_topk_schedule: tuple[int],
     topk_schedule: tuple[int],
 ):
@@ -117,27 +117,27 @@ def topk_blockwise_superset_kernel(
           max_k=target_m,
           block_topk_values=[
               block_topm_values_ref[
-                  token_slice, pl.dslice(i * NUM_LANES, NUM_LANES)
+                  token_slice, pl.dslice(i * num_blocks, num_blocks)
               ].astype(jnp.float32)
               for i in range(target_m)
           ],
           block_topk_indices=[
               block_topm_indices_ref[
-                  token_slice, pl.dslice(i * NUM_LANES, NUM_LANES)
+                  token_slice, pl.dslice(i * num_blocks, num_blocks)
               ]
               for i in range(target_m)
           ],
-          num_blocks=NUM_LANES,
+          num_blocks=num_blocks,
           start_k=completed_m,
       )
 
       # Store results
       for i in range(completed_m, target_m):
         block_topm_values_ref[
-            token_slice, pl.dslice(i * NUM_LANES, NUM_LANES)
+            token_slice, pl.dslice(i * num_blocks, num_blocks)
         ] = topk_vals[i].astype(block_topm_values_ref.dtype)
         block_topm_indices_ref[
-            token_slice, pl.dslice(i * NUM_LANES, NUM_LANES)
+            token_slice, pl.dslice(i * num_blocks, num_blocks)
         ] = topk_idxs[i].astype(block_topm_indices_ref.dtype)
 
       # Termination criterion:
@@ -180,13 +180,13 @@ def topk_blockwise_superset_kernel(
       
     # convert to global indices from local
     block_topm_indices_ref[...] = (
-        block_topm_indices_ref[...] * NUM_LANES
+        block_topm_indices_ref[...] * num_blocks
     ) + (
         jax.lax.broadcasted_iota(
             jnp.int32,
             block_topm_indices_ref.shape,
             1
-        ) % NUM_LANES
+        ) % num_blocks
     )
 
     # Use appropriate sorting depth based on max_depth_global
@@ -195,11 +195,11 @@ def topk_blockwise_superset_kernel(
       def _():
         # Sort the blockwise superset
         bitonic_sort(
-            [ref.at[:, :depth_upper * NUM_LANES]
+            [ref.at[:, :depth_upper * num_blocks]
             for ref in (block_topm_values_ref, block_topm_indices_ref)],
             stage_ref=None,
             # this is a trick to make the sort descending
-            dim1_offset=depth_upper * NUM_LANES,
+            dim1_offset=depth_upper * num_blocks,
             num_keys=1,
         )
         for ref, out_ref in zip(
@@ -210,13 +210,14 @@ def topk_blockwise_superset_kernel(
 
 @functools.partial(
     jit,
-    static_argnames=("max_k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
+    static_argnames=("max_k", "block_size", "num_blocks", "block_topk_schedule", "topk_schedule", "interpret"),
 )
 def top_dynamic_k(
     logits,
     k,
     max_k: int,
     block_size: int = 8,
+    num_blocks: int = NUM_LANES,
     block_topk_schedule = None,
     topk_schedule = None,
     interpret: bool = False,
@@ -229,6 +230,7 @@ def top_dynamic_k(
       k: JAX Array [num_tokens] containing k per row.
       max_k: Static integer maximum k (used for buffer sizing and compilation).
       block_size: Token blocking size.
+      num_blocks: Number of blocks (lanes) for sinking sort.
       block_topk_schedule: Schedule of m values for blockwise top-m.
       topk_schedule: Schedule for final sorting depth.
 
@@ -254,7 +256,8 @@ def top_dynamic_k(
   if topk_schedule[-1] < block_topk_schedule[-1]:
     raise ValueError('Global top k sort must cover block top m search')
 
-  padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
+  # Updated padded size calculation using num_blocks
+  padded_max_k = pl.cdiv(max_k, num_blocks) * num_blocks
 
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
@@ -272,6 +275,7 @@ def top_dynamic_k(
       functools.partial(
           topk_blockwise_superset_kernel,
           max_k=max_k,
+          num_blocks=num_blocks,
           block_topk_schedule=block_topk_schedule,
           topk_schedule=topk_schedule,
       ),
@@ -280,9 +284,10 @@ def top_dynamic_k(
           pl.BlockSpec(memory_space=pltpu.SMEM),
       ),
       out_shape=output_shapes,
+      # Updated scratch shapes using num_blocks
       scratch_shapes=(
-          pltpu.VMEM((num_tokens, topk_schedule[-1] * NUM_LANES), jnp.float32),
-          pltpu.VMEM((num_tokens, topk_schedule[-1] * NUM_LANES), jnp.int32),
+          pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.float32),
+          pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
       ),
       grid=(num_tokens // block_size,),
@@ -304,12 +309,13 @@ def top_dynamic_k(
   
 @functools.partial(
     jit,
-    static_argnames=("k", "block_size", "block_topk_schedule", "topk_schedule", "interpret"),
+    static_argnames=("k", "block_size", "num_blocks", "block_topk_schedule", "topk_schedule", "interpret"),
 )
 def top_k(
     logits,
     k: int,
     block_size: int = 8,
+    num_blocks: int = NUM_LANES,
     block_topk_schedule = None,
     topk_schedule = None,
     interpret: bool = False,
@@ -319,6 +325,7 @@ def top_k(
     k=k,
     max_k=k,
     block_size=block_size,
+    num_blocks=num_blocks,
     block_topk_schedule=block_topk_schedule,
     topk_schedule=topk_schedule,
     interpret=interpret,
