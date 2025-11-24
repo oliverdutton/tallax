@@ -16,6 +16,7 @@ def blockwise_topk(
     block_topk_indices,
     start_k: int = 0,
     num_blocks: int = NUM_LANES,
+    unroll: int = 16,
 ):
   """
   Compute blockwise top-k using a sinking sort approach.
@@ -60,7 +61,7 @@ def blockwise_topk(
       logits.shape[-1] // num_blocks,
       process_block,
       (block_topk_values, block_topk_indices),
-      unroll=16,
+      unroll=unroll,
   )
 
 
@@ -76,6 +77,7 @@ def topk_blockwise_superset_kernel(
     *,
     max_k: int,
     num_blocks: int,
+    blockwise_topk_unroll: int,
     block_topk_schedule: tuple[int],
     topk_schedule: tuple[int],
 ):
@@ -122,6 +124,7 @@ def topk_blockwise_superset_kernel(
           ],
           num_blocks=num_blocks,
           start_k=completed_m,
+          unroll=blockwise_topk_unroll,
       )
 
       # Store results
@@ -203,7 +206,15 @@ def topk_blockwise_superset_kernel(
 
 @functools.partial(
     jit,
-    static_argnames=("max_k", "block_size", "num_blocks", "block_topk_schedule", "topk_schedule", "interpret"),
+    static_argnames=(
+        "max_k", 
+        "block_size", 
+        "num_blocks", 
+        "blockwise_topk_unroll", 
+        "block_topk_schedule", 
+        "topk_schedule", 
+        "interpret"
+    ),
 )
 def top_dynamic_k(
     logits,
@@ -211,6 +222,7 @@ def top_dynamic_k(
     max_k: int,
     block_size: int = 8,
     num_blocks: int = NUM_LANES,
+    blockwise_topk_unroll: int = 16,
     block_topk_schedule = None,
     topk_schedule = None,
     interpret: bool = False,
@@ -224,6 +236,7 @@ def top_dynamic_k(
       max_k: Static integer maximum k (used for buffer sizing and compilation).
       block_size: Token blocking size.
       num_blocks: Number of blocks (lanes) for sinking sort.
+      blockwise_topk_unroll: Unroll factor for the inner blockwise loop.
       block_topk_schedule: Schedule of m values for blockwise top-m.
       topk_schedule: Schedule for final sorting depth.
 
@@ -269,6 +282,7 @@ def top_dynamic_k(
           topk_blockwise_superset_kernel,
           max_k=max_k,
           num_blocks=num_blocks,
+          blockwise_topk_unroll=blockwise_topk_unroll,
           block_topk_schedule=block_topk_schedule,
           topk_schedule=topk_schedule,
       ),
@@ -277,7 +291,6 @@ def top_dynamic_k(
           pl.BlockSpec(memory_space=pltpu.SMEM),
       ),
       out_shape=output_shapes,
-      # Updated scratch shapes using num_blocks
       scratch_shapes=(
           pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.float32),
           pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.int32),
@@ -302,13 +315,22 @@ def top_dynamic_k(
   
 @functools.partial(
     jit,
-    static_argnames=("k", "block_size", "num_blocks", "block_topk_schedule", "topk_schedule", "interpret"),
+    static_argnames=(
+        "k", 
+        "block_size", 
+        "num_blocks", 
+        "blockwise_topk_unroll", 
+        "block_topk_schedule", 
+        "topk_schedule", 
+        "interpret"
+    ),
 )
 def top_k(
     logits,
     k: int,
     block_size: int = 8,
     num_blocks: int = NUM_LANES,
+    blockwise_topk_unroll: int = 16,
     block_topk_schedule = None,
     topk_schedule = None,
     interpret: bool = False,
@@ -319,6 +341,7 @@ def top_k(
     max_k=k,
     block_size=block_size,
     num_blocks=num_blocks,
+    blockwise_topk_unroll=blockwise_topk_unroll,
     block_topk_schedule=block_topk_schedule,
     topk_schedule=topk_schedule,
     interpret=interpret,
