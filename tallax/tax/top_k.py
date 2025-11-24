@@ -262,6 +262,9 @@ def top_dynamic_k(
   if (topk_schedule[-1] < block_topk_schedule[-1] - 1):
     raise ValueError('Global top k sort must cover block top m search')
 
+  # blockwise took / sort pad len
+  buffer_size = max(topk_schedule[-1], block_topk_schedule[-1]) * num_blocks
+
   # Updated padded size calculation using num_blocks
   padded_max_k = pl.cdiv(max_k, num_blocks) * num_blocks
 
@@ -292,8 +295,8 @@ def top_dynamic_k(
       ),
       out_shape=output_shapes,
       scratch_shapes=(
-          pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.float32),
-          pltpu.VMEM((num_tokens, topk_schedule[-1] * num_blocks), jnp.int32),
+          pltpu.VMEM((num_tokens, buffer_size), jnp.float32),
+          pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
       ),
       grid=(num_tokens // block_size,),
