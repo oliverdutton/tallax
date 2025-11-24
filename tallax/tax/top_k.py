@@ -1,10 +1,3 @@
-Here is the updated code.
-I have threaded num_blocks (defaulting to the global NUM_LANES) through top_k \to top_dynamic_k \to topk_blockwise_superset_kernel.
-Key Changes:
- * Added num_blocks to the static_argnames of both jit compiled functions (top_k and top_dynamic_k).
- * Updated topk_blockwise_superset_kernel to accept num_blocks and replaced all hardcoded NUM_LANES references with this variable (specifically in pl.dslice, scratch memory calculations, and the bitonic sort offset).
- * Updated top_dynamic_k to calculate padded_max_k and scratch_shapes based on the dynamic num_blocks.
-<!-- end list -->
 import functools
 import jax
 import jax.numpy as jnp
