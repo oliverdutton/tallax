@@ -259,7 +259,7 @@ def top_dynamic_k(
     block_topk_schedule = (5, 7, 9, 12, max_k)
   block_topk_schedule = (0,) + block_topk_schedule
 
-  if topk_schedule[-1] < block_topk_schedule[-1]:
+  if (topk_schedule[-1] < block_topk_schedule[-1] - 1):
     raise ValueError('Global top k sort must cover block top m search')
 
   # Updated padded size calculation using num_blocks
@@ -303,13 +303,7 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  
-  if block_topk_schedule[-1] == max_k:
-    # must have converged
-    valid = jnp.ones(num_tokens // block_size, dtype=bool)
-  else:
-    valid = (depths.reshape(-1, block_size) < max_k).all(1)
-    
+  valid = (depths.reshape(-1, block_size) < max_k).all(1)
   return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid
 
   
