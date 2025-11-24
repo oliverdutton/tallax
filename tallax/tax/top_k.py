@@ -303,7 +303,7 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  valid = (depths.reshape(-1, block_size) < max_k).all(1)
+  valid = (depths.reshape(-1, block_size) < max_k).all(1) | (block_topk_schedule[-1] == max_k)
   return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid
 
   
