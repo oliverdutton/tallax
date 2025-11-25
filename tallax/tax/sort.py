@@ -927,7 +927,7 @@ def sort(
 
   # Pad to required dimensions
   operands = [
-      pad(x, block_shape=(NUM_SUBLANES, 'power_of_2'), prepend=(False, descending))
+      pad(x, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'), prepend=(False, descending))
       for x in operands
   ]
 

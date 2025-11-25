@@ -57,7 +57,7 @@ def pad(
     arr: Input array to pad.
     block_shape: Target block shape for each dimension. Can be:
       - int: Pad to be multiple of this value
-      - 'power_of_2': Pad to next power of 2 (at least NUM_LANES)
+      - 'power_of_2_lanes': Pad to next power of 2 (at least NUM_LANES)
       Defaults to (NUM_SUBLANES, NUM_LANES).
     prepend: Whether to prepend (True) or append (False) padding.
       Can be a single bool or tuple of bools for each dimension.
@@ -87,7 +87,7 @@ def pad(
   # Calculate padding for each dimension
   pad_widths = []
   for i, (dim_size, block_spec) in enumerate(zip(arr.shape, block_shape)):
-    if block_spec == 'power_of_2':
+    if block_spec == 'power_of_2_lanes':
       target_size = max(2**log2(dim_size), NUM_LANES)
     elif isinstance(block_spec, int):
       target_size = pl.cdiv(dim_size, block_spec) * block_spec
@@ -273,7 +273,7 @@ def convert_to_sublane_sort_format(arr):
   ]
   arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
   if arr.shape[1] < NUM_LANES:
-    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2'))
+    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'))
   tiles = split_array_to_tiles(arr)
   return tiles
 
