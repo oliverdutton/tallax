@@ -22,15 +22,10 @@ def blockwise_topk(
   Compute blockwise top-k using a sinking sort approach.
   """
   num_tokens = logits.shape[0]
+  vocab_size = logits.shape[-1]
 
-  def process_block(block_idx, carry):
-    """Process a single tile with sinking sort."""
-    values_list, indices_list = carry
-
-    # Extract current block
-    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
-
+  def update_block_topk(current_values, current_indices, values_list, indices_list):
+    """Update block topk with current values/indices using sinking sort."""
     # Sinking sort: compare and swap through max_k levels
     for level in range(max_k):
       if level < start_k:
@@ -57,12 +52,49 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  return unrolled_fori_loop(
-      logits.shape[-1] // num_blocks,
+  def process_block(block_idx, carry):
+    """Process a single tile with sinking sort."""
+    values_list, indices_list = carry
+
+    # Extract current block
+    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
+    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
+
+    return update_block_topk(current_values, current_indices, values_list, indices_list)
+
+  # Process full blocks
+  num_full_blocks = vocab_size // num_blocks
+  values_list, indices_list = unrolled_fori_loop(
+      num_full_blocks,
       process_block,
       (block_topk_values, block_topk_indices),
       unroll=unroll,
   )
+
+  # Handle remaining elements if vocab_size doesn't divide num_blocks
+  remainder = vocab_size % num_blocks
+  if remainder > 0:
+    # Load the final boundary segment
+    final_values = logits[..., pl.dslice(num_full_blocks * num_blocks, remainder)]
+    # Pad to num_blocks with f32 min
+    pad_width = num_blocks - remainder
+    final_values = jnp.concatenate([
+        final_values,
+        jnp.full((num_tokens, pad_width), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
+    ], axis=-1)
+
+    # Create indices for the final segment, padded with 0
+    final_indices = jnp.concatenate([
+        jnp.full((num_tokens, remainder), num_full_blocks, jnp.int32),
+        jnp.zeros((num_tokens, pad_width), jnp.int32)
+    ], axis=-1)
+
+    # Update block_topk with the overspill
+    values_list, indices_list = update_block_topk(
+        final_values, final_indices, values_list, indices_list
+    )
+
+  return (values_list, indices_list)
 
 
 def topk_blockwise_superset_kernel(
