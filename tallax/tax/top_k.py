@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
+from tallax.utils import NUM_LANES, is_cpu_platform
 
 
 def blockwise_topk(
@@ -57,12 +57,27 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  return unrolled_fori_loop(
-      logits.shape[-1] // num_blocks,
-      process_block,
+  length = logits.shape[-1] // num_blocks
+  unroll = min(unroll, length)
+
+  def unrolled_body(i, carry):
+    i *= unroll
+    for j in range(unroll):
+      carry = process_block(i + j, carry)
+    return carry
+
+  carry = jax.lax.fori_loop(
+      0,
+      length // unroll,
+      unrolled_body,
       (block_topk_values, block_topk_indices),
-      unroll=unroll,
   )
+
+  # Handle remainder iterations
+  for j in range(length % unroll):
+    carry = process_block((length // unroll) * unroll + j, carry)
+
+  return carry
 
 
 def topk_blockwise_superset_kernel(
@@ -207,12 +222,12 @@ def topk_blockwise_superset_kernel(
 @functools.partial(
     jit,
     static_argnames=(
-        "max_k", 
-        "block_size", 
-        "num_blocks", 
-        "blockwise_topk_unroll", 
-        "block_topk_schedule", 
-        "topk_schedule", 
+        "max_k",
+        "block_size",
+        "num_blocks",
+        "blockwise_topk_unroll",
+        "block_topk_schedule",
+        "topk_schedule",
         "interpret"
     ),
 )
@@ -313,12 +328,12 @@ def top_dynamic_k(
 @functools.partial(
     jit,
     static_argnames=(
-        "k", 
-        "block_size", 
-        "num_blocks", 
-        "blockwise_topk_unroll", 
-        "block_topk_schedule", 
-        "topk_schedule", 
+        "k",
+        "block_size",
+        "num_blocks",
+        "blockwise_topk_unroll",
+        "block_topk_schedule",
+        "topk_schedule",
         "interpret"
     ),
 )
