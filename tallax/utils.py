@@ -115,12 +115,6 @@ def pad(
   return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
 
 
-def pad_to_tiles(x, val=0):
-  """Deprecated: Use pad() instead.
-
-  Pad array to multiple of NUM_SUBLANES in dim0 and NUM_LANES in dim1.
-  """
-  return pad(x, block_shape=(NUM_SUBLANES, NUM_LANES), val=val)
 
 
 def standardize(x):
