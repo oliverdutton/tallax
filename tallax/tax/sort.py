@@ -926,7 +926,10 @@ def sort(
   ]
 
   # Pad to required dimensions
-  operands = [pad(x, descending=descending) for x in operands]
+  operands = [
+      pad(x, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'), prepend=(False, descending))
+      for x in operands
+  ]
 
   # Sort based on array size
   if num_stages <= num_vmem_substages:

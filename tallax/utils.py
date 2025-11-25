@@ -45,43 +45,82 @@ def get_dtype_info(x):
     raise ValueError('Only int and float supported')
 
 
-def pad(x, descending=False):
+def pad(
+    arr: jax.Array,
+    block_shape: tuple[int | str, ...] = None,
+    prepend: bool | tuple[bool, ...] = False,
+    val = None
+) -> jax.Array:
   """Pad array to satisfy alignment requirements.
 
-  Pads to multiple of NUM_SUBLANES in dim0 and power of 2 in dim1.
-  Uses max value (or nan) as padding to not affect sort order.
+  Args:
+    arr: Input array to pad.
+    block_shape: Target block shape for each dimension. Can be:
+      - int: Pad to be multiple of this value
+      - 'power_of_2_lanes': Pad to next power of 2 (at least NUM_LANES)
+      Defaults to (NUM_SUBLANES, NUM_LANES).
+    prepend: Whether to prepend (True) or append (False) padding.
+      Can be a single bool or tuple of bools for each dimension.
+    val: Padding value. If None, uses max value (or nan) for sorting.
+
+  Returns:
+    Padded array.
   """
-  dim0, dim1 = x.shape
-  pad_dim0 = pl.cdiv(dim0, NUM_SUBLANES) * NUM_SUBLANES
-  pad_dim1 = max(2**log2(dim1), NUM_LANES)
+  # Handle default block_shape
+  if block_shape is None:
+    block_shape = (NUM_SUBLANES, NUM_LANES)
 
-  pad_val = get_dtype_info(x).max
-  if jnp.issubdtype(x.dtype, jnp.floating):
-    pad_val = jnp.nan
+  if len(block_shape) != arr.ndim:
+    raise ValueError(
+        f"block_shape length {len(block_shape)} must match array ndim {arr.ndim}"
+    )
 
-  return jnp.pad(
-      x,
-      ((0, pad_dim0 - dim0),
-       (0, pad_dim1 - dim1) if not descending else (pad_dim1 - dim1, 0)),
-      mode='constant',
-      constant_values=pad_val
-  )
+  # Normalize prepend to tuple
+  if isinstance(prepend, bool):
+    prepend = (prepend,) * arr.ndim
+
+  if len(prepend) != arr.ndim:
+    raise ValueError(
+        f"prepend length {len(prepend)} must match array ndim {arr.ndim}"
+    )
+
+  # Calculate padding for each dimension
+  pad_widths = []
+  for i, (dim_size, block_spec) in enumerate(zip(arr.shape, block_shape)):
+    if block_spec == 'power_of_2_lanes':
+      target_size = max(2**log2(dim_size), NUM_LANES)
+    elif isinstance(block_spec, int):
+      target_size = pl.cdiv(dim_size, block_spec) * block_spec
+    else:
+      raise ValueError(f"Invalid block_shape element: {block_spec}")
+
+    pad_size = target_size - dim_size
+    if prepend[i]:
+      pad_widths.append((pad_size, 0))
+    else:
+      pad_widths.append((0, pad_size))
+
+  # Determine padding value
+  if val is None:
+    pad_val = get_dtype_info(arr).max
+    if jnp.issubdtype(arr.dtype, jnp.floating):
+      pad_val = jnp.nan
+  else:
+    pad_val = val
+
+  # Return early if no padding needed
+  if all(w == (0, 0) for w in pad_widths):
+    return arr
+
+  return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
 
 
 def pad_to_tiles(x, val=0):
-  """Pad array to multiple of NUM_SUBLANES in dim0 and NUM_LANES in dim1."""
-  dim0, dim1 = x.shape
-  pad_dim0 = pl.cdiv(dim0, NUM_SUBLANES) * NUM_SUBLANES
-  pad_dim1 = pl.cdiv(dim1, NUM_LANES) * NUM_LANES
+  """Deprecated: Use pad() instead.
 
-  if dim0 == pad_dim0 and dim1 == pad_dim1:
-    return x
-
-  return jnp.pad(
-      x,
-      ((0, pad_dim0 - dim0), (0, pad_dim1 - dim1)),
-      constant_values=val
-  )
+  Pad array to multiple of NUM_SUBLANES in dim0 and NUM_LANES in dim1.
+  """
+  return pad(x, block_shape=(NUM_SUBLANES, NUM_LANES), val=val)
 
 
 def standardize(x):
@@ -234,7 +273,7 @@ def convert_to_sublane_sort_format(arr):
   ]
   arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
   if arr.shape[1] < NUM_LANES:
-    arr = pad(arr)
+    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'))
   tiles = split_array_to_tiles(arr)
   return tiles
 

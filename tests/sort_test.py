@@ -99,7 +99,8 @@ def verify_sort(
       debug_msg = []
       for ox, op in zip(out_xla, out_pallas):
         debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
-      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{'\n'.join(debug_msg)}")
+      debug_output = '\n'.join(debug_msg)
+      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{debug_output}")
 
     assert valid, "Pallas output does not match XLA output for stable sort"
 
@@ -120,7 +121,8 @@ def verify_sort(
       debug_msg = []
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
         debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
-      pytest.fail(f"Pallas output is not sorted:\n{'\n'.join(debug_msg)}")
+      debug_output = '\n'.join(debug_msg)
+      pytest.fail(f"Pallas output is not sorted:\n{debug_output}")
 
     assert valid, "out_pallas must be sorted (verified by re-sorting stably)"
 
