@@ -52,22 +52,21 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  def process_block(block_idx, carry):
+  def process_block(block_idx, block_topk_outs):
     """Process a single tile with sinking sort."""
-    values_list, indices_list = carry
-
     # Extract current block
     current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
     current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
 
-    return update_block_topk(current_values, current_indices, values_list, indices_list)
+    return update_block_topk(current_values, current_indices, *block_topk_outs)
 
   # Process full blocks
   num_full_blocks = vocab_size // num_blocks
-  values_list, indices_list = unrolled_fori_loop(
+  block_topk_outs = (block_topk_values, block_topk_indices)
+  block_topk_outs = unrolled_fori_loop(
       num_full_blocks,
       process_block,
-      (block_topk_values, block_topk_indices),
+      block_topk_outs,
       unroll=unroll,
   )
 
@@ -83,11 +82,9 @@ def blockwise_topk(
     final_indices = jnp.full((num_tokens, num_blocks), num_full_blocks, jnp.int32)
 
     # Update block_topk with the overspill
-    values_list, indices_list = update_block_topk(
-        final_values, final_indices, values_list, indices_list
-    )
+    block_topk_outs = update_block_topk(final_values, final_indices, *block_topk_outs)
 
-  return (values_list, indices_list)
+  return block_topk_outs
 
 
 def topk_blockwise_superset_kernel(
