@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 
 # Import benchmark utils
-from .benchmark_utils import benchmark
+from tallax.test_utils import benchmark
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
