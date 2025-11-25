@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
 
 
 def blockwise_topk(
@@ -77,17 +77,10 @@ def blockwise_topk(
     # Load the final boundary segment
     final_values = logits[..., pl.dslice(num_full_blocks * num_blocks, remainder)]
     # Pad to num_blocks with f32 min
-    pad_width = num_blocks - remainder
-    final_values = jnp.concatenate([
-        final_values,
-        jnp.full((num_tokens, pad_width), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-    ], axis=-1)
+    final_values = pad(final_values, block_shape=(1, num_blocks), val=jnp.finfo(jnp.float32).min)
 
-    # Create indices for the final segment, padded with 0
-    final_indices = jnp.concatenate([
-        jnp.full((num_tokens, remainder), num_full_blocks, jnp.int32),
-        jnp.zeros((num_tokens, pad_width), jnp.int32)
-    ], axis=-1)
+    # Create indices for the final segment
+    final_indices = jnp.full((num_tokens, num_blocks), num_full_blocks, jnp.int32)
 
     # Update block_topk with the overspill
     values_list, indices_list = update_block_topk(
