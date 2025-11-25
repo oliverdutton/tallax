@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
 
 
 def blockwise_topk(
@@ -22,15 +22,10 @@ def blockwise_topk(
   Compute blockwise top-k using a sinking sort approach.
   """
   num_tokens = logits.shape[0]
+  vocab_size = logits.shape[-1]
 
-  def process_block(block_idx, carry):
-    """Process a single tile with sinking sort."""
-    values_list, indices_list = carry
-
-    # Extract current block
-    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
-
+  def update_block_topk(current_values, current_indices, values_list, indices_list):
+    """Update block topk with current values/indices using sinking sort."""
     # Sinking sort: compare and swap through max_k levels
     for level in range(max_k):
       if level < start_k:
@@ -57,12 +52,39 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  return unrolled_fori_loop(
-      logits.shape[-1] // num_blocks,
+  def process_block(block_idx, block_topk_outs):
+    """Process a single tile with sinking sort."""
+    # Extract current block
+    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
+    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
+
+    return update_block_topk(current_values, current_indices, *block_topk_outs)
+
+  # Process full blocks
+  num_full_blocks = vocab_size // num_blocks
+  block_topk_outs = (block_topk_values, block_topk_indices)
+  block_topk_outs = unrolled_fori_loop(
+      num_full_blocks,
       process_block,
-      (block_topk_values, block_topk_indices),
+      block_topk_outs,
       unroll=unroll,
   )
+
+  # Handle remaining elements if vocab_size doesn't divide num_blocks
+  remainder = vocab_size % num_blocks
+  if remainder > 0:
+    # Load the final boundary segment
+    final_values = logits[..., pl.dslice(num_full_blocks * num_blocks, remainder)]
+    # Pad to num_blocks with f32 min
+    final_values = pad(final_values, block_shape=(1, num_blocks), val=jnp.finfo(jnp.float32).min)
+
+    # Create indices for the final segment
+    final_indices = jnp.full((num_tokens, num_blocks), num_full_blocks, jnp.int32)
+
+    # Update block_topk with the overspill
+    block_topk_outs = update_block_topk(final_values, final_indices, *block_topk_outs)
+
+  return block_topk_outs
 
 
 def topk_blockwise_superset_kernel(
