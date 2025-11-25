@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
+from tallax.utils import NUM_LANES, is_cpu_platform, pad
 
 
 def blockwise_topk(
@@ -63,11 +63,11 @@ def blockwise_topk(
   # Process full blocks
   num_full_blocks = vocab_size // num_blocks
   block_topk_outs = (block_topk_values, block_topk_indices)
-  block_topk_outs = unrolled_fori_loop(
+  block_topk_outs = jax.lax.fori_loop(
+      0,
       num_full_blocks,
       process_block,
       block_topk_outs,
-      unroll=unroll,
   )
 
   # Handle remaining elements if vocab_size doesn't divide num_blocks

@@ -296,22 +296,6 @@ def convert_from_sublane_sort_format(tiles, shape):
 
 ### Loop Utilities
 
-def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
-  """Execute for loop with manual unrolling for better performance."""
-  unroll = min(length, unroll)
-
-  def unrolled_body(i, carry):
-    i *= unroll
-    for j in range(unroll):
-      carry = body_fn(i + j, carry)
-    return carry
-
-  carry = jax.lax.fori_loop(0, length // unroll, unrolled_body, init_val)
-  for j in range(length % unroll):
-    carry = body_fn((length // unroll) * unroll + j, carry)
-  return carry
-
-
 def transpose_list_of_lists(tree):
   """Transpose nested list structure."""
   outer = jax.tree.structure(type(tree)('*') * len(tree))
