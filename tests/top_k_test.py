@@ -34,58 +34,51 @@ def test_top_k():
     is_cpu = is_cpu_platform()
 
     if is_cpu:
-        # On CPU, Pallas interpret mode can be unstable, so just test XLA
-        pytest.skip("Skipping Pallas test on CPU - use TPU for full testing")
+        # On CPU: Test validation function with XLA reference (Pallas interpret mode segfaults)
+        num_queries = 8
+        vocab_size = 2048
+        k = 16
 
-    # TPU configuration
-    num_queries = 16
-    vocab_size = 201088
-    k = 64
+        key = jax.random.key(0)
+        logits = jax.random.normal(
+            key, (num_queries, vocab_size), dtype=jnp.float32
+        ).astype(jnp.bfloat16)
 
-    # Generate test data
-    key = jax.random.key(0)
-    logits = jax.random.normal(
-        key, (num_queries, vocab_size), dtype=jnp.float32
-    ).astype(jnp.bfloat16)
+        # Use XLA reference implementation
+        result = jax.lax.top_k(logits, k=k)
 
-    # Run both implementations
-    pallas_result = tax.top_k(logits, k=k, block_size=8, interpret=False)
+        # Validate - this tests that our validation function works correctly
+        validation = check_topk_out(logits, result)
+        assert validation.all(), f"Validation failed: {validation.sum()}/{num_queries} rows passed"
+    else:
+        # On TPU: Test actual Pallas implementation with full size
+        num_queries = 16
+        vocab_size = 201088
+        k = 64
 
-    # Validate results
-    validation = check_topk_out(logits, pallas_result)
+        # Generate test data
+        key = jax.random.key(0)
+        logits = jax.random.normal(
+            key, (num_queries, vocab_size), dtype=jnp.float32
+        ).astype(jnp.bfloat16)
 
-    # Assert all rows pass validation
-    assert validation.all(), f"Top-k validation failed: {validation.sum()}/{num_queries} rows passed"
+        # Run Pallas implementation
+        pallas_result = tax.top_k(logits, k=k, block_size=8, interpret=False)
 
-    # Also compare with XLA reference implementation
-    xla_result = jax.lax.top_k(logits, k=k)
+        # Validate results
+        validation = check_topk_out(logits, pallas_result)
+        assert validation.all(), f"Top-k validation failed: {validation.sum()}/{num_queries} rows passed"
 
-    # Values should match exactly
-    values_match = (pallas_result[0] == xla_result[0]).all()
-    assert values_match, "Top-k values don't match XLA reference implementation"
+        # Also compare with XLA reference implementation
+        xla_result = jax.lax.top_k(logits, k=k)
 
-    # Indices should map to the same values (may differ in order for ties)
-    indices_valid = (logits[jnp.arange(num_queries)[:, None], pallas_result[1]] == xla_result[0]).all()
-    assert indices_valid, "Top-k indices don't map to correct values"
+        # Values should match exactly
+        values_match = (pallas_result[0] == xla_result[0]).all()
+        assert values_match, "Top-k values don't match XLA reference implementation"
 
-
-def test_top_k_small():
-    """Quick smoke test that validates the check_topk_out function with XLA."""
-    k = 8
-    num_queries = 2
-    vocab_size = 128
-
-    key = jax.random.key(42)
-    logits = jax.random.normal(
-        key, (num_queries, vocab_size), dtype=jnp.float32
-    ).astype(jnp.bfloat16)
-
-    # Use XLA top_k (reference implementation) to test validation function
-    result = jax.lax.top_k(logits, k=k)
-
-    # Validate - this tests that our validation function works correctly
-    validation = check_topk_out(logits, result)
-    assert validation.all(), "Validation function failed on XLA top-k output"
+        # Indices should map to the same values (may differ in order for ties)
+        indices_valid = (logits[jnp.arange(num_queries)[:, None], pallas_result[1]] == xla_result[0]).all()
+        assert indices_valid, "Top-k indices don't map to correct values"
 
 
 if __name__ == "__main__":
