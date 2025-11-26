@@ -164,28 +164,19 @@ def compute_schedules(max_k: int, num_blocks: int = 128, block_size: int = 8):
   Returns:
       tuple: (block_topk_schedule, topk_schedule)
   """
-  # Use calculate_depth_thresholds to get optimal depths
+  # Get optimal depth thresholds from probability analysis
   sorted_depths, power_of_2_depths = calculate_depth_thresholds(
       max_k, num_blocks, block_size=block_size
   )
 
-  # Use power of 2 depths for block_topk_schedule
-  block_topk_schedule = power_of_2_depths
+  # Convert thresholds to schedules by adding 1
+  block_topk_schedule = tuple(d + 1 for d in sorted_depths)
+  topk_schedule = tuple(d + 1 for d in power_of_2_depths)
 
   # Always ensure max_k is included
   if not block_topk_schedule or block_topk_schedule[-1] != max_k:
     block_topk_schedule = block_topk_schedule + (max_k,)
-
-  # For topk_schedule, use a simpler schedule
-  # Use the median depth from sorted_depths if available
-  if sorted_depths:
-    median_idx = len(sorted_depths) // 2
-    median_depth = sorted_depths[median_idx]
-    if median_depth >= max_k:
-      topk_schedule = (max_k,)
-    else:
-      topk_schedule = (median_depth, max_k)
-  else:
-    topk_schedule = (max_k,)
+  if not topk_schedule or topk_schedule[-1] != max_k:
+    topk_schedule = topk_schedule + (max_k,)
 
   return block_topk_schedule, topk_schedule
