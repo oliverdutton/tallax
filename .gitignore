@@ -107,3 +107,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+# Profiler output
+plugins/
