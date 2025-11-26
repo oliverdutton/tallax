@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.tax.topk_theory import compute_schedules, compute_power_of_2_schedule
+from tallax.tax.topk_theory import calculate_depth_thresholds, compute_power_of_2_schedule
 from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
 
 
@@ -275,57 +275,32 @@ def top_dynamic_k(
   k = jnp.broadcast_to(k, (num_tokens,))
 
   # Auto-compute schedules if not provided
-  schedules_auto_computed = False
-
-  if block_topk_schedule is None and topk_schedule is None:
-    # Both schedules are None - auto-compute both
-    block_topk_schedule, topk_schedule = compute_schedules(
-        max_k, num_blocks=num_blocks, block_size=block_size
-    )
-    schedules_auto_computed = True
+  if block_topk_schedule is None:
+    if topk_schedule is not None:
+      raise ValueError("Cannot provide topk_schedule without block_topk_schedule")
+    # Auto-compute both from thresholds
+    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size)
+    block_topk_schedule = tuple(t + 1 for t in thresholds)
+    if not block_topk_schedule or block_topk_schedule[-1] != max_k:
+      block_topk_schedule = block_topk_schedule + (max_k,)
+    topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
+    if topk_schedule[-1] != max_k:
+      topk_schedule = topk_schedule + (max_k,)
     print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
     print(f"  block_topk_schedule: {block_topk_schedule}")
     print(f"  topk_schedule: {topk_schedule}")
-
-  elif block_topk_schedule is not None and topk_schedule is None:
-    # block_topk_schedule provided, derive topk_schedule
-    if not block_topk_schedule:
-      raise ValueError("block_topk_schedule cannot be empty")
-    if block_topk_schedule[-1] != max_k:
-      raise ValueError(f"block_topk_schedule must end with max_k={max_k}, got {block_topk_schedule[-1]}")
-
-    # Use power-of-2 schedule based on block_topk_schedule
-    topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
-    if not topk_schedule or topk_schedule[-1] != max_k:
-      topk_schedule = topk_schedule + (max_k,) if topk_schedule else (max_k,)
-
-    print(f"Derived topk_schedule from block_topk_schedule:")
-    print(f"  topk_schedule: {topk_schedule}")
-
-  elif topk_schedule is not None and block_topk_schedule is None:
-    # topk_schedule provided, must compute block_topk_schedule
-    if not topk_schedule:
-      raise ValueError("topk_schedule cannot be empty")
-    if topk_schedule[-1] != max_k:
-      raise ValueError(f"topk_schedule must end with max_k={max_k}, got {topk_schedule[-1]}")
-
-    # Auto-compute block_topk_schedule from scratch
-    block_topk_schedule, _ = compute_schedules(
-        max_k, num_blocks=num_blocks, block_size=block_size
-    )
-    print(f"Auto-computed block_topk_schedule (topk_schedule provided):")
-    print(f"  block_topk_schedule: {block_topk_schedule}")
-
   else:
-    # Both schedules provided - validate them
-    if not block_topk_schedule:
-      raise ValueError("block_topk_schedule cannot be empty")
-    if not topk_schedule:
-      raise ValueError("topk_schedule cannot be empty")
-    if block_topk_schedule[-1] != max_k:
-      raise ValueError(f"block_topk_schedule must end with max_k={max_k}, got {block_topk_schedule[-1]}")
-    if topk_schedule[-1] != max_k:
-      raise ValueError(f"topk_schedule must end with max_k={max_k}, got {topk_schedule[-1]}")
+    # Validate block_topk_schedule
+    if not block_topk_schedule or block_topk_schedule[-1] != max_k:
+      raise ValueError(f"block_topk_schedule must be non-empty and end with max_k={max_k}")
+    # Derive or validate topk_schedule
+    if topk_schedule is None:
+      topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
+      if topk_schedule[-1] != max_k:
+        topk_schedule = topk_schedule + (max_k,)
+      print(f"Derived topk_schedule: {topk_schedule}")
+    elif not topk_schedule or topk_schedule[-1] != max_k:
+      raise ValueError(f"topk_schedule must be non-empty and end with max_k={max_k}")
 
   topk_schedule = (0,) + topk_schedule
   block_topk_schedule = (0,) + block_topk_schedule

@@ -153,35 +153,3 @@ def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0
   return tuple(sorted(depths))
 
 
-def compute_schedules(max_k: int, num_blocks: int = 128, block_size: int = 8):
-  """
-  Auto-compute block_topk_schedule and topk_schedule based on depth probabilities.
-
-  Args:
-      max_k: Maximum k value for top-k computation
-      num_blocks: Number of blocks (lanes) for computation
-      block_size: Token blocking size
-
-  Returns:
-      tuple: (block_topk_schedule, topk_schedule)
-  """
-  # Get optimal depth thresholds from probability analysis (0-indexed)
-  thresholds = calculate_depth_thresholds(
-      max_k, num_blocks, block_size=block_size
-  )
-
-  # Convert thresholds to schedules by adding 1
-  block_topk_schedule = tuple(t + 1 for t in thresholds)
-
-  # Always ensure max_k is included in block_topk_schedule
-  if not block_topk_schedule or block_topk_schedule[-1] != max_k:
-    block_topk_schedule = block_topk_schedule + (max_k,)
-
-  # Compute power-of-2 schedule from block_topk_schedule for topk_schedule
-  topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
-
-  # Ensure max_k is included in topk_schedule
-  if not topk_schedule or topk_schedule[-1] != max_k:
-    topk_schedule = topk_schedule + (max_k,)
-
-  return block_topk_schedule, topk_schedule
