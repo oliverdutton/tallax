@@ -6,8 +6,8 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.tax.topk_theory import calculate_depth_thresholds, compute_power_of_2_schedule
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
+from tallax.tax.topk_theory import calculate_depth_thresholds
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2
 
 
 def blockwise_topk(
@@ -284,7 +284,7 @@ def top_dynamic_k(
     print(f"  block_topk_schedule: {block_topk_schedule}")
 
   if topk_schedule is None:
-    topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
+    topk_schedule = tuple(sorted(set(2**log2(x) for x in block_topk_schedule)))
 
   if guarantee_convergence and block_topk_schedule[-1] != max_k:
     block_topk_schedule += (max_k,)
