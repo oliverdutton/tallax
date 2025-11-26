@@ -236,6 +236,7 @@ def topk_blockwise_superset_kernel(
         "blockwise_topk_unroll", 
         "block_topk_schedule", 
         "topk_schedule", 
+        "guarantee_convergence",
         "interpret"
     ),
 )
@@ -248,6 +249,7 @@ def top_dynamic_k(
     blockwise_topk_unroll: int = 16,
     block_topk_schedule = None,
     topk_schedule = None,
+    guarantee_convergence = False,
     interpret: bool = False,
 ):
   """
@@ -276,37 +278,20 @@ def top_dynamic_k(
 
   # Auto-compute schedules if not provided
   if block_topk_schedule is None:
-    if topk_schedule is not None:
-      raise ValueError("Cannot provide topk_schedule without block_topk_schedule")
-    # Auto-compute both from thresholds
     thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size)
     block_topk_schedule = tuple(t + 1 for t in thresholds)
-    if not block_topk_schedule or block_topk_schedule[-1] != max_k:
-      block_topk_schedule = block_topk_schedule + (max_k,)
-    topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
-    if topk_schedule[-1] != max_k:
-      topk_schedule = topk_schedule + (max_k,)
     print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
     print(f"  block_topk_schedule: {block_topk_schedule}")
-    print(f"  topk_schedule: {topk_schedule}")
-  else:
-    # Validate block_topk_schedule
-    if not block_topk_schedule or block_topk_schedule[-1] != max_k:
-      raise ValueError(f"block_topk_schedule must be non-empty and end with max_k={max_k}")
-    # Derive or validate topk_schedule
-    if topk_schedule is None:
-      topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
-      if topk_schedule[-1] != max_k:
-        topk_schedule = topk_schedule + (max_k,)
-      print(f"Derived topk_schedule: {topk_schedule}")
-    elif not topk_schedule or topk_schedule[-1] != max_k:
-      raise ValueError(f"topk_schedule must be non-empty and end with max_k={max_k}")
 
+  if topk_schedule is None:
+    topk_schedule = compute_power_of_2_schedule(block_topk_schedule)
+
+  if guarantee_convergence and block_topk_schedule[-1] != max_k:
+    block_topk_schedule += (max_k,)
+  if guarantee_convergence and topk_schedule[-1] != max_k:
+    topk_schedule += (max_k,)
   topk_schedule = (0,) + topk_schedule
   block_topk_schedule = (0,) + block_topk_schedule
-
-  if (topk_schedule[-1] < block_topk_schedule[-1] - 1):
-    raise ValueError('Global top k sort must cover block top m search')
 
   # blockwise took / sort pad len
   buffer_size = max(topk_schedule[-1], block_topk_schedule[-1]) * num_blocks
@@ -352,8 +337,8 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  valid = (depths.reshape(-1, block_size) < block_topk_schedule[-1]).all(1) | (block_topk_schedule[-1] == max_k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid
+  valid = (depths.reshape(-1, block_size) < min(block_topk_schedule[-1], topk_schedule[-1]+1)).all(1) | (block_topk_schedule[-1] == max_k)
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid, depths
 
   
 @functools.partial(
@@ -387,5 +372,6 @@ def top_k(
     blockwise_topk_unroll=blockwise_topk_unroll,
     block_topk_schedule=block_topk_schedule,
     topk_schedule=topk_schedule,
+    guarantee_convergence=True,
     interpret=interpret,
   )[:2]
