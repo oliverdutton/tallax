@@ -37,17 +37,6 @@ def blockwise_topk(
           current_values
       )
     for level in range(start_k, max_k):
-      '''
-      if level < start_k:
-        # Invalidate already-found elements
-        # We use the indices list to check identity
-        current_values = jnp.where(
-            current_indices == indices_list[level],
-            float("-inf"),
-            current_values
-        )
-      else:
-      '''
       # Exchange with stored top-k
       # Only perform the swap if the value is larger
       mask = current_values > values_list[level]
