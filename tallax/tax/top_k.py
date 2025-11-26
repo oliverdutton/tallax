@@ -50,30 +50,6 @@ def blockwise_topk(
             jnp.where(m, current_indices, indices_list[level])
             for m in (mask, ~mask)
         )
-    '''
-    if start_k != 0:
-      # Invalidate already-found elements
-      cutoff_values = values_list[start_k-1]
-      cutoff_indices = indices_list[start_k-1]
-      current_values = jnp.where(
-          (current_values > cutoff_values) | ((current_values == cutoff_values) & (current_indices <= cutoff_indices)),
-          float("-inf"),
-          current_values
-      )
-    for level in range(start_k, max_k):
-      # Exchange with stored top-k
-      # Only perform the swap if the value is larger
-      mask = current_values > values_list[level]
-
-      values_list[level], current_values = (
-          jnp.where(m, current_values, values_list[level])
-          for m in (mask, ~mask)
-      )
-      indices_list[level], current_indices = (
-          jnp.where(m, current_indices, indices_list[level])
-          for m in (mask, ~mask)
-      )
-    '''
 
     return (values_list, indices_list)
 
