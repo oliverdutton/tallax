@@ -1014,3 +1014,44 @@ def sort(
       operands.append(indices)
 
   return tuple(operands)
+
+
+@functools.partial(
+    jax.jit,
+    static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
+                     'is_stable', 'num_keys', 'block_token', 'interpret')
+)
+def sort_xla_equivalent(
+    operand,
+    num_keys: int,
+    is_stable: bool = False,
+    return_argsort: bool = False,
+    descending: bool = False,
+    num_vmem_substages: int | None = None,
+    block_token: int | None = None,
+    interpret: bool | None = None,
+) -> tuple[jax.Array, ...]:
+  """Reference implementation using XLA sort for correctness testing."""
+  del num_vmem_substages, block_token, interpret
+  operands = jax.tree.leaves(operand)
+
+  if return_argsort:
+    operands.append(
+        jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
+    )
+  if descending and is_stable:
+    operands.insert(
+        num_keys,
+        -jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
+    )
+    num_keys += 1
+
+  outs = jax.lax.sort(operands, num_keys=num_keys, is_stable=is_stable)
+
+  if descending and is_stable:
+    outs = list(outs)
+    outs.pop(num_keys - 1)
+  if descending:
+    outs = tuple(x[..., ::-1] for x in outs)
+
+  return tuple(outs)

@@ -8,7 +8,6 @@ from tallax.test_utils import benchmark
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
-from tests.sort_test import _equiv_xla_based_sort
 
 def run_benchmarks():
   ntoken = 8
@@ -36,7 +35,7 @@ def run_benchmarks():
             def _run():
               return (
                   tax.sort(operands, num_keys=num_keys, interpret=interpret, **kwargs),
-                  _equiv_xla_based_sort(operands, num_keys=num_keys, **kwargs)
+                  tax.sort_xla_equivalent(operands, num_keys=num_keys, **kwargs)
               )
             benchmark(_run)
 
