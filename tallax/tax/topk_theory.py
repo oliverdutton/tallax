@@ -100,6 +100,31 @@ def compute_depth_probs(k, num_bins):
   return probs
 
 
+def compute_power_of_2_schedule(schedule):
+  """
+  Convert a schedule to power-of-2 values.
+
+  Args:
+      schedule: Tuple of depth values
+
+  Returns:
+      Tuple of power-of-2 depth values, sorted and deduplicated
+  """
+  if not schedule:
+    return ()
+
+  power_of_2_depths = []
+  for depth in schedule:
+    if depth <= 0:
+      continue
+    # Round up to nearest power of 2
+    power_of_2_depth = 2 ** math.ceil(math.log2(depth))
+    power_of_2_depths.append(power_of_2_depth)
+
+  # Remove duplicates and sort
+  return tuple(sorted(set(power_of_2_depths)))
+
+
 def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0.95, 0.9999)):
   """
   Calculate minimum depths needed to reach probability thresholds.
@@ -123,8 +148,7 @@ def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0
   # Create sorted tuple of unique depths
   sorted_depths = tuple(sorted(depths))
   # Round each depth up to nearest power of 2
-  power_of_2_depths = tuple(sorted(set(
-    2 ** math.ceil(math.log2(depth)) for depth in depths)))
+  power_of_2_depths = compute_power_of_2_schedule(sorted_depths)
   return sorted_depths, power_of_2_depths
 
 
