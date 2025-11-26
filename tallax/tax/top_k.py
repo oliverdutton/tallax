@@ -6,6 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
+from tallax.tax.topk_theory import compute_schedules
 from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
 
 
@@ -273,12 +274,25 @@ def top_dynamic_k(
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
-  if topk_schedule is None:
-    topk_schedule = (8, max_k)
+  # Auto-compute schedules if not provided
+  schedules_auto_computed = (block_topk_schedule is None or topk_schedule is None)
+
+  if block_topk_schedule is None or topk_schedule is None:
+    auto_block_schedule, auto_topk_schedule = compute_schedules(
+        max_k, num_blocks=num_blocks, block_size=block_size
+    )
+    if block_topk_schedule is None:
+      block_topk_schedule = auto_block_schedule
+    if topk_schedule is None:
+      topk_schedule = auto_topk_schedule
+
+    # Print auto-computed schedules
+    if schedules_auto_computed:
+      print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
+      print(f"  block_topk_schedule: {block_topk_schedule}")
+      print(f"  topk_schedule: {topk_schedule}")
+
   topk_schedule = (0,) + topk_schedule
- 
-  if block_topk_schedule is None:
-    block_topk_schedule = (5, 7, 9, 12, max_k)
   block_topk_schedule = (0,) + block_topk_schedule
 
   if (topk_schedule[-1] < block_topk_schedule[-1] - 1):
