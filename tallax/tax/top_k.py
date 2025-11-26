@@ -68,6 +68,7 @@ def blockwise_topk(
       num_full_blocks,
       process_block,
       block_topk_outs,
+      unroll=min(unroll, num_full_blocks),
   )
 
   # Handle remaining elements if vocab_size doesn't divide num_blocks
