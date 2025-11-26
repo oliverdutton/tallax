@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
+from tallax.utils import NUM_LANES, is_cpu_platform, pad
 
 
 def blockwise_topk(
@@ -52,23 +52,38 @@ def blockwise_topk(
 
     return (values_list, indices_list)
 
-  def process_block(block_idx, block_topk_outs):
-    """Process a single tile with sinking sort."""
-    # Extract current block
-    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
-
-    return update_block_topk(current_values, current_indices, *block_topk_outs)
-
-  # Process full blocks
+  # Process full blocks using static slicing within unrolled chunks
   num_full_blocks = vocab_size // num_blocks
   block_topk_outs = (block_topk_values, block_topk_indices)
-  block_topk_outs = unrolled_fori_loop(
-      num_full_blocks,
-      process_block,
-      block_topk_outs,
-      unroll=unroll,
-  )
+
+  # Calculate number of unrolled iterations
+  unroll_clamped = min(num_full_blocks, unroll)
+  num_unrolled_iters = num_full_blocks // unroll_clamped
+
+  def unrolled_body(i, carry):
+    """Process unroll blocks at once using static slicing."""
+    i *= unroll_clamped
+    # Slice a chunk of unroll*num_blocks elements using dslice
+    chunk = logits.at[..., pl.dslice(i * num_blocks, unroll_clamped * num_blocks)].get()
+
+    for j in range(unroll_clamped):
+      block_idx = i + j
+      # Use static slicing within the chunk (j is compile-time constant due to unrolling)
+      current_values = chunk[..., j * num_blocks : (j + 1) * num_blocks]
+      current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
+      carry = update_block_topk(current_values, current_indices, *carry)
+
+    return carry
+
+  # Process unrolled iterations
+  block_topk_outs = jax.lax.fori_loop(0, num_unrolled_iters, unrolled_body, block_topk_outs)
+
+  # Handle remainder blocks (if num_full_blocks not divisible by unroll)
+  for j in range(num_full_blocks % unroll_clamped):
+    block_idx = num_unrolled_iters * unroll_clamped + j
+    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
+    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
+    block_topk_outs = update_block_topk(current_values, current_indices, *block_topk_outs)
 
   # Handle remaining elements if vocab_size doesn't divide num_blocks
   remainder = vocab_size % num_blocks
