@@ -6,7 +6,8 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad
+from tallax.tax.topk_theory import calculate_depth_thresholds
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2
 
 
 def blockwise_topk(
@@ -26,29 +27,29 @@ def blockwise_topk(
 
   def update_block_topk(current_values, current_indices, values_list, indices_list):
     """Update block topk with current values/indices using sinking sort."""
-    # Sinking sort: compare and swap through max_k levels
-    if start_k != 0:
-      # Invalidate already-found elements
-      cutoff_values = values_list[start_k-1]
-      cutoff_indices = indices_list[start_k-1]
-      current_values = jnp.where(
-          (current_values > cutoff_values) | ((current_values == cutoff_values) & (current_indices <= cutoff_indices)),
-          float("-inf"),
-          current_values
-      )
-    for level in range(start_k, max_k):
-      # Exchange with stored top-k
-      # Only perform the swap if the value is larger
-      mask = current_values > values_list[level]
+    # Sinking sort: compare and swap through max_k
+    for level in range(max_k):
+      if level < start_k:
+        # Invalidate already-found elements
+        # We use the indices list to check identity
+        current_values = jnp.where(
+            current_indices == indices_list[level],
+            float("-inf"),
+            current_values
+        )
+      else:
+        # Exchange with stored top-k
+        # Only perform the swap if the value is larger
+        mask = current_values > values_list[level]
 
-      values_list[level], current_values = (
-          jnp.where(m, current_values, values_list[level])
-          for m in (mask, ~mask)
-      )
-      indices_list[level], current_indices = (
-          jnp.where(m, current_indices, indices_list[level])
-          for m in (mask, ~mask)
-      )
+        values_list[level], current_values = (
+            jnp.where(m, current_values, values_list[level])
+            for m in (mask, ~mask)
+        )
+        indices_list[level], current_indices = (
+            jnp.where(m, current_indices, indices_list[level])
+            for m in (mask, ~mask)
+        )
 
     return (values_list, indices_list)
 
@@ -235,6 +236,7 @@ def topk_blockwise_superset_kernel(
         "blockwise_topk_unroll", 
         "block_topk_schedule", 
         "topk_schedule", 
+        "guarantee_convergence",
         "interpret"
     ),
 )
@@ -247,6 +249,7 @@ def top_dynamic_k(
     blockwise_topk_unroll: int = 16,
     block_topk_schedule = None,
     topk_schedule = None,
+    guarantee_convergence = False,
     interpret: bool = False,
 ):
   """
@@ -273,16 +276,23 @@ def top_dynamic_k(
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
-  if topk_schedule is None:
-    topk_schedule = (8, max_k)
-  topk_schedule = (0,) + topk_schedule
- 
+  # Auto-compute schedules if not provided
   if block_topk_schedule is None:
-    block_topk_schedule = (5, 7, 9, 12, max_k)
-  block_topk_schedule = (0,) + block_topk_schedule
+    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size)
+    block_topk_schedule = tuple(t + 1 for t in thresholds)
+    print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
+    print(f"  block_topk_schedule: {block_topk_schedule}")
 
-  if (topk_schedule[-1] < block_topk_schedule[-1] - 1):
-    raise ValueError('Global top k sort must cover block top m search')
+  if topk_schedule is None:
+    topk_schedule = tuple(sorted(set(2**log2(x - 1) for x in block_topk_schedule)))
+    print(f"  topk_schedule: {topk_schedule}")
+
+  if guarantee_convergence and block_topk_schedule[-1] != max_k:
+    block_topk_schedule += (max_k,)
+  if guarantee_convergence and topk_schedule[-1] != max_k:
+    topk_schedule += (max_k,)
+  topk_schedule = (0,) + topk_schedule
+  block_topk_schedule = (0,) + block_topk_schedule
 
   # blockwise took / sort pad len
   buffer_size = max(topk_schedule[-1], block_topk_schedule[-1]) * num_blocks
@@ -328,8 +338,8 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  valid = (depths.reshape(-1, block_size) < block_topk_schedule[-1]).all(1) | (block_topk_schedule[-1] == max_k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid
+  valid = (depths.reshape(-1, block_size) < min(block_topk_schedule[-1], topk_schedule[-1]+1)).all(1) | (block_topk_schedule[-1] == max_k)
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid, depths
 
   
 @functools.partial(
@@ -363,5 +373,6 @@ def top_k(
     blockwise_topk_unroll=blockwise_topk_unroll,
     block_topk_schedule=block_topk_schedule,
     topk_schedule=topk_schedule,
+    guarantee_convergence=True,
     interpret=interpret,
   )[:2]
