@@ -27,28 +27,28 @@ def blockwise_topk(
   def update_block_topk(current_values, current_indices, values_list, indices_list):
     """Update block topk with current values/indices using sinking sort."""
     # Sinking sort: compare and swap through max_k levels
-    for level in range(max_k):
-      if level < start_k:
-        # Invalidate already-found elements
-        # We use the indices list to check identity
-        current_values = jnp.where(
-            current_indices == indices_list[level],
-            float("-inf"),
-            current_values
-        )
-      else:
-        # Exchange with stored top-k
-        # Only perform the swap if the value is larger
-        mask = current_values > values_list[level]
+    if start_k != 0:
+      # Invalidate already-found elements
+      cutoff_values = values_list[start_k-1]
+      cutoff_indices = indices_list[start_k-1]
+      current_values = jnp.where(
+          (current_values > cutoff_values) | ((current_values == cutoff_values) & (current_indices <= cutoff_indices)),
+          float("-inf"),
+          current_values
+      )
+    for level in range(start_k, max_k):
+      # Exchange with stored top-k
+      # Only perform the swap if the value is larger
+      mask = current_values > values_list[level]
 
-        values_list[level], current_values = (
-            jnp.where(m, current_values, values_list[level])
-            for m in (mask, ~mask)
-        )
-        indices_list[level], current_indices = (
-            jnp.where(m, current_indices, indices_list[level])
-            for m in (mask, ~mask)
-        )
+      values_list[level], current_values = (
+          jnp.where(m, current_values, values_list[level])
+          for m in (mask, ~mask)
+      )
+      indices_list[level], current_indices = (
+          jnp.where(m, current_indices, indices_list[level])
+          for m in (mask, ~mask)
+      )
 
     return (values_list, indices_list)
 
