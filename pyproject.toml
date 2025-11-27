@@ -10,13 +10,15 @@ description = "High-performance sorting and top-k operations for JAX on TPUs."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "jax>=0.8.0",
-    "pandas"
+    "jax==0.8.0",
+    "pandas",
+    "numpy",
+    "scipy"
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/google/maxtext"
 
 [project.optional-dependencies]
-tpu = ["jax[tpu]>=0.8.0"]
+tpu = ["jax[tpu]==0.8.0"]
 dev = ["pytest>=7.0.0"]

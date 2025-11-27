@@ -6,7 +6,7 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.utils import NUM_LANES, NUM_SUBLANES, pad_to_tiles
+from tallax.utils import NUM_LANES, NUM_SUBLANES, pad
 
 
 def dense_gather_kernel(values_ref, indices_ref, output_ref):
@@ -83,15 +83,15 @@ def gather(
     )
 
   # Pad dimensions to be multiples of hardware constants
-  values = pad_to_tiles(values)
+  values = pad(values)
   # indices might need padding only in dim0 and dim1, but dim0 must match values.
-  # pad_to_tiles handles both dims.
-  indices = pad_to_tiles(indices)
+  # pad handles both dims.
+  indices = pad(indices)
 
   # If values and indices have different dim0 padding (e.g. one was already padded),
-  # pad_to_tiles handles it based on shape.
+  # pad handles it based on shape.
   # But we need them to have SAME dim0 length if we want to block them together.
-  # pad_to_tiles ensures dim0 is multiple of NUM_SUBLANES.
+  # pad ensures dim0 is multiple of NUM_SUBLANES.
   # If num_tokens was 13, both become 16. Correct.
 
   pad_tokens = values.shape[0]

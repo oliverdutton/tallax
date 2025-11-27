@@ -21,47 +21,6 @@ def exact_match(xs, ys):
   return nans_match & non_nans_match
 
 
-@functools.partial(
-    jax.jit,
-    static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
-                     'is_stable', 'num_keys', 'block_token', 'interpret')
-)
-def _equiv_xla_based_sort(
-    operand,
-    num_keys: int,
-    is_stable: bool = False,
-    return_argsort: bool = False,
-    descending: bool = False,
-    num_vmem_substages: int | None = None,
-    block_token: int | None = None,
-    interpret: bool | None = None,
-) -> tuple[jax.Array, ...]:
-  """Reference implementation using XLA sort for correctness testing."""
-  del num_vmem_substages, block_token, interpret
-  operands = jax.tree.leaves(operand)
-
-  if return_argsort:
-    operands.append(
-        jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
-    )
-  if descending and is_stable:
-    operands.insert(
-        num_keys,
-        -jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
-    )
-    num_keys += 1
-
-  outs = jax.lax.sort(operands, num_keys=num_keys, is_stable=is_stable)
-
-  if descending and is_stable:
-    outs = list(outs)
-    outs.pop(num_keys - 1)
-  if descending:
-    outs = tuple(x[..., ::-1] for x in outs)
-
-  return tuple(outs)
-
-
 def verify_sort(
     operand,
     num_keys: int,
@@ -89,7 +48,7 @@ def verify_sort(
   if is_stable:
     # Exact match required for stable sort
     kwargs_for_xla = kwargs.copy()
-    out_xla = _equiv_xla_based_sort(operand, **kwargs_for_xla)
+    out_xla = tax.sort_xla_equivalent(operand, **kwargs_for_xla)
     valid = exact_match(out_pallas, out_xla)
 
     if not valid:
@@ -99,13 +58,14 @@ def verify_sort(
       debug_msg = []
       for ox, op in zip(out_xla, out_pallas):
         debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
-      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{'\n'.join(debug_msg)}")
+      debug_output = '\n'.join(debug_msg)
+      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{debug_output}")
 
     assert valid, "Pallas output does not match XLA output for stable sort"
 
   else:
     # Check output is valid permutation with correct relative order
-    out_pallas_stable_sorted = _equiv_xla_based_sort(
+    out_pallas_stable_sorted = tax.sort_xla_equivalent(
         out_pallas,
         num_keys=num_keys,
         is_stable=True,
@@ -120,16 +80,17 @@ def verify_sort(
       debug_msg = []
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
         debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
-      pytest.fail(f"Pallas output is not sorted:\n{'\n'.join(debug_msg)}")
+      debug_output = '\n'.join(debug_msg)
+      pytest.fail(f"Pallas output is not sorted:\n{debug_output}")
 
     assert valid, "out_pallas must be sorted (verified by re-sorting stably)"
 
     narrs = len(out_pallas)
     kwargs_for_xla = kwargs.copy()
-    operands_fully_sorted = _equiv_xla_based_sort(
+    operands_fully_sorted = tax.sort_xla_equivalent(
         operand, **{**kwargs_for_xla, 'num_keys': narrs}
     )
-    out_pallas_fully_sorted = _equiv_xla_based_sort(
+    out_pallas_fully_sorted = tax.sort_xla_equivalent(
         out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
     )
     valid_permute = exact_match(operands_fully_sorted, out_pallas_fully_sorted)
@@ -137,7 +98,7 @@ def verify_sort(
     valid &= valid_permute
 
   if print_outputs:
-    o_pallas, o_xla = _equiv_xla_based_sort(operand, **kwargs)
+    o_pallas, o_xla = tax.sort_xla_equivalent(operand, **kwargs)
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 @pytest.mark.parametrize("is_stable", [False, True])
