@@ -21,3 +21,4 @@ dependencies = [
 
 [project.optional-dependencies]
 tpu = ["jax[tpu]==0.8.0"]
+dev = ["pytest>=7.0.0"]

@@ -1,34 +1,37 @@
-
-import functools
-
 import jax
 import jax.numpy as jnp
+import pytest
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
+from tests.test_utils import check_topk_out
 
 
-k = 64
-num_queries = 32
-vocab_size = 2048
+@pytest.mark.skipif(
+    is_cpu_platform(),
+    reason="Pallas interpret mode is unstable on CPU - use TPU for testing"
+)
+def test_top_k():
+    """Test top_k Pallas implementation on TPU."""
+    num_queries = 16
+    vocab_size = 201088
+    k = 64
 
-logit_key, key_act, key_weight = jax.random.split(jax.random.key(0), 3)
-logits = jax.random.normal(
-    key_weight, (num_queries, vocab_size), dtype=jnp.float32
-).astype(jnp.bfloat16)
+    # Generate test data
+    key = jax.random.key(0)
+    logits = jax.random.normal(
+        key, (num_queries, vocab_size), dtype=jnp.float32
+    ).astype(jnp.bfloat16)
 
-topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
+    # Run Pallas implementation
+    result = tax.top_k(logits, k=k, block_size=8, interpret=False)
 
-def tests():
-  interpret = is_cpu_platform()
-  print('topk', logits.shape, logits.dtype, k)
-  print("XLA: ", topk_xla(logits, k=k))
-  print("\nPallas:", tax.top_k(logits, k=k, block_size=8, interpret=interpret))
-  print(
-  [
-  (topk_xla(logits, k=k)[i] == tax.top_k(logits, k=k, block_size=8, interpret=interpret)[i]).mean() for i in range(2)
-  ]
-  )
+    # Validate results using check_topk_out
+    validation = check_topk_out(logits, result)
 
-if __name__ == "__main__":
-  tests()
+    if not validation.all():
+        num_passed = validation.sum()
+        pytest.fail(
+            f"Top-k validation failed: {num_passed}/{num_queries} rows passed"
+        )
+
