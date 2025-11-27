@@ -4,7 +4,7 @@ import pytest
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
-from tallax.test_utils import check_topk_out
+from tallax.test_utils import verify_topk_output
 
 
 def test_top_k():
@@ -22,8 +22,8 @@ def test_top_k():
     # Run Pallas implementation
     result = tax.top_k(logits, k=k, block_size=8, interpret=is_cpu_platform())
 
-    # Validate results using check_topk_out
-    validation = check_topk_out(logits, result)
+    # Validate results using verify_topk_output
+    validation = verify_topk_output(logits, result)
 
     if not validation.all():
         num_passed = validation.sum()
