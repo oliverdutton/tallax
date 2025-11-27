@@ -1,5 +1,6 @@
 
 import functools
+from itertools import product
 import jax
 import jax.numpy as jnp
 from jax import jit
