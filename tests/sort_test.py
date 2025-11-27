@@ -1,116 +1,55 @@
 
-import functools
 import pytest
-
 import jax
 import jax.numpy as jnp
 
-from tallax import tax
 from tallax.utils import is_cpu_platform
-
-@jax.jit
-def exact_match(xs, ys):
-  """Check if two pytrees match exactly (including NaN positions)."""
-  def _all(equality_op):
-    return jnp.array(jax.tree.leaves(
-        jax.tree.map(lambda x, y: equality_op(x, y).all(), xs, ys)
-    )).all()
-
-  nans_match = _all(lambda x, y: jnp.isnan(x) == jnp.isnan(y))
-  non_nans_match = _all(lambda x, y: jnp.where(jnp.isnan(x), True, x == y))
-  return nans_match & non_nans_match
+from tallax.test_utils import verify_sort_output
 
 
-def verify_sort(
-    operand,
-    num_keys: int,
-    block_token: int | None = None,
-    return_argsort: bool = False,
-    descending: bool = False,
-    is_stable: bool = False,
-    print_outputs: bool = False,
-    interpret: bool | None = None,
-):
-  """Validate sort against XLA reference implementation."""
-  if interpret is None:
-    interpret = is_cpu_platform()
+@pytest.mark.skipif(
+    is_cpu_platform(),
+    reason="Sort tests require TPU/GPU - CPU uses interpret mode which is slow for comprehensive tests"
+)
+@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
+@pytest.mark.parametrize("size", [128, 2048, 131072])
+@pytest.mark.parametrize("variant", [
+    "standard",
+    "return_argsort",
+    "return_argsort_stable",
+    "descending",
+    "descending_argsort",
+    "descending_stable"
+])
+@pytest.mark.parametrize("num_arrays,num_keys", [
+    (1, 1),
+    (2, 1),
+    (2, 2)
+])
+def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
+    """Comprehensive sort tests with various configurations."""
+    shape = (16, size)
+    key = jax.random.key(0)
 
-  kwargs = dict(
-      block_token=block_token,
-      return_argsort=return_argsort,
-      descending=descending,
-      num_keys=num_keys,
-      is_stable=is_stable,
-      interpret=interpret
-  )
-  out_pallas = tax.sort(operand, **kwargs)
+    # Generate operands
+    operands = []
+    for i in range(num_arrays):
+        if dtype == jnp.bfloat16:
+            arr = jax.random.normal(jax.random.fold_in(key, i), shape, dtype=jnp.float32).astype(jnp.bfloat16)
+        else:
+            arr = jax.random.normal(jax.random.fold_in(key, i), shape, dtype=dtype)
+        operands.append(arr)
 
-  if is_stable:
-    # Exact match required for stable sort
-    kwargs_for_xla = kwargs.copy()
-    out_xla = tax.sort_xla_equivalent(operand, **kwargs_for_xla)
-    valid = exact_match(out_pallas, out_xla)
+    # Parse variant
+    return_argsort = "return_argsort" in variant
+    is_stable = "stable" in variant
+    descending = "descending" in variant
 
-    if not valid:
-      m = jnp.zeros(out_xla[0].shape, dtype=bool)
-      for ox, op in zip(out_xla, out_pallas):
-        m |= ~((ox == op) | (jnp.isnan(ox) & jnp.isnan(op)))
-      debug_msg = []
-      for ox, op in zip(out_xla, out_pallas):
-        debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
-      debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{debug_output}")
-
-    assert valid, "Pallas output does not match XLA output for stable sort"
-
-  else:
-    # Check output is valid permutation with correct relative order
-    out_pallas_stable_sorted = tax.sort_xla_equivalent(
-        out_pallas,
+    verify_sort_output(
+        operands,
         num_keys=num_keys,
-        is_stable=True,
+        return_argsort=return_argsort,
+        is_stable=is_stable,
         descending=descending,
-        interpret=interpret,
+        interpret=False
     )
-    valid = exact_match(out_pallas, out_pallas_stable_sorted)
-    if not valid:
-      m = jnp.zeros(out_pallas_stable_sorted[0].shape, dtype=bool)
-      for ox, op in zip(out_pallas_stable_sorted, out_pallas):
-        m |= ~((ox == op) | (jnp.isnan(ox) & jnp.isnan(op)))
-      debug_msg = []
-      for ox, op in zip(out_pallas_stable_sorted, out_pallas):
-        debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
-      debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output is not sorted:\n{debug_output}")
-
-    assert valid, "out_pallas must be sorted (verified by re-sorting stably)"
-
-    narrs = len(out_pallas)
-    kwargs_for_xla = kwargs.copy()
-    operands_fully_sorted = tax.sort_xla_equivalent(
-        operand, **{**kwargs_for_xla, 'num_keys': narrs}
-    )
-    out_pallas_fully_sorted = tax.sort_xla_equivalent(
-        out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
-    )
-    valid_permute = exact_match(operands_fully_sorted, out_pallas_fully_sorted)
-    assert valid_permute, "out_pallas is not a valid permutation of input"
-    valid &= valid_permute
-
-  if print_outputs:
-    o_pallas, o_xla = tax.sort_xla_equivalent(operand, **kwargs)
-    print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
-
-@pytest.mark.parametrize("is_stable", [False, True])
-@pytest.mark.parametrize("return_argsort", [False, True])
-@pytest.mark.parametrize("descending", [False, True])
-def test_sort(is_stable, return_argsort, descending):
-  shape = (8, 16) if is_cpu_platform() else (8, 128)
-  operands = [jax.random.randint(jax.random.key(0), shape, 0, 100, jnp.int32)]
-  verify_sort(
-      operands,
-      num_keys=1,
-      is_stable=is_stable,
-      return_argsort=return_argsort,
-      descending=descending
-  )

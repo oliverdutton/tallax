@@ -3,6 +3,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 from tallax import tax
+from tallax.utils import is_cpu_platform
 
 @pytest.mark.parametrize("num_tokens", [8, 16, 13])
 @pytest.mark.parametrize("vocab_size", [128, 256, 300])
@@ -20,7 +21,7 @@ def test_gather_correctness(num_tokens, vocab_size, k):
     expected = jax.vmap(lambda v, i: v[i])(values, indices)
 
     # Run Pallas gather
-    result = tax.gather(values, indices, interpret=True)
+    result = tax.gather(values, indices, interpret=is_cpu_platform())
 
     assert jnp.allclose(result, expected)
 
@@ -35,6 +36,6 @@ def test_gather_large_k_explicit():
     indices = jax.random.randint(key, (num_tokens, k), 0, vocab_size)
 
     expected = jax.vmap(lambda v, i: v[i])(values, indices)
-    result = tax.gather(values, indices, interpret=True)
+    result = tax.gather(values, indices, interpret=is_cpu_platform())
 
     assert jnp.allclose(result, expected)
