@@ -295,7 +295,7 @@ def top_dynamic_k(
   buffer_size = max(topk_schedule[-1], block_topk_schedule[-1]) * num_blocks
 
   # Updated padded size calculation using num_blocks
-  padded_max_k = pl.cdiv(max_k, num_blocks) * num_blocks
+  padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
