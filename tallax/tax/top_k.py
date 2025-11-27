@@ -8,7 +8,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2, get_dtype_info, pack_bf16_u16_to_i32, unpack_bf16_u16_from_i32
+from tallax.utils import unrolled_fori_loop, NUM_LANES, pad, log2, get_dtype_info, pack_bf16_u16_to_i32, unpack_bf16_u16_from_i32
 
 
 def blockwise_topk(
@@ -25,51 +25,45 @@ def blockwise_topk(
   """
   num_tokens = logits.shape[0]
   vocab_size = logits.shape[-1]
-  
   use_packed = block_topk_indices is None
-  if not use_packed:
-    cutoff_values = block_topk_values[start_k-1]
-    cutoff_indices = block_topk_indices[start_k-1]
-    for i in range(start_k - 1):
-      cutoff_indices = jnp.where(block_topk_values[i]==cutoff_values,
-        jnp.maximum(block_topk_indices[i], cutoff_indices),
-        cutoff_indices
-      )
-          
+
   def update_block_topk(bubble_values, bubble_indices, block_topk_values, block_topk_indices):
     """Update block topk with bubble values/indices using sinking sort."""
-    if start_k != 0:
-      # Invalidate already-found elements
-      if not use_packed:
+    if start_k != 0 and use_packed:
+      assert bubble_values.dtype == jnp.int32
+      # packed variant is unique values
+      bubble_values = jnp.where(
+          bubble_values >= block_topk_values[start_k-1],
+          get_dtype_info(bubble_values).min,
+          bubble_values
+      )
+
+    # Sinking sort: compare and swap through max_k
+    for level in range(max_k):
+      if level < start_k:
+        if use_packed:
+          # dealt with from 0, as it has no value ties due to index packing
+          continue
+        # Invalidate already-found elements
+        # We use the indices list to check identity
         bubble_values = jnp.where(
-            (bubble_values > cutoff_values) | ((bubble_values == cutoff_values) & (bubble_indices <= cutoff_indices)),
+            bubble_indices == block_topk_indices[level],
             float("-inf"),
             bubble_values
         )
       else:
-        assert bubble_values.dtype == jnp.int32
-        # packed variant is unique values
-        bubble_values = jnp.where(
-            bubble_values >= block_topk_values[start_k-1],
-            get_dtype_info(bubble_values).min,
-            bubble_values
-        )
-
-    # Sinking sort: compare and swap through max_k
-    for level in range(start_k, max_k):
-      # Exchange with stored top-k
-      # Only perform the swap if the value is larger
-      mask = bubble_values > block_topk_values[level]
-
-      block_topk_values[level], bubble_values = (
-          jnp.where(m, bubble_values, block_topk_values[level])
-          for m in (mask, ~mask)
-      )
-      if not use_packed:
-        block_topk_indices[level], bubble_indices = (
-            jnp.where(m, bubble_indices, block_topk_indices[level])
+        # Exchange with stored top-k
+        # Only perform the swap if the value is larger
+        mask = bubble_values > block_topk_values[level] 
+        block_topk_values[level], bubble_values = (
+            jnp.where(m, bubble_values, block_topk_values[level])
             for m in (mask, ~mask)
         )
+        if not use_packed:
+          block_topk_indices[level], bubble_indices = (
+              jnp.where(m, bubble_indices, block_topk_indices[level])
+              for m in (mask, ~mask)
+          )
 
     return (block_topk_values, block_topk_indices)
 
@@ -323,7 +317,7 @@ def top_dynamic_k(
 
   # Auto-compute schedules if not provided
   if block_topk_schedule is None:
-    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size, target_yields= (0.5, 0.98, 0.9999))
+    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size, target_yields= (0.9, 0.99, 0.9999))
     block_topk_schedule = tuple(t + 1 for t in thresholds)
     print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
     print(f"  block_topk_schedule: {block_topk_schedule}")
