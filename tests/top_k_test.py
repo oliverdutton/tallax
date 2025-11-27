@@ -29,7 +29,7 @@ def test_top_k():
     # Validate results using verify_topk_output
     validation = verify_topk_output(logits, result)
 
-    assert validation.all(), (
-        f"Top-k validation failed: {validation.sum()}/{num_queries} rows passed"
+    assert bool(validation.all()), (
+        f"Top-k validation failed: {int(validation.sum())}/{num_queries} rows passed"
     )
 

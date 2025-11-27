@@ -48,7 +48,7 @@ def verify_sort_output(
     # Exact match required for stable sort
     kwargs_for_xla = kwargs.copy()
     out_xla = tax.sort_xla_equivalent(operand, **kwargs_for_xla)
-    valid = exact_match(out_pallas, out_xla)
+    valid = bool(exact_match(out_pallas, out_xla))
 
     if not valid:
       m = jnp.zeros(out_xla[0].shape, dtype=bool)
@@ -73,7 +73,7 @@ def verify_sort_output(
         descending=descending,
         interpret=interpret,
     )
-    valid = exact_match(out_pallas, out_pallas_stable_sorted)
+    valid = bool(exact_match(out_pallas, out_pallas_stable_sorted))
     if not valid:
       m = jnp.zeros(out_pallas_stable_sorted[0].shape, dtype=bool)
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
@@ -96,7 +96,7 @@ def verify_sort_output(
     out_pallas_fully_sorted = tax.sort_xla_equivalent(
         out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
     )
-    valid_permute = exact_match(operands_fully_sorted, out_pallas_fully_sorted)
+    valid_permute = bool(exact_match(operands_fully_sorted, out_pallas_fully_sorted))
     assert valid_permute, "out_pallas is not a valid permutation of input"
     valid &= valid_permute
 

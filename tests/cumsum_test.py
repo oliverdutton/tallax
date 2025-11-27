@@ -2,6 +2,7 @@
 import pytest
 import jax
 import jax.numpy as jnp
+import numpy as np
 from tallax import tax
 from tallax.utils import is_cpu_platform
 
@@ -26,7 +27,7 @@ def test_cumsum_correctness():
     for m in ms:
         actual = tax.cumsum(x, m=m, interpret=interpret)
 
-        assert jnp.array_equal(actual, expected), f"Failed for m={m}"
+        np.testing.assert_array_equal(actual, expected, err_msg=f"Failed for m={m}")
 
 if __name__ == "__main__":
     test_cumsum_correctness()
