@@ -121,7 +121,7 @@ def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0
     # Find first depth where block_yield >= threshold
     for i, val in enumerate(block_yields):
       if val >= threshold:
-        depths.add(i)  # depth is 0-indexed (threshold)
+        depths.add(i+1)  # depth is 1-indexed (threshold)
         break
 
   # Return sorted tuple of thresholds
