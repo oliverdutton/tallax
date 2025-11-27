@@ -4,7 +4,7 @@ import pytest
 
 from tallax import tax
 from tallax.utils import is_cpu_platform
-from tests.test_utils import check_topk_out
+from tallax.test_utils import check_topk_out
 
 
 @pytest.mark.skipif(
