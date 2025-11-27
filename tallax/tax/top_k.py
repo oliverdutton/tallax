@@ -138,7 +138,7 @@ def topk_blockwise_superset_kernel(
   token_slice = pl.dslice(pid * block_size, block_size)
   
   
-  use_packed = logits.dtype == jnp.bfloat16
+  use_packed = packed_ref is not None and logits.dtype == jnp.bfloat16
   if use_packed:
     assert logits.shape[1] // num_blocks < 2**16
     packed_ref[...] = pack_bf16_u16_to_i32(
@@ -278,6 +278,7 @@ def topk_blockwise_superset_kernel(
         "block_topk_schedule", 
         "topk_schedule", 
         "guarantee_convergence",
+        "allow_packed",
         "interpret"
     ),
 )
@@ -288,9 +289,10 @@ def top_dynamic_k(
     block_size: int = 8,
     num_blocks: int = NUM_LANES,
     blockwise_topk_unroll: int = 16,
-    block_topk_schedule = None,
-    topk_schedule = None,
-    guarantee_convergence = False,
+    block_topk_schedule: tuple[int,...] = None,
+    topk_schedule: tuple[int, ...] = None,
+    guarantee_convergence: bool = False,
+    allow_packed: bool = True,
     interpret: bool = False,
 ):
   """
@@ -370,7 +372,7 @@ def top_dynamic_k(
           pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
           # bf16 and u16 packed ref, maybe unused
-          pltpu.VMEM((block_size, vocab_size), jnp.int32),
+          pltpu.VMEM((block_size, vocab_size), jnp.int32) if allow_packed else None,
       ),
       grid=(num_tokens // block_size,),
       out_specs=output_specs,
