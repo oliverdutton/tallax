@@ -323,7 +323,7 @@ def top_dynamic_k(
 
   # Auto-compute schedules if not provided
   if block_topk_schedule is None:
-    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size, target_yields= (0.5, 0.98, 0.9999)
+    thresholds = calculate_depth_thresholds(max_k, num_blocks, block_size, target_yields= (0.5, 0.98, 0.9999))
     block_topk_schedule = tuple(t + 1 for t in thresholds)
     print(f"Auto-computed schedules for max_k={max_k}, num_blocks={num_blocks}:")
     print(f"  block_topk_schedule: {block_topk_schedule}")
