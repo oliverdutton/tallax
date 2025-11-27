@@ -92,6 +92,7 @@ def topk_blockwise_superset_kernel(
     k_ref,
     topk_values_ref,
     topk_indices_ref,
+    valid_ref,
     max_depth_ref,
     block_topm_values_ref,
     block_topm_indices_ref,
@@ -195,7 +196,11 @@ def topk_blockwise_superset_kernel(
     max_depth_global = jnp.array(0)
     for i in range(max_depth_ref.shape[0]):
       max_depth_global = jnp.maximum(max_depth_global, max_depth_ref[i])
-
+    
+    valid_ref[0] = (
+    max_depth_global < min(block_topk_schedule[-1], topk_schedule[-1] + 1)
+    ) | (block_topk_schedule[-1] == max_k)
+    
     # convert to global indices from local
     block_topm_indices_ref[...] = (
         block_topm_indices_ref[...] * num_blocks
@@ -300,6 +305,7 @@ def top_dynamic_k(
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
+      jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
   )
 
@@ -307,9 +313,10 @@ def top_dynamic_k(
       pl.BlockSpec(),
       pl.BlockSpec(),
       pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
-  topk_vals, topk_idxs, depths = pl.pallas_call(
+  topk_vals, topk_idxs, valid, depths = pl.pallas_call(
       functools.partial(
           topk_blockwise_superset_kernel,
           max_k=max_k,
@@ -335,8 +342,7 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  valid = (depths.reshape(-1, block_size) < min(block_topk_schedule[-1], topk_schedule[-1]+1)).all(1) | (block_topk_schedule[-1] == max_k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid, depths
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze(), depths
 
   
 @functools.partial(
