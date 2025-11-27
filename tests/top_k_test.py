@@ -29,9 +29,7 @@ def test_top_k():
     # Validate results using verify_topk_output
     validation = verify_topk_output(logits, result)
 
-    if not validation.all():
-        num_passed = validation.sum()
-        pytest.fail(
-            f"Top-k validation failed: {num_passed}/{num_queries} rows passed"
-        )
+    assert bool(validation.all()), (
+        f"Top-k validation failed: {int(validation.sum())}/{num_queries} rows passed"
+    )
 

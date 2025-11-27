@@ -48,7 +48,7 @@ def verify_sort_output(
     # Exact match required for stable sort
     kwargs_for_xla = kwargs.copy()
     out_xla = tax.sort_xla_equivalent(operand, **kwargs_for_xla)
-    valid = exact_match(out_pallas, out_xla)
+    valid = bool(exact_match(out_pallas, out_xla))
 
     if not valid:
       m = jnp.zeros(out_xla[0].shape, dtype=bool)
@@ -58,9 +58,11 @@ def verify_sort_output(
       for ox, op in zip(out_xla, out_pallas):
         debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{debug_output}")
+      error_msg = f"Pallas output does not match XLA output for stable sort:\n{debug_output}"
+    else:
+      error_msg = "Pallas output does not match XLA output for stable sort"
 
-    assert valid, "Pallas output does not match XLA output for stable sort"
+    assert valid, error_msg
 
   else:
     # Check output is valid permutation with correct relative order
@@ -71,7 +73,7 @@ def verify_sort_output(
         descending=descending,
         interpret=interpret,
     )
-    valid = exact_match(out_pallas, out_pallas_stable_sorted)
+    valid = bool(exact_match(out_pallas, out_pallas_stable_sorted))
     if not valid:
       m = jnp.zeros(out_pallas_stable_sorted[0].shape, dtype=bool)
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
@@ -80,9 +82,11 @@ def verify_sort_output(
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
         debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output is not sorted:\n{debug_output}")
+      error_msg = f"Pallas output is not sorted:\n{debug_output}"
+    else:
+      error_msg = "out_pallas must be sorted (verified by re-sorting stably)"
 
-    assert valid, "out_pallas must be sorted (verified by re-sorting stably)"
+    assert valid, error_msg
 
     narrs = len(out_pallas)
     kwargs_for_xla = kwargs.copy()
@@ -92,7 +96,7 @@ def verify_sort_output(
     out_pallas_fully_sorted = tax.sort_xla_equivalent(
         out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
     )
-    valid_permute = exact_match(operands_fully_sorted, out_pallas_fully_sorted)
+    valid_permute = bool(exact_match(operands_fully_sorted, out_pallas_fully_sorted))
     assert valid_permute, "out_pallas is not a valid permutation of input"
     valid &= valid_permute
 
