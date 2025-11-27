@@ -197,9 +197,9 @@ def topk_blockwise_superset_kernel(
     for i in range(max_depth_ref.shape[0]):
       max_depth_global = jnp.maximum(max_depth_global, max_depth_ref[i])
     
-    valid_ref[0] = (
+    valid_ref[0] = ((
     max_depth_global < min(block_topk_schedule[-1], topk_schedule[-1] + 1)
-    ) | (block_topk_schedule[-1] == max_k).astype(jnp.int32)
+    ) | (block_topk_schedule[-1] == max_k)).astype(jnp.int32)
     
     # convert to global indices from local
     block_topm_indices_ref[...] = (
