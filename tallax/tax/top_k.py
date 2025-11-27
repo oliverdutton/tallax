@@ -8,7 +8,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2, get_dtype_info
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2, get_dtype_info, pack_bf16_u16_to_i32, unpack_bf16_u16_from_i32
 
 
 def blockwise_topk(
@@ -36,38 +36,38 @@ def blockwise_topk(
         cutoff_indices
       )
           
-  def update_block_topk(current_values, current_indices, values_list, indices_list):
-    """Update block topk with current values/indices using sinking sort."""
+  def update_block_topk(bubble_values, bubble_indices, values_list, indices_list):
+    """Update block topk with bubble values/indices using sinking sort."""
     if start_k != 0:
       # Invalidate already-found elements
       if not use_packed:
-        current_values = jnp.where(
-            (current_values > cutoff_values) | ((current_values == cutoff_values) & (current_indices <= cutoff_indices)),
+        bubble_values = jnp.where(
+            (bubble_values > cutoff_values) | ((bubble_values == cutoff_values) & (bubble_indices <= cutoff_indices)),
             float("-inf"),
-            current_values
+            bubble_values
         )
       else:
-        assert current_values.dtype == jnp.int32
+        assert bubble_values.dtype == jnp.int32
         # packed variant is unique values
-        current_values = jnp.where(
-            current_values >= values_list[start_k-1],
-            get_dtype_info(current_values).min,
-            current_values
+        bubble_values = jnp.where(
+            bubble_values >= values_list[start_k-1],
+            get_dtype_info(bubble_values).min,
+            bubble_values
         )
-      
+
     # Sinking sort: compare and swap through max_k
     for level in range(start_k, max_k):
       # Exchange with stored top-k
       # Only perform the swap if the value is larger
-      mask = current_values > values_list[level]
+      mask = bubble_values > values_list[level]
 
-      values_list[level], current_values = (
-          jnp.where(m, current_values, values_list[level])
+      values_list[level], bubble_values = (
+          jnp.where(m, bubble_values, values_list[level])
           for m in (mask, ~mask)
       )
       if not use_packed:
-        indices_list[level], current_indices = (
-            jnp.where(m, current_indices, indices_list[level])
+        indices_list[level], bubble_indices = (
+            jnp.where(m, bubble_indices, indices_list[level])
             for m in (mask, ~mask)
         )
 
@@ -138,11 +138,11 @@ def topk_blockwise_superset_kernel(
   token_slice = pl.dslice(pid * block_size, block_size)
   
   
-  use_packed = packed_ref is not None and logits.dtype == jnp.bfloat16
+  use_packed = packed_ref is not None and logits_ref[...].dtype == jnp.bfloat16
   if use_packed:
-    assert logits.shape[1] // num_blocks < 2**16
+    assert logits_ref[...].shape[1] // num_blocks < 2**16
     packed_ref[...] = pack_bf16_u16_to_i32(
-      logits[...], jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1) // num_blocks)
+      logits_ref[...], jax.lax.broadcasted_iota(jnp.int32, logits_ref[...].shape, 1) // num_blocks)
     block_topm_values_ref = block_topm_values_ref.bitcast(jnp.int32)
     block_topm_values_ref[token_slice] = jnp.full(
       shape, jnp.iinfo(jnp.int32).min, dtype=jnp.int32
