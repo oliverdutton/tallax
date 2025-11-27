@@ -25,8 +25,8 @@ def blockwise_topk(
   """
   num_tokens = logits.shape[0]
   vocab_size = logits.shape[-1]
-  '''
   use_packed = block_topk_indices is None
+  '''
   if not use_packed:
     cutoff_values = block_topk_values[start_k-1]
     cutoff_indices = block_topk_indices[start_k-1]
