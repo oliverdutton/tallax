@@ -21,7 +21,7 @@ def test_cumsum_correctness():
     # m=64: steps 1..32 permute; 64 mask
     ms = [0, 1, 4, 32, 64, 128]
 
-    interpret = True # Always use interpret for correctness on CPU
+    interpret = is_cpu_platform()
 
     for m in ms:
         actual = tax.cumsum(x, m=m, interpret=interpret)

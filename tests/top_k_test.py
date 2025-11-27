@@ -7,12 +7,8 @@ from tallax.utils import is_cpu_platform
 from tallax.test_utils import check_topk_out
 
 
-@pytest.mark.skipif(
-    is_cpu_platform(),
-    reason="Pallas interpret mode is unstable on CPU - use TPU for testing"
-)
 def test_top_k():
-    """Test top_k Pallas implementation on TPU."""
+    """Test top_k Pallas implementation."""
     num_queries = 16
     vocab_size = 201088
     k = 64
@@ -24,7 +20,7 @@ def test_top_k():
     ).astype(jnp.bfloat16)
 
     # Run Pallas implementation
-    result = tax.top_k(logits, k=k, block_size=8, interpret=False)
+    result = tax.top_k(logits, k=k, block_size=8, interpret=is_cpu_platform())
 
     # Validate results using check_topk_out
     validation = check_topk_out(logits, result)
