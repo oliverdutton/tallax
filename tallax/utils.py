@@ -204,7 +204,7 @@ def unpack_bf16_u16_from_i32(packed):
   packed = sortable_int_to_float(packed)
   val = (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
   index = packed.view(jnp.int32) & 0xFFFF
-  index = jnp.where(val < 0, index.shape[1] - index, index)
+  index = jnp.where(val.astype(jnp.float32) < 0, index.shape[1] - index, index)
   return val, index
 
 
