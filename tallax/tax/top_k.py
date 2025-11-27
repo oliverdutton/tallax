@@ -293,7 +293,8 @@ def top_dynamic_k(
     block_topk_schedule: tuple[int,...] = None,
     topk_schedule: tuple[int, ...] = None,
     guarantee_convergence: bool = False,
-    allow_packed: bool = True,
+    # unexpectedly, runs slower if packed
+    allow_packed: bool = False,
     interpret: bool = False,
 ):
   """
