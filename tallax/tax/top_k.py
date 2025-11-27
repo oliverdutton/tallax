@@ -28,15 +28,15 @@ def blockwise_topk(
   
   use_packed = block_topk_indices is None
   if not use_packed:
-    cutoff_values = values_list[start_k-1]
-    cutoff_indices = indices_list[start_k-1]
+    cutoff_values = block_topk_values[start_k-1]
+    cutoff_indices = block_topk_indices[start_k-1]
     for i in range(start_k - 1):
-      cutoff_indices = jnp.where(values_list[i]==cutoff_values,
-        jnp.maximum(indices_list[i], cutoff_indices),
+      cutoff_indices = jnp.where(block_topk_values[i]==cutoff_values,
+        jnp.maximum(block_topk_indices[i], cutoff_indices),
         cutoff_indices
       )
           
-  def update_block_topk(bubble_values, bubble_indices, values_list, indices_list):
+  def update_block_topk(bubble_values, bubble_indices, block_topk_values, block_topk_indices):
     """Update block topk with bubble values/indices using sinking sort."""
     if start_k != 0:
       # Invalidate already-found elements
@@ -50,7 +50,7 @@ def blockwise_topk(
         assert bubble_values.dtype == jnp.int32
         # packed variant is unique values
         bubble_values = jnp.where(
-            bubble_values >= values_list[start_k-1],
+            bubble_values >= block_topk_values[start_k-1],
             get_dtype_info(bubble_values).min,
             bubble_values
         )
@@ -59,19 +59,19 @@ def blockwise_topk(
     for level in range(start_k, max_k):
       # Exchange with stored top-k
       # Only perform the swap if the value is larger
-      mask = bubble_values > values_list[level]
+      mask = bubble_values > block_topk_values[level]
 
-      values_list[level], bubble_values = (
-          jnp.where(m, bubble_values, values_list[level])
+      block_topk_values[level], bubble_values = (
+          jnp.where(m, bubble_values, block_topk_values[level])
           for m in (mask, ~mask)
       )
       if not use_packed:
-        indices_list[level], bubble_indices = (
-            jnp.where(m, bubble_indices, indices_list[level])
+        block_topk_indices[level], bubble_indices = (
+            jnp.where(m, bubble_indices, block_topk_indices[level])
             for m in (mask, ~mask)
         )
 
-    return (values_list, indices_list)
+    return (block_topk_values, block_topk_indices)
 
   def process_block(block_idx, block_topk_outs):
     """Process a single tile with sinking sort."""
@@ -83,11 +83,10 @@ def blockwise_topk(
 
   # Process full blocks
   num_full_blocks = vocab_size // num_blocks
-  block_topk_outs = (block_topk_values, block_topk_indices)
   block_topk_outs = unrolled_fori_loop(
       num_full_blocks,
       process_block,
-      block_topk_outs,
+      (block_topk_values, block_topk_indices),
       unroll=unroll,
   )
 
@@ -419,3 +418,4 @@ def top_k(
     guarantee_convergence=True,
     interpret=interpret,
   )[:2]
+
