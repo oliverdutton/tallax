@@ -231,9 +231,10 @@ def topk_blockwise_superset_kernel(
     
     if use_packed:
       # unpack
-      values, indices = unpack_bf16_u16_from_i32(block_topm_values_ref[...])
-      block_topm_values_ref = block_topm_values_ref.bitcast(jnp.float32)
-      block_topm_values_ref[...] = values.astype(jnp.float32)
+      packed_values = block_topm_values_ref[...]
+      values, indices = unpack_bf16_u16_from_i32(packed_values)
+      values_ref_as_f32 = block_topm_values_ref.bitcast(jnp.float32)
+      values_ref_as_f32[...] = values.astype(jnp.float32)
       block_topm_indices_ref[...] = indices
       
       
