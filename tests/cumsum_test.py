@@ -26,13 +26,6 @@ def test_cumsum_correctness():
     for m in ms:
         actual = tax.cumsum(x, m=m, interpret=interpret)
 
-        diff = jnp.abs(actual - expected)
-        if not jnp.all(diff == 0):
-            print(f"Failure for m={m}")
-            print("Expected:\n", expected)
-            print("Actual:\n", actual)
-            print("Diff:\n", diff)
-
         assert jnp.array_equal(actual, expected), f"Failed for m={m}"
 
 if __name__ == "__main__":

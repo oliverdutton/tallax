@@ -58,9 +58,11 @@ def verify_sort_output(
       for ox, op in zip(out_xla, out_pallas):
         debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output does not match XLA output for stable sort:\n{debug_output}")
+      error_msg = f"Pallas output does not match XLA output for stable sort:\n{debug_output}"
+    else:
+      error_msg = "Pallas output does not match XLA output for stable sort"
 
-    assert valid, "Pallas output does not match XLA output for stable sort"
+    assert valid, error_msg
 
   else:
     # Check output is valid permutation with correct relative order
@@ -80,9 +82,11 @@ def verify_sort_output(
       for ox, op in zip(out_pallas_stable_sorted, out_pallas):
         debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      pytest.fail(f"Pallas output is not sorted:\n{debug_output}")
+      error_msg = f"Pallas output is not sorted:\n{debug_output}"
+    else:
+      error_msg = "out_pallas must be sorted (verified by re-sorting stably)"
 
-    assert valid, "out_pallas must be sorted (verified by re-sorting stably)"
+    assert valid, error_msg
 
     narrs = len(out_pallas)
     kwargs_for_xla = kwargs.copy()
