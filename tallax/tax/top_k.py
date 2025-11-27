@@ -25,7 +25,7 @@ def blockwise_topk(
   """
   num_tokens = logits.shape[0]
   vocab_size = logits.shape[-1]
-  
+  '''
   use_packed = block_topk_indices is None
   if not use_packed:
     cutoff_values = block_topk_values[start_k-1]
@@ -35,61 +35,64 @@ def blockwise_topk(
         jnp.maximum(block_topk_indices[i], cutoff_indices),
         cutoff_indices
       )
-          
+  '''
   def update_block_topk(bubble_values, bubble_indices, block_topk_values, block_topk_indices):
     """Update block topk with bubble values/indices using sinking sort."""
-    if start_k != 0:
-      # Invalidate already-found elements
-      if not use_packed:
-        bubble_values = jnp.where(
-            (bubble_values > cutoff_values) | ((bubble_values == cutoff_values) & (bubble_indices <= cutoff_indices)),
-            float("-inf"),
-            bubble_values
-        )
-      else:
-        assert bubble_values.dtype == jnp.int32
-        # packed variant is unique values
-        bubble_values = jnp.where(
-            bubble_values >= block_topk_values[start_k-1],
-            get_dtype_info(bubble_values).min,
-            bubble_values
-        )
+    bubble_values, bubble_indices, block_topk_values, block_topk_indices = map(list, (bubble_values, bubble_indices, block_topk_values, block_topk_indices))
+    
+    
+    def exchange(i, level):
+      mask = bubble_values[i] > block_topk_values[level]
 
-    # Sinking sort: compare and swap through max_k
-    for level in range(start_k, max_k):
-      # Exchange with stored top-k
-      # Only perform the swap if the value is larger
-      mask = bubble_values > block_topk_values[level]
-
-      block_topk_values[level], bubble_values = (
-          jnp.where(mask, bubble_values, block_topk_values[level]),
-          jnp.where(mask, block_topk_values[level], bubble_values)
+      block_topk_values[level], bubble_values[i] = (
+          jnp.where(mask, bubble_values[i], block_topk_values[level]),
+          jnp.where(mask, block_topk_values[level], bubble_values[i])
       )
       if not use_packed:
-        block_topk_indices[level], bubble_indices = (
-            jnp.where(mask, bubble_indices, block_topk_indices[level]),
-            jnp.where(mask, block_topk_indices[level], bubble_indices)
+        block_topk_indices[level], bubble_indices[i] = (
+            jnp.where(mask, bubble_indices[i], block_topk_indices[level]),
+            jnp.where(mask, block_topk_indices[level], bubble_indices[i])
         )
+      
+    # Sinking sort: compare and swap through max_k
+    v = product(range(unroll), range(max_k))
+    for i, level in sorted(v, key=lambda v: sum(v))):
+      print(f'{i=} {level=}')
+      exchange(i, level)
+      '''
+      # Exchange with stored top-k
+      # Only perform the swap if the value is larger
+      mask = bubble_values[i] > block_topk_values[level]
 
+      block_topk_values[level], bubble_values = (
+          jnp.where(mask, bubble_values[i], block_topk_values[level]),
+          jnp.where(mask, block_topk_values[level], bubble_values[i])
+      )
+      if not use_packed:
+        block_topk_indices[level], bubble_indices[i] = (
+            jnp.where(mask, bubble_indices[i], block_topk_indices[level]),
+            jnp.where(mask, block_topk_indices[level], bubble_indices[i])
+        )
+      '''
     return (block_topk_values, block_topk_indices)
 
   def process_block(block_idx, block_topk_outs):
     """Process a single tile with sinking sort."""
     # Extract current block
     
-    values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32) if not use_packed else None
+    values = jnp.split(logits[..., pl.dslice(num_blocks * unroll * block_idx, num_blocks * unroll)], unroll, 1)
+    indices = [jnp.full((num_tokens, num_blocks), block_idx * unroll + i, jnp.int32) for i in range(unroll)] if not use_packed else None
     return update_block_topk(values, indices, *block_topk_outs)
 
   # Process full blocks
-  num_full_blocks = vocab_size // num_blocks
+  num_full_blocks = vocab_size // (num_blocks * unroll)
   block_topk_outs = unrolled_fori_loop(
       num_full_blocks,
       process_block,
       (block_topk_values, block_topk_indices),
-      unroll=unroll,
+      unroll=1,
   )
-
+  '''
   # Handle remaining elements if vocab_size doesn't divide num_blocks
   remainder = vocab_size % num_blocks
   if remainder > 0:
@@ -103,6 +106,7 @@ def blockwise_topk(
 
     # Update block_topk with the overspill
     block_topk_outs = update_block_topk(final_values, final_indices, *block_topk_outs)
+  '''
 
   return block_topk_outs
 
@@ -420,4 +424,3 @@ def top_k(
     guarantee_convergence=True,
     interpret=interpret,
   )[:2]
-
