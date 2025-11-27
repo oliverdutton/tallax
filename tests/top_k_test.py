@@ -7,6 +7,10 @@ from tallax.utils import is_cpu_platform
 from tallax.test_utils import verify_topk_output
 
 
+@pytest.mark.skipif(
+    is_cpu_platform(),
+    reason="Top-k tests require TPU/GPU - CPU uses interpret mode which is slow"
+)
 def test_top_k():
     """Test top_k Pallas implementation."""
     num_queries = 16
@@ -20,7 +24,7 @@ def test_top_k():
     ).astype(jnp.bfloat16)
 
     # Run Pallas implementation
-    result = tax.top_k(logits, k=k, block_size=8, interpret=is_cpu_platform())
+    result = tax.top_k(logits, k=k, block_size=8, interpret=False)
 
     # Validate results using verify_topk_output
     validation = verify_topk_output(logits, result)
