@@ -199,7 +199,7 @@ def topk_blockwise_superset_kernel(
     
     valid_ref[0] = (
     max_depth_global < min(block_topk_schedule[-1], topk_schedule[-1] + 1)
-    ) | (block_topk_schedule[-1] == max_k)
+    ) | (block_topk_schedule[-1] == max_k).astype(jnp.int32)
     
     # convert to global indices from local
     block_topm_indices_ref[...] = (
@@ -342,7 +342,7 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze(), depths
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths
 
   
 @functools.partial(
