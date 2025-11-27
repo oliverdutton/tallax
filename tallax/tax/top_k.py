@@ -1,3 +1,4 @@
+
 import functools
 import jax
 import jax.numpy as jnp
@@ -7,7 +8,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2
+from tallax.utils import unrolled_fori_loop, NUM_LANES, is_cpu_platform, pad, log2, get_dtype_info
 
 
 def blockwise_topk(
@@ -24,28 +25,47 @@ def blockwise_topk(
   """
   num_tokens = logits.shape[0]
   vocab_size = logits.shape[-1]
-
+  
+  use_packed = block_topk_indices is None
+  if not use_packed:
+    cutoff_values = values_list[start_k-1]
+    cutoff_indices = indices_list[start_k-1]
+    for i in range(start_k - 1):
+      cutoff_indices = jnp.where(values_list[i]==cutoff_values,
+        jnp.maximum(indices_list[i], cutoff_indices),
+        cutoff_indices
+      )
+          
   def update_block_topk(current_values, current_indices, values_list, indices_list):
     """Update block topk with current values/indices using sinking sort."""
-    # Sinking sort: compare and swap through max_k
-    for level in range(max_k):
-      if level < start_k:
-        # Invalidate already-found elements
-        # We use the indices list to check identity
+    if start_k != 0:
+      # Invalidate already-found elements
+      if not use_packed:
         current_values = jnp.where(
-            current_indices == indices_list[level],
+            (current_values > cutoff_values) | ((current_values == cutoff_values) & (current_indices <= cutoff_indices)),
             float("-inf"),
             current_values
         )
       else:
-        # Exchange with stored top-k
-        # Only perform the swap if the value is larger
-        mask = current_values > values_list[level]
-
-        values_list[level], current_values = (
-            jnp.where(m, current_values, values_list[level])
-            for m in (mask, ~mask)
+        assert current_values.dtype == jnp.int32
+        # packed variant is unique values
+        current_values = jnp.where(
+            current_values >= values_list[start_k-1],
+            get_dtype_info(current_values).min,
+            current_values
         )
+      
+    # Sinking sort: compare and swap through max_k
+    for level in range(start_k, max_k):
+      # Exchange with stored top-k
+      # Only perform the swap if the value is larger
+      mask = current_values > values_list[level]
+
+      values_list[level], current_values = (
+          jnp.where(m, current_values, values_list[level])
+          for m in (mask, ~mask)
+      )
+      if not use_packed:
         indices_list[level], current_indices = (
             jnp.where(m, current_indices, indices_list[level])
             for m in (mask, ~mask)
@@ -56,10 +76,10 @@ def blockwise_topk(
   def process_block(block_idx, block_topk_outs):
     """Process a single tile with sinking sort."""
     # Extract current block
-    current_values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
-    current_indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32)
-
-    return update_block_topk(current_values, current_indices, *block_topk_outs)
+    
+    values = logits[..., pl.dslice(num_blocks * block_idx, num_blocks)]
+    indices = jnp.full((num_tokens, num_blocks), block_idx, jnp.int32) if not use_packed else None
+    return update_block_topk(values, indices, *block_topk_outs)
 
   # Process full blocks
   num_full_blocks = vocab_size // num_blocks
@@ -77,10 +97,10 @@ def blockwise_topk(
     # Load the final boundary segment
     final_values = logits[..., pl.dslice(num_full_blocks * num_blocks, remainder)]
     # Pad to num_blocks with f32 min
-    final_values = pad(final_values, block_shape=(1, num_blocks), val=jnp.finfo(jnp.float32).min)
+    final_values = pad(final_values, block_shape=(1, num_blocks), val=get_dtype_info(final_values).min)
 
     # Create indices for the final segment
-    final_indices = jnp.full((num_tokens, num_blocks), num_full_blocks, jnp.int32)
+    final_indices = jnp.full((num_tokens, num_blocks), num_full_blocks, jnp.int32) if not use_packed else None
 
     # Update block_topk with the overspill
     block_topk_outs = update_block_topk(final_values, final_indices, *block_topk_outs)
@@ -97,6 +117,7 @@ def topk_blockwise_superset_kernel(
     block_topm_values_ref,
     block_topm_indices_ref,
     termination_flag_ref,
+    packed_ref,
     *,
     max_k: int,
     num_blocks: int,
@@ -116,10 +137,21 @@ def topk_blockwise_superset_kernel(
   pid = pl.program_id(0)
   token_slice = pl.dslice(pid * block_size, block_size)
   
-  block_topm_values_ref[token_slice] = jnp.full(
-      shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
-  )
-  block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
+  
+  use_packed = logits.dtype == jnp.bfloat16
+  if use_packed:
+    assert logits.shape[1] // num_blocks < 2**16
+    packed_ref[...] = pack_bf16_u16_to_i32(
+      logits[...], jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1) // num_blocks)
+    block_topm_values_ref = block_topm_values_ref.bitcast(jnp.int32)
+    block_topm_values_ref[token_slice] = jnp.full(
+      shape, jnp.iinfo(jnp.int32).min, dtype=jnp.int32
+    )
+  else:
+    block_topm_values_ref[token_slice] = jnp.full(
+        shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
+    )
+    block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
   for i in range(block_size): 
     max_depth_ref[pid * block_size + i] = max_k
   termination_flag_ref[0] = 0
@@ -131,7 +163,7 @@ def topk_blockwise_superset_kernel(
     def _():
       # Compute blockwise top-m
       topk_vals, topk_idxs = blockwise_topk(
-          logits_ref,
+          logits_ref if not use_packed else packed_ref,
           max_k=target_m,
           block_topk_values=[
               block_topm_values_ref[
@@ -144,7 +176,7 @@ def topk_blockwise_superset_kernel(
                   token_slice, pl.dslice(i * num_blocks, num_blocks)
               ]
               for i in range(target_m)
-          ],
+          ] if not use_packed else None,
           num_blocks=num_blocks,
           start_k=completed_m,
           unroll=blockwise_topk_unroll,
@@ -155,9 +187,10 @@ def topk_blockwise_superset_kernel(
         block_topm_values_ref[
             token_slice, pl.dslice(i * num_blocks, num_blocks)
         ] = topk_vals[i].astype(block_topm_values_ref.dtype)
-        block_topm_indices_ref[
-            token_slice, pl.dslice(i * num_blocks, num_blocks)
-        ] = topk_idxs[i].astype(block_topm_indices_ref.dtype)
+        if not use_packed:
+          block_topm_indices_ref[
+              token_slice, pl.dslice(i * num_blocks, num_blocks)
+          ] = topk_idxs[i].astype(block_topm_indices_ref.dtype)
 
       # Termination criterion:
       # If top-(m-1) blocks contain >= k values larger than
@@ -196,6 +229,14 @@ def topk_blockwise_superset_kernel(
     max_depth_global = jnp.array(0)
     for i in range(max_depth_ref.shape[0]):
       max_depth_global = jnp.maximum(max_depth_global, max_depth_ref[i])
+    
+    if use_packed:
+      # unpack
+      values, indices = unpack_bf16_u16_from_i32(block_topm_values_ref[...])
+      block_topm_values_ref = block_topm_values_ref.bitcast(jnp.float32)
+      block_topm_values_ref[...] = values.astype(jnp.float32)
+      block_topm_indices_ref[...] = indices
+      
       
     # convert to global indices from local
     block_topm_indices_ref[...] = (
@@ -287,10 +328,8 @@ def top_dynamic_k(
     topk_schedule = tuple(sorted(set(2**log2(x - 1) for x in block_topk_schedule)))
     print(f"  topk_schedule: {topk_schedule}")
 
-  if guarantee_convergence and block_topk_schedule[-1] != max_k:
-    block_topk_schedule += (max_k,)
-  if guarantee_convergence and topk_schedule[-1] != max_k:
-    topk_schedule += (max_k,)
+  if guarantee_convergence:
+    block_topk_schedule, topk_schedule = (tuple(sorted(set(schedule + (max_k,)))) for schedule in (block_topk_schedule, topk_schedule))
   topk_schedule = (0,) + topk_schedule
   block_topk_schedule = (0,) + block_topk_schedule
 
@@ -330,6 +369,8 @@ def top_dynamic_k(
           pltpu.VMEM((num_tokens, buffer_size), jnp.float32),
           pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
           pltpu.SMEM((1,), jnp.int32),
+          # bf16 and u16 packed ref, maybe unused
+          pltpu.VMEM((block_size, vocab_size), jnp.int32),
       ),
       grid=(num_tokens // block_size,),
       out_specs=output_specs,
