@@ -56,7 +56,7 @@ def blockwise_topk(
       
     # Sinking sort: compare and swap through max_k
     v = product(range(unroll), range(max_k))
-    for i, level in sorted(v, key=lambda v: sum(v))):
+    for i, level in sorted(v, key=lambda v: sum(v)):
       print(f'{i=} {level=}')
       exchange(i, level)
       '''
