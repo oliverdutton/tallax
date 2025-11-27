@@ -18,6 +18,7 @@ from tallax.test_utils import verify_sort_output
     "return_argsort",
     "return_argsort_stable",
     "descending",
+    "descending_argsort",
     "descending_stable"
 ])
 @pytest.mark.parametrize("num_arrays,num_keys", [
