@@ -160,7 +160,7 @@ def topk_blockwise_superset_kernel(
 
       # Termination criterion:
       # If top-(m-1) blocks contain >= k values larger than
-      # the m-th largest value, then top-k is guaranteed to be in top-(m-1)
+      # the largest m-th largest value, then top-k is guaranteed to be in top-(m-1)
       pivot = topk_vals[target_m - 1].max(-1, keepdims=True)
       num_larger = (
           sum([(v >= pivot) for v in topk_vals[:target_m - 1]])
