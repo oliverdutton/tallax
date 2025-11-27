@@ -62,7 +62,7 @@ def blockwise_topk(
       mask = bubble_values > block_topk_values[level]
 
       block_topk_values[level], bubble_values = (
-          jnp.where(mask, bubble_values, block_topk_values[level])
+          jnp.where(mask, bubble_values, block_topk_values[level]),
           jnp.where(mask, block_topk_values[level], bubble_values)
       )
       if not use_packed:
