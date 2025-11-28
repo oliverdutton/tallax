@@ -22,11 +22,34 @@ def binned_topk(
 ):
   """
   Compute binned top-k using a sinking sort approach.
+  
+  Processes the vocabulary in num_bins-sized chunks, maintaining the top-k elements
+  across all processed bins using a sinking sort algorithm. Values "sink" through
+  the maintained top-k list if they are smaller than existing elements.
+  
+  Args:
+      logits: Input logits of shape [num_tokens, vocab_size].
+      k: Number of top elements to find.
+      bins_topk_vals: List of k arrays, each of shape [num_tokens, num_bins],
+          containing current top-k values per bin.
+      bins_topk_idxs: List of k arrays, each of shape [num_tokens, num_bins],
+          containing current top-k indices per bin.
+      completed_k: Number of top-k positions already finalized (default: 0).
+      num_bins: Number of bins/lanes to process simultaneously (default: 128).
+      unroll: Loop unroll factor for the vocabulary scan (default: 32).
+  
+  Returns:
+      Tuple of (bins_topk_vals, bins_topk_idxs) with updated top-k values and indices.
   """
   num_tokens, vocab_size = logits.shape
 
   def update_bins_topk(bubble_vals, bubble_idxs, bins_topk_vals, bins_topk_idxs):
-    """Update bins topk with bubble vals/idxs using sinking sort."""
+    """
+    Update bins topk with bubble vals/idxs using sinking sort.
+    
+    Compares new values against existing top-k, swapping when new values are larger.
+    Already-completed positions are invalidated to prevent re-selection.
+    """
     # Sinking sort: compare and swap
     for i in range(completed_k):
       # Invalidate already-found elements
@@ -51,18 +74,17 @@ def binned_topk(
     return (bins_topk_vals, bins_topk_idxs)
   
   def compute_idxs(i):
+    """Compute global vocabulary indices for bin slice i."""
     shape = (num_tokens, num_bins)
     return (
       jnp.full(shape, i * num_bins, jnp.int32) + 
       jax.lax.broadcasted_iota(jnp.int32, shape, 1)) 
 
   def loop_body(i, bins_topk_outs):
-    """Load and process a slice with sinking sort."""
     vals = logits[..., pl.dslice(num_bins * i, num_bins)]
     idxs = compute_idxs(i)
     return update_bins_topk(vals, idxs, *bins_topk_outs)
 
-  # Process full binss
   num_full_slices = vocab_size // num_bins
   bins_topk_outs = unrolled_fori_loop(
       num_full_slices,
@@ -100,12 +122,17 @@ def dynamic_topk_kernel(
     max_k: int,
     num_bins: int,
     bins_topm_unroll: int,
-    bins_topm_schedule: tuple[int],
+    bins_topm_schedule: tuple[int, ...],
 ):
   """
-  Compute binned top-k supersets until global top-k is guaranteed.
-
-  Accepts dynamic k per row (k_ref) and uses static max_k for scheduling.
+  Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
+  
+  Incrementally computes top-m supersets (m increasing per schedule) until the top-k
+  is provably contained within the top-(m-1) bins. Supports dynamic k per token while
+  using static max_k for compilation and scheduling.
+  
+  The termination criterion checks if the top-(m-1) bins collectively contain at least
+  k values larger than the largest m-th largest value across all bins. 
   """
   # Initialize buffers
   block_token = logits_ref.shape[0]
@@ -123,24 +150,24 @@ def dynamic_topk_kernel(
   termination_flag_ref[0] = 0
 
   # Incremental binned top-k computation
-  for completed_m, max_m in zip(bins_topm_schedule, bins_topm_schedule[1:]):
+  for completed_m, m in zip(bins_topm_schedule, bins_topm_schedule[1:]):
     @pl.when(termination_flag_ref[0] == 0)
     def _():
       # Compute binned top-m
       bins_topm_vals, bins_topm_idxs = binned_topk(
           logits_ref,
-          max_k=max_m,
+          k=m,
           bins_topk_vals=[
               bins_topm_vals_ref[
                   token_slice, pl.dslice(i * num_bins, num_bins)
               ].astype(jnp.float32)
-              for i in range(max_m)
+              for i in range(m)
           ],
           bins_topk_idxs=[
               bins_topm_idxs_ref[
                   token_slice, pl.dslice(i * num_bins, num_bins)
               ]
-              for i in range(max_m)
+              for i in range(m)
           ],
           num_bins=num_bins,
           completed_k=completed_m,
@@ -148,7 +175,7 @@ def dynamic_topk_kernel(
       )
 
       # Store results
-      for i in range(completed_m, max_m):
+      for i in range(completed_m, m):
         bins_topm_vals_ref[
             token_slice, pl.dslice(i * num_bins, num_bins)
         ] = bins_topm_vals[i].astype(bins_topm_vals_ref.dtype)
@@ -160,9 +187,9 @@ def dynamic_topk_kernel(
       # If top-(m-1) bins contain >= k vals larger than
       # the largest m-th largest value, then top-k is guaranteed to be in bins 
       # top-(m-1) collated
-      pivot = bins_topm_vals[max_m - 1].max(-1, keepdims=True)
+      pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
       num_larger = (
-          sum([(v >= pivot) for v in bins_topm_vals[:max_m - 1]])
+          sum([(v >= pivot) for v in bins_topm_vals[:m - 1]])
           .astype(jnp.float32)
           .sum(-1)
       )
@@ -178,7 +205,7 @@ def dynamic_topk_kernel(
         current_max = max_depth_ref[token_idx]
         max_depth_ref[token_idx] = jnp.where(
             contains_topk & (current_max == max_k),
-            max_m - 1,
+            m - 1,
             current_max
         )
         # Record largest m-th largest value
@@ -193,7 +220,7 @@ def dynamic_topk_kernel(
         
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) for x in bins_topm_schedule)))
 
-  #Final top-k extraction (done by last program)
+  # Final top-k extraction (done by last program)
   @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
   def _():
     # Find maximum depth across all tokens
@@ -249,26 +276,40 @@ def top_dynamic_k(
     block_token: int = 8,
     num_bins: int = NUM_LANES,
     bins_topm_unroll: int = 32,
-    bins_topm_schedule: tuple[int,...] = None,
+    bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
     interpret: bool = False,
 ):
   """
-  High-level interface for adaptive binned top-k on TPU.
-
+  High-level interface for adaptive binned top-k computation on TPU.
+  
+  Supports dynamic k per token (each token can have a different k value) while
+  maintaining efficient TPU execution through static compilation based on max_k.
+  Automatically computes optimal search schedules if not provided.
+  
   Args:
-      logits: Input logits [num_tokens, vocab_size]
-      k: JAX Array [num_tokens] containing k per row.
-      max_k: Static integer maximum k (used for buffer sizing and compilation).
-      block_token: Token binsing size.
-      num_bins: Number of binss (lanes) for sinking sort.
-      binned_topk_unroll: Unroll factor for the inner binned loop.
-      bins_topm_schedule: Schedule of m vals for binned top-m.
-      topk_schedule: Schedule for final sorting depth.
-
+      logits: Input logits of shape [num_tokens, vocab_size].
+      k: Per-token k values. Can be scalar (broadcast to all tokens) or array
+          of shape [num_tokens].
+      max_k: Static maximum k across all tokens. Used for buffer sizing and
+          compilation. Must be >= all values in k.
+      block_token: Number of tokens processed per program block (default: 8).
+          Must evenly divide num_tokens.
+      num_bins: Number of bins for parallel binned operations (default: 128).
+      bins_topm_unroll: Loop unroll factor for binned top-m inner loop (default: 32).
+      bins_topm_schedule: Increasing sequence of m values for incremental top-m search.
+          If None, automatically computed based on convergence probability thresholds.
+      guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
+          (default: False).
+      interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
+  
   Returns:
-      Tuple of (vals, idxs) for top-k elements.
-      Output shape is fixed at [num_tokens, max_k].
+      Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
+          - topk_vals: Top-k values of shape [num_tokens, max_k].
+          - topk_idxs: Top-k indices of shape [num_tokens, max_k].
+          - valid: Boolean indicating if algorithm fully converged.
+          - depths: Per-token convergence depth of shape [num_tokens].
+          - cutoff_vals: Per-token pivot values of shape [num_tokens].
   """
   num_tokens, vocab_size = logits.shape
 
@@ -287,7 +328,7 @@ def top_dynamic_k(
     bins_topm_schedule += (max_k,)
   bins_topm_schedule += (0,)
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
-  # binned took / sort pad len
+  # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
 
@@ -352,19 +393,40 @@ def top_dynamic_k(
 def top_k(
     logits,
     k: int,
-    block_token: int = 8,
+    block_token: int = NUM_SUBLANES,
     num_bins: int = NUM_LANES,
-    bins_topk_unroll: int = 16,
-    bins_topm_schedule = None,
+    bins_topm_unroll: int = 32,
+    bins_topm_schedule: tuple[int, ...] | None = None,
     interpret: bool = False,
 ):
+  """
+  Compute top-k elements with guaranteed convergence.
+  
+  Simplified interface for uniform k across all tokens. Automatically ensures
+  convergence by setting guarantee_convergence=True internally.
+  
+  Args:
+      logits: Input logits of shape [num_tokens, vocab_size].
+      k: Number of top elements to find (uniform across all tokens).
+      block_token: Number of tokens processed per program block (default: 8).
+      num_bins: Number of bins for parallel operations (default: 128).
+      bins_topm_unroll: Loop unroll factor for inner loop (default: 32).
+      bins_topm_schedule: Optional custom search schedule. If None, automatically
+          computed.
+      interpret: If True, run in CPU interpret mode (default: False).
+  
+  Returns:
+      Tuple of (topk_vals, topk_idxs):
+          - topk_vals: Top-k values of shape [num_tokens, k].
+          - topk_idxs: Top-k indices of shape [num_tokens, k].
+  """
   return top_dynamic_k(
     logits,
     k=k,
     max_k=k,
     block_token=block_token,
     num_bins=num_bins,
-    bins_topk_unroll=bins_topk_unroll,
+    bins_topm_unroll=bins_topm_unroll,
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
     interpret=interpret,
