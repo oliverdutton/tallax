@@ -214,7 +214,12 @@ def topk_blockwise_superset_kernel(
 
     # Use appropriate sorting depth based on max_depth_global
     for depth_lower, depth_upper in zip(topk_schedule, topk_schedule[1:]):
-      @pl.when((max_depth_global > depth_lower) & (max_depth_global <= depth_upper))
+      @pl.when((
+      (max_depth_global > depth_lower) & (max_depth_global <= depth_upper)
+      ) | (
+      # Sort to give approx topk if not fully converged
+      (depth_upper == topk_schedule[-1]) & (max_depth_global > depth_upper)
+      ))
       def _():
         # Sort the blockwise superset
         bitonic_sort(
