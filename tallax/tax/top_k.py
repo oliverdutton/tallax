@@ -326,8 +326,8 @@ def top_dynamic_k(
     print(f"  bins_topm_schedule: {bins_topm_schedule}")
   if guarantee_convergence:
     bins_topm_schedule += (max_k,)
-  bins_topm_schedule += (0,)
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
+  bins_topm_schedule = (0,) + bins_topm_schedule
   # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
