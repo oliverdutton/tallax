@@ -8,7 +8,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, pad, log2, get_dtype_info
+from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info
 
 
 def binned_topk(
