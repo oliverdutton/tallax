@@ -94,6 +94,7 @@ def topk_blockwise_superset_kernel(
     topk_indices_ref,
     valid_ref,
     max_depth_ref,
+    cutoff_values_ref,
     block_topm_values_ref,
     block_topm_indices_ref,
     termination_flag_ref,
@@ -122,6 +123,7 @@ def topk_blockwise_superset_kernel(
   block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
   for i in range(block_size): 
     max_depth_ref[pid * block_size + i] = max_k
+    cutoff_values_ref[pid * block_size + i] = float('inf')
   termination_flag_ref[0] = 0
 
   # Incremental blockwise top-k computation
@@ -183,6 +185,7 @@ def topk_blockwise_superset_kernel(
             target_m - 1,
             current_max
         )
+        cutoff_values_ref[token_idx] = 
 
       # Check if all tokens converged
       @pl.when(termination_flag_ref[0] != block_size)
@@ -312,6 +315,7 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens,), jnp.float32),
   )
 
   output_specs = (
@@ -319,9 +323,10 @@ def top_dynamic_k(
       pl.BlockSpec(),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
-  topk_vals, topk_idxs, valid, depths = pl.pallas_call(
+  topk_vals, topk_idxs, valid, depths, cutoff_values = pl.pallas_call(
       functools.partial(
           topk_blockwise_superset_kernel,
           max_k=max_k,
@@ -347,7 +352,7 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths
+  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths, cutoff_values
 
   
 @functools.partial(
