@@ -218,7 +218,7 @@ def dynamic_topk_kernel(
         termination_flag_ref[0] = 0
         
         
-  global_topk_schedule = tuple(sorted(set(2**log2(x - 1) for x in bins_topm_schedule)))
+  global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
   # Final top-k extraction (done by last program)
   @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
