@@ -266,7 +266,8 @@ def dynamic_topk_kernel(
         "bins_topm_unroll",
         "bins_topm_schedule",
         "guarantee_convergence",
-        "interpret"
+        "interpret",
+        "transpose_output"
     ),
 )
 def top_dynamic_k(
@@ -279,14 +280,15 @@ def top_dynamic_k(
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
     interpret: bool = False,
+    transpose_output: bool = False,
 ):
   """
   High-level interface for adaptive binned top-k computation on TPU.
-  
+
   Supports dynamic k per token (each token can have a different k value) while
   maintaining efficient TPU execution through static compilation based on max_k.
   Automatically computes optimal search schedules if not provided.
-  
+
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Per-token k values. Can be scalar (broadcast to all tokens) or array
@@ -302,11 +304,13 @@ def top_dynamic_k(
       guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
           (default: False).
       interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
-  
+      transpose_output: If True, transpose output arrays to shape [max_k, num_tokens]
+          instead of [num_tokens, max_k] (default: False).
+
   Returns:
       Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
-          - topk_vals: Top-k values of shape [num_tokens, max_k].
-          - topk_idxs: Top-k indices of shape [num_tokens, max_k].
+          - topk_vals: Top-k values of shape [num_tokens, max_k] or [max_k, num_tokens] if transposed.
+          - topk_idxs: Top-k indices of shape [num_tokens, max_k] or [max_k, num_tokens] if transposed.
           - valid: Boolean indicating if algorithm fully converged.
           - depths: Per-token convergence depth of shape [num_tokens].
           - cutoff_vals: Per-token pivot values of shape [num_tokens].
@@ -376,18 +380,27 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths, cutoff_vals
+
+  topk_vals = topk_vals[:,:max_k]
+  topk_idxs = topk_idxs[:,:max_k]
+
+  if transpose_output:
+    topk_vals = topk_vals.T
+    topk_idxs = topk_idxs.T
+
+  return topk_vals, topk_idxs, valid.squeeze().astype(bool), depths, cutoff_vals
 
   
 @functools.partial(
     jit,
     static_argnames=(
-        "k", 
-        "block_token", 
-        "num_bins", 
-        "bins_topm_unroll", 
+        "k",
+        "block_token",
+        "num_bins",
+        "bins_topm_unroll",
         "bins_topm_schedule",
-        "interpret"
+        "interpret",
+        "transpose_output"
     ),
 )
 def top_k(
@@ -398,13 +411,14 @@ def top_k(
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
     interpret: bool = False,
+    transpose_output: bool = False,
 ):
   """
   Compute top-k elements with guaranteed convergence.
-  
+
   Simplified interface for uniform k across all tokens. Automatically ensures
   convergence by setting guarantee_convergence=True internally.
-  
+
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Number of top elements to find (uniform across all tokens).
@@ -414,11 +428,13 @@ def top_k(
       bins_topm_schedule: Optional custom search schedule. If None, automatically
           computed.
       interpret: If True, run in CPU interpret mode (default: False).
-  
+      transpose_output: If True, transpose output arrays to shape [k, num_tokens]
+          instead of [num_tokens, k] (default: False).
+
   Returns:
       Tuple of (topk_vals, topk_idxs):
-          - topk_vals: Top-k values of shape [num_tokens, k].
-          - topk_idxs: Top-k indices of shape [num_tokens, k].
+          - topk_vals: Top-k values of shape [num_tokens, k] or [k, num_tokens] if transposed.
+          - topk_idxs: Top-k indices of shape [num_tokens, k] or [k, num_tokens] if transposed.
   """
   return top_dynamic_k(
     logits,
@@ -430,4 +446,5 @@ def top_k(
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
     interpret=interpret,
+    transpose_output=transpose_output,
   )[:2]
