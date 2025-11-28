@@ -123,7 +123,7 @@ def topk_blockwise_superset_kernel(
   block_topm_indices_ref[token_slice] = jnp.full(shape, 0, dtype=jnp.int32)
   for i in range(block_size): 
     max_depth_ref[pid * block_size + i] = max_k
-    cutoff_values_ref[pid * block_size + i] = float('inf')
+    cutoff_values_ref[pid * block_size + i] = float('-inf')
   termination_flag_ref[0] = 0
 
   # Incremental blockwise top-k computation
@@ -185,7 +185,10 @@ def topk_blockwise_superset_kernel(
             target_m - 1,
             current_max
         )
-        cutoff_values_ref[token_idx] = 
+        # Record largest m-th largest value
+        # Useful for bounds checking if running sharded topk
+        # only valid if topk_schedule[-1] + 1 >= block_topk_schedule[-1]
+        cutoff_values_ref[token_idx] = pivot.squeeze(1)[i]
 
       # Check if all tokens converged
       @pl.when(termination_flag_ref[0] != block_size)
@@ -202,7 +205,8 @@ def topk_blockwise_superset_kernel(
     
     valid_ref[0] = ((
     max_depth_global < min(block_topk_schedule[-1], topk_schedule[-1] + 1)
-    ) | (block_topk_schedule[-1] == max_k)).astype(jnp.int32)
+    ) | (block_topk_schedule[-1] == max_k)
+    ).astype(jnp.int32)
     
     # convert to global indices from local
     block_topm_indices_ref[...] = (
