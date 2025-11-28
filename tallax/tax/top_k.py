@@ -99,7 +99,7 @@ def binned_topk(
     # Load the final boundary segment
     final_vals = logits[..., pl.dslice(num_full_slices * num_bins, remainder)]
     # Pad to num_bins with f32 min
-    final_vals = pad(final_vals, bins_shape=(1, num_bins), val=get_dtype_info(final_vals).min)
+    final_vals = pad(final_vals, (1, num_bins), val=get_dtype_info(final_vals).min)
     # Create idxs for the final segment
     final_idxs = compute_idxs(num_full_slices)
     # Update bins topk with the overspill
