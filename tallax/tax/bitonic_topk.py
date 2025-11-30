@@ -374,15 +374,15 @@ def bitonic_topk(
             num_keys=num_keys,
             descending=descending,
         ),
-        in_specs=tuple(
+        in_specs=(tuple(
             pl.BlockSpec((num_tokens, padded_vocab_size), lambda: (0, 0))
             for _ in operands
-        ),
-        out_shape=output_shapes,
-        out_specs=tuple(
+        ),),
+        out_shape=(output_shapes,),
+        out_specs=(tuple(
             pl.BlockSpec()
             for _ in output_shapes
-        ),
+        ),),
         grid=(),
         compiler_params=pltpu.CompilerParams(
             vmem_limit_bytes=int(0.9 * 2**27)
