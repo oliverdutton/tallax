@@ -247,88 +247,44 @@ def dynamic_topk_kernel(
       num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
     # Use bitonic_sort descending to get bin indices ordered by contribution count
-    # Initialize scratch refs for sorting
     bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
 
-    # Use the scratch refs passed to the kernel
-    sort_vals_scratch_ref[...] = num_gt_k.astype(jnp.float32)
-    sort_idxs_scratch_ref[...] = bin_indices
+    # Initialize scratch refs for sorting (following sort.py style with refs as list)
+    sort_scratch_refs = [sort_vals_scratch_ref, sort_idxs_scratch_ref]
+    sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
+    sort_scratch_refs[1][...] = bin_indices
 
-    # Sort descending by num_gt_k (primary key)
-    bitonic_sort(
-        [sort_vals_scratch_ref, sort_idxs_scratch_ref],
-        stage_ref=None,
-        num_keys=1,
-        descending=True,
-    )
-
-    # Extract sorted indices
-    argsort_indices = sort_idxs_scratch_ref[...]
+    # Sort descending by num_gt_k
+    bitonic_sort(sort_scratch_refs, stage_ref=None, num_keys=1, descending=True)
 
     # Extract top NUM_LANES (128) bin indices
-    # Shape: (block_token, NUM_LANES)
-    permutation = argsort_indices[:, :NUM_LANES]
-
-    # Store sorted bin indices for reference
+    permutation = sort_scratch_refs[1][:, :NUM_LANES]
     sorted_bins_ref[token_slice] = permutation.astype(sorted_bins_ref.dtype)
 
-    # Make permutation repeat first 16 values using modulo
-    # Create 2D iota and take modulo 16
+    # Repeat first 16 values across NUM_LANES positions
     iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
-    repeated_indices = iota_2d % 16
-    permutation_repeated = jnp.take_along_axis(
-        permutation, repeated_indices, axis=1
-    )
+    permutation_repeated = jnp.take_along_axis(permutation, iota_2d % 16, axis=1)
 
-    # Process blocks of data
-    num_blocks = num_bins
-    # Output will have shape (block_token, NUM_LANES) after packing
-    # Initialize output with -inf
-    packed_vals = jnp.full(
-        (block_token, NUM_LANES),
-        jnp.finfo(jnp.float32).min,
-        dtype=jnp.float32
-    )
+    # Initialize packed output
+    packed_vals = jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
     packed_idxs = jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
 
-    # Loop over blocks in chunks of NUM_LANES
-    for offset in range(0, num_blocks, NUM_LANES):
-      # Tile permutation by subtracting offset
-      tile_permutation = permutation_repeated - offset
+    # Loop over blocks and pack data from active bins
+    for offset in range(0, num_bins, NUM_LANES):
+      tile_permutation = (permutation_repeated - offset) % NUM_LANES
+      in_range_mask = (permutation_repeated >= offset) & (permutation_repeated < offset + NUM_LANES)
 
-      # Mask for valid indices in this block
-      in_range_mask = (tile_permutation >= 0) & (tile_permutation < NUM_LANES)
-
-      # Clip tile_permutation to valid range for take_along_axis
-      tile_permutation_clipped = jnp.clip(tile_permutation, 0, NUM_LANES - 1)
-
-      # For each m-1 bin level, gather the data
       for bin_level in range(m - 1):
-        # Get the logit values for this bin level
-        bin_vals = bins_topm_vals_ref[
-            token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)
-        ]
-        bin_idxs = bins_topm_idxs_ref[
-            token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)
+        bin_refs = [
+            bins_topm_vals_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)],
+            bins_topm_idxs_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
         ]
 
-        # Permute according to tile_permutation
-        # Clip is safe to use because we mask out-of-range values anyway
-        permuted_vals = jnp.take_along_axis(bin_vals, tile_permutation_clipped, axis=1)
-        permuted_idxs = jnp.take_along_axis(bin_idxs, tile_permutation_clipped, axis=1)
+        permuted_vals = jnp.take_along_axis(bin_refs[0], tile_permutation, axis=1)
+        permuted_idxs = jnp.take_along_axis(bin_refs[1], tile_permutation, axis=1)
 
-        # Only keep valid values (mask out-of-range)
-        permuted_vals = jnp.where(in_range_mask, permuted_vals, jnp.finfo(jnp.float32).min)
-        permuted_idxs = jnp.where(in_range_mask, permuted_idxs, 0)
-
-        # Pack into output: first 16 positions get bin_level 0,
-        # next 16 get bin_level 1, etc.
-        # Create mask for this bin level's positions
-        start_pos = bin_level * 16
-        end_pos = (bin_level + 1) * 16
-        pack_mask = (iota_2d >= start_pos) & (iota_2d < end_pos) & in_range_mask
-
-        # Update packed data where mask is true
+        # Pack into positions [bin_level*16 : (bin_level+1)*16]
+        pack_mask = (iota_2d >= bin_level * 16) & (iota_2d < (bin_level + 1) * 16) & in_range_mask
         packed_vals = jnp.where(pack_mask, permuted_vals, packed_vals)
         packed_idxs = jnp.where(pack_mask, permuted_idxs, packed_idxs)
 
