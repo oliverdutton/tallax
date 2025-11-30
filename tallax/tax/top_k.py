@@ -432,7 +432,18 @@ def top_k(
       raise ValueError(
           f"bitonic=True only supports k=NUM_LANES={NUM_LANES}, got k={k}"
       )
-    return _bitonic_topk(logits, k=k, interpret=interpret)
+    # Create indices for bitonic topk
+    num_tokens, vocab_size = logits.shape
+    indices = jax.lax.broadcasted_iota(jnp.int32, (num_tokens, vocab_size), 1)
+    # Call bitonic_topk with both values and indices
+    vals, idxs = _bitonic_topk(
+        (logits, indices),
+        k=k,
+        num_keys=1,
+        descending=True,
+        interpret=interpret
+    )
+    return vals, idxs
 
   return top_dynamic_k(
     logits,

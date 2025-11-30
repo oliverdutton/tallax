@@ -6,6 +6,8 @@ sublane transposed format to maximize efficiency of permutation operations.
 """
 
 import functools
+from collections.abc import Sequence
+
 import jax
 import jax.numpy as jnp
 from jax import lax, jit
@@ -21,6 +23,7 @@ from tallax.utils import (
     split_array_to_tiles,
     join_tiles_to_array,
     pad,
+    canonicalize_operand,
 )
 from tallax.tax.sort import (
     _compute_subtile_substages_inner,
@@ -146,9 +149,11 @@ def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
 
 
 def bitonic_topk_kernel(
-    logits_ref,
-    topk_vals_ref,
-    topk_idxs_ref,
+    in_refs,
+    out_refs,
+    *,
+    num_keys: int,
+    descending: bool,
 ):
     """
     Pallas kernel for bitonic top-k with k=128 in sublane format.
@@ -163,80 +168,71 @@ def bitonic_topk_kernel(
        - Each iteration: roll permute, max merge, run substages for decreasing stage
     6. Transpose back from sublane format and extract top-128 per token
     """
-    num_tokens = logits_ref.shape[0]
-    vocab_size = logits_ref.shape[1]
+    num_tokens = in_refs[0].shape[0]
+    vocab_size = in_refs[0].shape[1]
     b = num_tokens
 
     if b > NUM_LANES:
         raise ValueError(f"num_tokens must be <= NUM_LANES, got {num_tokens}")
 
+    # Calculate dim1_offset for descending sort
+    dim1_offset = int(descending) * vocab_size
+
     # Convert to sublane format: (num_tokens, vocab_size) -> (128, num_tokens * num_chunks)
     # where num_chunks = vocab_size // 128
     num_chunks = vocab_size // NUM_LANES
 
-    # Stack chunks: for each 128-wide chunk, stack all tokens
-    vals_chunks = []
-    idxs_chunks = []
+    # Process all input operands
+    operands_sublane = []
 
-    for chunk_idx in range(num_chunks):
-        chunk_start = chunk_idx * NUM_LANES
-        chunk_vals = logits_ref[:, pl.dslice(chunk_start, NUM_LANES)]  # (num_tokens, 128)
+    for in_ref in in_refs:
+        # Stack chunks: for each 128-wide chunk, stack all tokens
+        chunks = []
+        for chunk_idx in range(num_chunks):
+            chunk_start = chunk_idx * NUM_LANES
+            chunk = in_ref[:, pl.dslice(chunk_start, NUM_LANES)]  # (num_tokens, 128)
+            chunks.append(chunk)
 
-        # Create indices
-        base_idx = jnp.full((num_tokens, NUM_LANES), chunk_start, dtype=jnp.int32)
-        chunk_idxs = base_idx + jax.lax.broadcasted_iota(jnp.int32, (num_tokens, NUM_LANES), 1)
+        # Concatenate chunks and transpose to sublane format
+        # (num_tokens, vocab_size) -> (vocab_size, num_tokens) -> (128, num_chunks * num_tokens)
+        full = jnp.concatenate(chunks, axis=1).T  # (vocab_size, num_tokens)
 
-        vals_chunks.append(chunk_vals)
-        idxs_chunks.append(chunk_idxs)
+        # Reshape to sublane format: (128, num_chunks * num_tokens)
+        reshaped = []
+        for i in range(num_chunks):
+            reshaped.append(full[i * NUM_LANES:(i + 1) * NUM_LANES, :])
 
-    # Concatenate chunks and transpose to sublane format
-    # (num_tokens, vocab_size) -> (vocab_size, num_tokens) -> (128, num_chunks * num_tokens)
-    vals_full = jnp.concatenate(vals_chunks, axis=1).T  # (vocab_size, num_tokens)
-    idxs_full = jnp.concatenate(idxs_chunks, axis=1).T
-
-    # Reshape to sublane format: (128, num_chunks * num_tokens)
-    vals_reshaped = []
-    idxs_reshaped = []
-    for i in range(num_chunks):
-        vals_reshaped.append(vals_full[i * NUM_LANES:(i + 1) * NUM_LANES, :])
-        idxs_reshaped.append(idxs_full[i * NUM_LANES:(i + 1) * NUM_LANES, :])
-
-    vals_sublane = jnp.concatenate(vals_reshaped, axis=1)  # (128, num_chunks * num_tokens)
-    idxs_sublane = jnp.concatenate(idxs_reshaped, axis=1)
+        sublane = jnp.concatenate(reshaped, axis=1)  # (128, num_chunks * num_tokens)
+        operands_sublane.append(sublane)
 
     # Pad to power of 2
-    target_dim1 = 2 ** log2(vals_sublane.shape[1])
+    target_dim1 = 2 ** log2(operands_sublane[0].shape[1])
     if target_dim1 < NUM_LANES:
         target_dim1 = NUM_LANES
 
-    if vals_sublane.shape[1] < target_dim1:
-        pad_size = target_dim1 - vals_sublane.shape[1]
-        vals_sublane = jnp.pad(
-            vals_sublane,
-            ((0, 0), (0, pad_size)),
-            constant_values=jnp.finfo(jnp.float32).min
-        )
-        idxs_sublane = jnp.pad(
-            idxs_sublane,
-            ((0, 0), (0, pad_size)),
-            constant_values=-1
+    if operands_sublane[0].shape[1] < target_dim1:
+        pad_size = target_dim1 - operands_sublane[0].shape[1]
+        operands_sublane = tuple(
+            jnp.pad(
+                op,
+                ((0, 0), (0, pad_size)),
+                constant_values=jnp.finfo(op.dtype).min if jnp.issubdtype(op.dtype, jnp.floating) else -1
+            )
+            for op in operands_sublane
         )
 
     # Convert to tiles for processing
-    vals_tiles = split_array_to_tiles(vals_sublane)
-    idxs_tiles = split_array_to_tiles(idxs_sublane)
-
-    arrs_tiles = [vals_tiles, idxs_tiles]
+    arrs_tiles = tuple(split_array_to_tiles(op) for op in operands_sublane)
 
     # Stage 1: Bitonic sort stages 1-6 (sort up to 64 within each lane)
     arrs_tiles = _compute_subtile_substages_inner(
-        arrs_tiles,
+        list(arrs_tiles),
         num_substages=6,
         stage=None,  # None means run stages 1-6 as fused block
         b=b,
         use_lane_permute=False,
-        num_keys=1,
-        dim1_offset=0,
+        num_keys=num_keys,
+        dim1_offset=dim1_offset,
     )
 
     # Stage 2: Run substages for higher stage
@@ -250,8 +246,8 @@ def bitonic_topk_kernel(
         stage=merge_stage,
         b=b,
         use_lane_permute=False,
-        num_keys=1,
-        dim1_offset=0,
+        num_keys=num_keys,
+        dim1_offset=dim1_offset,
     )
 
     # Stage 3: Iteratively merge tiles
@@ -263,8 +259,8 @@ def bitonic_topk_kernel(
         arrs_tiles = _merge_tiles_max(
             arrs_tiles,
             stage=merge_stage,
-            dim1_offset=0,
-            num_keys=1,
+            dim1_offset=dim1_offset,
+            num_keys=num_keys,
             b=b
         )
 
@@ -275,8 +271,8 @@ def bitonic_topk_kernel(
             stage=merge_stage,
             b=b,
             use_lane_permute=False,
-            num_keys=1,
-            dim1_offset=0,
+            num_keys=num_keys,
+            dim1_offset=dim1_offset,
         )
 
         num_tiles = len(arrs_tiles[0])
@@ -287,16 +283,12 @@ def bitonic_topk_kernel(
         arrs_tiles = _lane_permute_merge_progressive(
             arrs_tiles,
             initial_stage=merge_stage,
-            num_keys=1,
+            num_keys=num_keys,
             b=b
         )
 
     # Extract results and convert back from sublane format
-    vals_tiles, idxs_tiles = arrs_tiles
-    final_shape = (NUM_LANES, len(vals_tiles) * NUM_SUBLANES)
-
-    vals_final = join_tiles_to_array(final_shape, vals_tiles)  # (128, ...)
-    idxs_final = join_tiles_to_array(final_shape, idxs_tiles)
+    final_shape = (NUM_LANES, len(arrs_tiles[0]) * NUM_SUBLANES)
 
     # In sublane sorted format:
     # - Row i contains the i-th ranked value from each token
@@ -304,45 +296,52 @@ def bitonic_topk_kernel(
     # - Next b columns contain values for tokens 0 to b-1 (next chunk), etc.
     # After all merging, the first b columns should have the top-128 per token
     # Transpose to get (num_tokens, 128)
-    topk_vals_ref[...] = vals_final[:, :num_tokens].T  # (num_tokens, 128)
-    topk_idxs_ref[...] = idxs_final[:, :num_tokens].T
+    for tiles, out_ref in zip(arrs_tiles, out_refs):
+        final = join_tiles_to_array(final_shape, tiles)  # (128, ...)
+        out_ref[...] = final[:, :num_tokens].T  # (num_tokens, 128)
 
 
 @functools.partial(
     jit,
-    static_argnames=("k", "interpret"),
+    static_argnames=("k", "num_keys", "descending", "interpret"),
 )
 def bitonic_topk(
-    logits: jax.Array,
+    operand: jax.Array | Sequence[jax.Array],
     k: int = NUM_LANES,
+    num_keys: int = 1,
+    descending: bool = True,
     interpret: bool = False,
-) -> tuple[jax.Array, jax.Array]:
+) -> tuple[jax.Array, ...]:
     """
     Compute top-k using bitonic sort in sublane transposed format.
 
     Optimized for k=NUM_LANES=128 only. Works entirely in sublane transposed
-    format for maximum TPU efficiency.
+    format for maximum TPU efficiency. Supports multiple operands like sort().
 
     Args:
-        logits: Input logits of shape [num_tokens, vocab_size].
+        operand: Input array(s) of shape [num_tokens, vocab_size].
+                Can be a single array or sequence of arrays.
                 vocab_size must be a multiple of NUM_LANES.
         k: Number of top elements (must be NUM_LANES=128).
+        num_keys: Number of arrays to use as sort keys.
+        descending: If True, sort in descending order (default for top-k).
         interpret: If True, run in CPU interpret mode.
 
     Returns:
-        Tuple of (topk_vals, topk_idxs):
-            - topk_vals: Top-k values of shape [num_tokens, k]
-            - topk_idxs: Top-k indices of shape [num_tokens, k]
+        Tuple of arrays (same length as input operands):
+            - Each array has shape [num_tokens, k]
 
     Raises:
-        ValueError: If k != NUM_LANES or vocab_size not multiple of NUM_LANES
+        ValueError: If k != NUM_LANES, vocab_size not multiple of NUM_LANES,
+                   or num_tokens > NUM_LANES
     """
     if k != NUM_LANES:
         raise ValueError(
             f"bitonic_topk only supports k=NUM_LANES={NUM_LANES}, got k={k}"
         )
 
-    num_tokens, vocab_size = logits.shape
+    operands, shape = canonicalize_operand(operand)
+    num_tokens, vocab_size = shape
 
     if vocab_size % NUM_LANES != 0:
         raise ValueError(
@@ -354,27 +353,48 @@ def bitonic_topk(
             f"num_tokens must be <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
 
-    # Define output shapes
-    output_shapes = (
-        jax.ShapeDtypeStruct((num_tokens, NUM_LANES), logits.dtype),
-        jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32),
+    # Pad operands to proper dimensions
+    operands = tuple(
+        pad(x, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'), prepend=(False, descending))
+        for x in operands
     )
 
-    topk_vals, topk_idxs = pl.pallas_call(
-        bitonic_topk_kernel,
-        in_specs=(
-            pl.BlockSpec((num_tokens, vocab_size), lambda: (0, 0)),
+    # Update shape after padding
+    padded_vocab_size = operands[0].shape[1]
+
+    # Define output shapes
+    output_shapes = tuple(
+        jax.ShapeDtypeStruct((num_tokens, NUM_LANES), op.dtype)
+        for op in operands
+    )
+
+    outputs = pl.pallas_call(
+        functools.partial(
+            bitonic_topk_kernel,
+            num_keys=num_keys,
+            descending=descending,
+        ),
+        in_specs=tuple(
+            pl.BlockSpec((num_tokens, padded_vocab_size), lambda: (0, 0))
+            for _ in operands
         ),
         out_shape=output_shapes,
-        out_specs=(
-            pl.BlockSpec(),
-            pl.BlockSpec(),
+        out_specs=tuple(
+            pl.BlockSpec()
+            for _ in output_shapes
         ),
         grid=(),
         compiler_params=pltpu.CompilerParams(
             vmem_limit_bytes=int(0.9 * 2**27)
         ),
         interpret=interpret,
-    )(logits)
+    )(operands)
 
-    return topk_vals, topk_idxs
+    # Unpad if needed (extract k elements from the correct side)
+    if not descending:
+        outputs = tuple(x[:, :k] for x in outputs)
+    else:
+        # For descending, top-k is at the beginning after sorting
+        outputs = tuple(x[:, :k] for x in outputs)
+
+    return outputs
