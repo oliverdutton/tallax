@@ -263,7 +263,7 @@ def dynamic_topk_kernel(
 
     # Repeat first 16 values across NUM_LANES positions
     iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
-    permutation_repeated = jnp.take_along_axis(permutation, iota_2d % 16, axis=1)
+    perm = jnp.take_along_axis(permutation, iota_2d % 16, axis=1)
 
     # Initialize packed output
     packed_refs = [
@@ -273,8 +273,8 @@ def dynamic_topk_kernel(
 
     # Loop over blocks and pack data from active bins
     for offset in range(0, num_bins, NUM_LANES):
-      tile_permutation = (permutation_repeated - offset) % NUM_LANES
-      in_range_mask = (permutation_repeated >= offset) & (permutation_repeated < offset + NUM_LANES)
+      tile_permutation = (perm - offset) % NUM_LANES
+      in_range_mask = (perm >= offset) & (perm < offset + NUM_LANES)
 
       for bin_level in range(m - 1):
         bin_refs = [
