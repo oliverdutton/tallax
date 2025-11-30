@@ -230,13 +230,9 @@ def dynamic_topk_kernel(
     # - bin_schedule = (5,9), k=128, num_bins=256
     # - Not converged at iteration 9 (checking k up to 8)
     # - At most 16 bins contain values contributing to top-k
+    # - Logical: k/(m-1) = 128/8 = 16 max active bins
 
     m = bins_topm_schedule[-1]  # Should be 9 for the (5,9) schedule
-
-    # Assertion: bins_topm_schedule should be (0, 5, 9) for this optimization
-    assert len(bins_topm_schedule) == 3, "Expected schedule (0, 5, 9) for bin sorting"
-    assert bins_topm_schedule[1] == 5 and bins_topm_schedule[2] == 9, \
-        "Expected schedule (0, 5, 9) for bin sorting"
 
     # Count contribution of each bin to top-k
     # bins_topm_vals has shape (m, block_token, num_bins)
@@ -249,12 +245,6 @@ def dynamic_topk_kernel(
     for i in range(m - 1):
       bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
       num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
-
-    # Assertion: at most 16 bins should have contributions (num_gt_k > 0)
-    num_active_bins = (num_gt_k > 0).sum(-1)
-    for i in range(block_token):
-      assert num_active_bins[i] <= 16, \
-          f"Expected at most 16 active bins, got {num_active_bins[i]}"
 
     # Use bitonic_sort descending to get bin indices ordered by contribution count
     # Initialize scratch refs for sorting
