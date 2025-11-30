@@ -71,18 +71,19 @@ def _merge_tiles_max(arrs_tiles, stage, dim1_offset, num_keys, b):
     return [merged_vals, merged_idxs]
 
 
-def _lane_permute_merge(arrs_tiles, stage, dim1_offset, num_keys, b):
+def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
     """
-    Merge tiles using lane permutations via take_along_axis.
+    Progressive lane permute merging with decreasing distances and stages.
 
-    Used when fewer tiles remain and we need cross-tile communication.
+    Runs log2(128//b) iterations with:
+    - Iteration i: distance = 64 >> i, stage = initial_stage - i
+    - Each iteration: permute, max merge, run substages 6-0
 
     Args:
         arrs_tiles: List of tile arrays [vals_tiles, idxs_tiles]
-        stage: Current bitonic stage
-        dim1_offset: Offset for bitonic direction
+        initial_stage: Starting stage (7 + log2(128//b))
         num_keys: Number of sort keys
-        b: Block size
+        b: Block size (num_tokens)
 
     Returns:
         List of merged tile arrays
@@ -98,23 +99,44 @@ def _lane_permute_merge(arrs_tiles, stage, dim1_offset, num_keys, b):
     vals = join_tiles_to_array(shape, vals_tiles)
     idxs = join_tiles_to_array(shape, idxs_tiles)
 
-    # Perform bitonic merge using lane permutations (supported by TPU via take_along_axis)
-    # This is an (8, 128) permute pattern
-    for substage in range(log2(NUM_LANES))[::-1]:
-        index = iota_tile(1)
-        permutation = jnp.bitwise_xor(index, 1 << substage)
+    # Progressive merging: log2(128//b) iterations
+    num_iterations = log2(NUM_LANES // b)
 
-        # Take along axis is supported for (8, 128) tiles
+    for i in range(num_iterations):
+        distance = 64 >> i  # 64, 32, 16, ..., down to b
+        current_stage = initial_stage - i
+
+        # Create permutation: XOR with distance (equivalent to roll for power-of-2 distances)
+        # Element at position i gets combined with element at i XOR distance
+        index = iota_tile(1)
+        permutation = jnp.bitwise_xor(index, distance)
+
+        # Permute using take_along_axis (TPU-supported for (8, 128) tiles)
         vals_permuted = jnp.take_along_axis(vals, permutation, axis=1)
         idxs_permuted = jnp.take_along_axis(idxs, permutation, axis=1)
 
-        # Compare and swap
-        is_right_half = create_bit_indicator(substage, index)
+        # Max merge: keep the larger values
         mask = vals > vals_permuted
-        mask = jnp.bitwise_xor(mask.astype(jnp.int32), is_right_half.astype(jnp.int32)).astype(bool)
-
         vals = jnp.where(mask, vals, vals_permuted)
         idxs = jnp.where(mask, idxs, idxs_permuted)
+
+        # Run substages 6-0 for current stage
+        vals_tiles = split_array_to_tiles(vals)
+        idxs_tiles = split_array_to_tiles(idxs)
+
+        arrs_tiles = _compute_subtile_substages_inner(
+            [vals_tiles, idxs_tiles],
+            num_substages=7,  # substages 0-6
+            stage=current_stage,
+            b=b,
+            use_lane_permute=False,
+            num_keys=num_keys,
+            dim1_offset=0,
+        )
+
+        vals_tiles, idxs_tiles = arrs_tiles
+        vals = join_tiles_to_array(shape, vals_tiles)
+        idxs = join_tiles_to_array(shape, idxs_tiles)
 
     # Convert back to tiles
     vals_tiles = split_array_to_tiles(vals)
@@ -132,12 +154,14 @@ def bitonic_topk_kernel(
     Pallas kernel for bitonic top-k with k=128 in sublane format.
 
     Algorithm:
-    1. Convert to sublane transposed format
-    2. Sort up to 128 within each lane (stages 1-6)
-    3. Run substages 6-0 for stage 7+log2(128//b)
-    4. Merge tiles using max operations (for 16+ tiles)
-    5. Merge remaining tiles using lane permutes
-    6. Extract top-128 and convert back
+    1. Convert to sublane transposed format: (num_tokens, vocab) -> (128, num_tokens*chunks)
+    2. Run stages 1-6 to sort up to 64 within each lane
+    3. Run substages 6-0 for stage 7+log2(128//b) to create bitonic sequences
+    4. While tiles >= 32: merge tile pairs using max, then run substages
+    5. When tiles <= 16: progressive lane permute merging:
+       - log2(128//b) iterations with decreasing distance (64, 32, ..., b)
+       - Each iteration: roll permute, max merge, run substages for decreasing stage
+    6. Transpose back from sublane format and extract top-128 per token
     """
     num_tokens = logits_ref.shape[0]
     vocab_size = logits_ref.shape[1]
@@ -257,12 +281,12 @@ def bitonic_topk_kernel(
 
         num_tiles = len(arrs_tiles[0])
 
-    # Stage 4: When < 16 tiles remain, use lane permutes
-    if num_tiles > NUM_LANES // NUM_SUBLANES:  # More than 16 tiles
-        arrs_tiles = _lane_permute_merge(
+    # Stage 4: When <= 16 tiles remain, use progressive lane permutes
+    # Only do this if b < NUM_LANES (otherwise no merging needed)
+    if b < NUM_LANES and num_tiles <= NUM_LANES // NUM_SUBLANES:
+        arrs_tiles = _lane_permute_merge_progressive(
             arrs_tiles,
-            stage=merge_stage,
-            dim1_offset=0,
+            initial_stage=merge_stage,
             num_keys=1,
             b=b
         )
@@ -274,11 +298,12 @@ def bitonic_topk_kernel(
     vals_final = join_tiles_to_array(final_shape, vals_tiles)  # (128, ...)
     idxs_final = join_tiles_to_array(final_shape, idxs_tiles)
 
-    # The top-k values for each token are now distributed across the sublane format
-    # We need to extract them properly
-
-    # In sublane sorted format, row i contains the i-th value from each token's top-k
-    # So we just need the first 128 columns, transposed
+    # In sublane sorted format:
+    # - Row i contains the i-th ranked value from each token
+    # - First b columns contain values for tokens 0 to b-1
+    # - Next b columns contain values for tokens 0 to b-1 (next chunk), etc.
+    # After all merging, the first b columns should have the top-128 per token
+    # Transpose to get (num_tokens, 128)
     topk_vals_ref[...] = vals_final[:, :num_tokens].T  # (num_tokens, 128)
     topk_idxs_ref[...] = idxs_final[:, :num_tokens].T
 
