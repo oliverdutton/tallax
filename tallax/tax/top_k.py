@@ -121,6 +121,8 @@ def dynamic_topk_kernel(
     sorted_bins_ref,
     packed_data_vals_ref,
     packed_data_idxs_ref,
+    sort_vals_scratch_ref,
+    sort_idxs_scratch_ref,
     *,
     max_k: int,
     num_bins: int,
@@ -255,36 +257,24 @@ def dynamic_topk_kernel(
           f"Expected at most 16 active bins, got {num_active_bins[i]}"
 
     # Use bitonic_sort descending to get bin indices ordered by contribution count
-    # Need to allocate refs for sorting using pl.run_scoped
-    def sort_bins(num_gt_k):
-      # Create indices array
-      bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
+    # Initialize scratch refs for sorting
+    bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
 
-      # Allocate refs for sorting
-      @pl.run_scoped
-      def _sort():
-        # Allocate scratch space for sorting
-        sort_vals_ref = pl.alloc((block_token, num_bins), jnp.float32)
-        sort_idxs_ref = pl.alloc((block_token, num_bins), jnp.int32)
+    # Use the scratch refs passed to the kernel
+    sort_vals_scratch_ref[token_slice, :] = num_gt_k.astype(jnp.float32)
+    sort_idxs_scratch_ref[token_slice, :] = bin_indices
 
-        # Initialize with values to sort
-        sort_vals_ref[...] = num_gt_k.astype(jnp.float32)
-        sort_idxs_ref[...] = bin_indices
+    # Sort descending by num_gt_k (primary key)
+    bitonic_sort(
+        [sort_vals_scratch_ref.at[token_slice, :],
+         sort_idxs_scratch_ref.at[token_slice, :]],
+        stage_ref=None,
+        num_keys=1,
+        descending=True,
+    )
 
-        # Sort descending by num_gt_k (primary key)
-        bitonic_sort(
-            [sort_vals_ref, sort_idxs_ref],
-            stage_ref=None,
-            num_keys=1,
-            descending=True,
-        )
-
-        # Return sorted indices
-        return sort_idxs_ref[...]
-
-      return _sort()
-
-    argsort_indices = sort_bins(num_gt_k)
+    # Extract sorted indices
+    argsort_indices = sort_idxs_scratch_ref[token_slice, :]
 
     # Extract top NUM_LANES (128) bin indices
     # Shape: (block_token, NUM_LANES)
@@ -508,6 +498,18 @@ def top_dynamic_k(
       pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
+  # Add scratch shapes for bin sorting if enabled
+  scratch_shapes = [
+      pltpu.VMEM((num_tokens, buffer_size), jnp.float32),
+      pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
+      pltpu.SMEM((1,), jnp.int32),
+  ]
+  if enable_bin_sorting:
+      scratch_shapes.extend([
+          pltpu.VMEM((num_tokens, num_bins), jnp.float32),
+          pltpu.VMEM((num_tokens, num_bins), jnp.int32),
+      ])
+
   results = pl.pallas_call(
       functools.partial(
           dynamic_topk_kernel,
@@ -522,11 +524,7 @@ def top_dynamic_k(
           pl.BlockSpec(memory_space=pltpu.SMEM),
       ),
       out_shape=output_shapes,
-      scratch_shapes=(
-          pltpu.VMEM((num_tokens, buffer_size), jnp.float32),
-          pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
-          pltpu.SMEM((1,), jnp.int32),
-      ),
+      scratch_shapes=tuple(scratch_shapes),
       grid=(num_tokens // block_token,),
       out_specs=output_specs,
       compiler_params=pltpu.CompilerParams(
