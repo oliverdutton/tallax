@@ -8,6 +8,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.topk_theory import calculate_depth_thresholds
+from tallax.tax.bitonic_topk import bitonic_topk as _bitonic_topk
 from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info
 
 
@@ -382,11 +383,12 @@ def top_dynamic_k(
 @functools.partial(
     jit,
     static_argnames=(
-        "k", 
-        "block_token", 
-        "num_bins", 
-        "bins_topm_unroll", 
+        "k",
+        "block_token",
+        "num_bins",
+        "bins_topm_unroll",
         "bins_topm_schedule",
+        "bitonic",
         "interpret"
     ),
 )
@@ -397,14 +399,15 @@ def top_k(
     num_bins: int = NUM_LANES,
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
+    bitonic: bool = False,
     interpret: bool = False,
 ):
   """
   Compute top-k elements with guaranteed convergence.
-  
+
   Simplified interface for uniform k across all tokens. Automatically ensures
   convergence by setting guarantee_convergence=True internally.
-  
+
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Number of top elements to find (uniform across all tokens).
@@ -413,13 +416,24 @@ def top_k(
       bins_topm_unroll: Loop unroll factor for inner loop (default: 32).
       bins_topm_schedule: Optional custom search schedule. If None, automatically
           computed.
+      bitonic: If True, use bitonic sort implementation (only supports k=128).
       interpret: If True, run in CPU interpret mode (default: False).
-  
+
   Returns:
       Tuple of (topk_vals, topk_idxs):
           - topk_vals: Top-k values of shape [num_tokens, k].
           - topk_idxs: Top-k indices of shape [num_tokens, k].
+
+  Raises:
+      ValueError: If bitonic=True and k != NUM_LANES.
   """
+  if bitonic:
+    if k != NUM_LANES:
+      raise ValueError(
+          f"bitonic=True only supports k=NUM_LANES={NUM_LANES}, got k={k}"
+      )
+    return _bitonic_topk(logits, k=k, interpret=interpret)
+
   return top_dynamic_k(
     logits,
     k=k,
