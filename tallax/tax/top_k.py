@@ -254,10 +254,37 @@ def dynamic_topk_kernel(
       assert num_active_bins[i] <= 16, \
           f"Expected at most 16 active bins, got {num_active_bins[i]}"
 
-    # Use jax argsort descending to get bin indices ordered by contribution count
-    # argsort gives indices that would sort the array (ascending by default)
-    # For descending, we negate the values
-    argsort_indices = jnp.argsort(-num_gt_k, axis=1)
+    # Use bitonic_sort descending to get bin indices ordered by contribution count
+    # Need to allocate refs for sorting using pl.run_scoped
+    def sort_bins(num_gt_k):
+      # Create indices array
+      bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
+
+      # Allocate refs for sorting
+      @pl.run_scoped
+      def _sort():
+        # Allocate scratch space for sorting
+        sort_vals_ref = pl.alloc((block_token, num_bins), jnp.float32)
+        sort_idxs_ref = pl.alloc((block_token, num_bins), jnp.int32)
+
+        # Initialize with values to sort
+        sort_vals_ref[...] = num_gt_k.astype(jnp.float32)
+        sort_idxs_ref[...] = bin_indices
+
+        # Sort descending by num_gt_k (primary key)
+        bitonic_sort(
+            [sort_vals_ref, sort_idxs_ref],
+            stage_ref=None,
+            num_keys=1,
+            descending=True,
+        )
+
+        # Return sorted indices
+        return sort_idxs_ref[...]
+
+      return _sort()
+
+    argsort_indices = sort_bins(num_gt_k)
 
     # Extract top NUM_LANES (128) bin indices
     # Shape: (block_token, NUM_LANES)
