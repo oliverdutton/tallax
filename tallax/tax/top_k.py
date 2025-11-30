@@ -251,8 +251,8 @@ def dynamic_topk_kernel(
 
     # Initialize scratch refs for sorting (following sort.py style with refs as list)
     sort_scratch_refs = [sort_vals_scratch_ref, sort_idxs_scratch_ref]
-    sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
-    sort_scratch_refs[1][...] = bin_indices
+    for ref, arr in zip(sort_scratch_refs, [num_gt_k.astype(jnp.float32), bin_indices]):
+      ref[...] = arr
 
     # Sort descending by num_gt_k
     bitonic_sort(sort_scratch_refs, stage_ref=None, num_keys=1, descending=True)
@@ -266,8 +266,10 @@ def dynamic_topk_kernel(
     permutation_repeated = jnp.take_along_axis(permutation, iota_2d % 16, axis=1)
 
     # Initialize packed output
-    packed_vals = jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32)
-    packed_idxs = jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
+    packed_refs = [
+        jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32),
+        jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
+    ]
 
     # Loop over blocks and pack data from active bins
     for offset in range(0, num_bins, NUM_LANES):
@@ -280,17 +282,15 @@ def dynamic_topk_kernel(
             bins_topm_idxs_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
         ]
 
-        permuted_vals = jnp.take_along_axis(bin_refs[0], tile_permutation, axis=1)
-        permuted_idxs = jnp.take_along_axis(bin_refs[1], tile_permutation, axis=1)
+        permuted = tuple(jnp.take_along_axis(ref, tile_permutation, axis=1) for ref in bin_refs)
 
         # Pack into positions [bin_level*16 : (bin_level+1)*16]
         pack_mask = (iota_2d >= bin_level * 16) & (iota_2d < (bin_level + 1) * 16) & in_range_mask
-        packed_vals = jnp.where(pack_mask, permuted_vals, packed_vals)
-        packed_idxs = jnp.where(pack_mask, permuted_idxs, packed_idxs)
+        packed_refs = [jnp.where(pack_mask, permuted[i], packed_refs[i]) for i in range(2)]
 
     # Write packed data to output refs
-    packed_data_vals_ref[token_slice] = packed_vals.astype(packed_data_vals_ref.dtype)
-    packed_data_idxs_ref[token_slice] = packed_idxs.astype(packed_data_idxs_ref.dtype)
+    for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_refs):
+      out_ref[token_slice] = packed.astype(out_ref.dtype)
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
