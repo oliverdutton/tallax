@@ -261,20 +261,19 @@ def dynamic_topk_kernel(
     bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
 
     # Use the scratch refs passed to the kernel
-    sort_vals_scratch_ref[token_slice, :] = num_gt_k.astype(jnp.float32)
-    sort_idxs_scratch_ref[token_slice, :] = bin_indices
+    sort_vals_scratch_ref[...] = num_gt_k.astype(jnp.float32)
+    sort_idxs_scratch_ref[...] = bin_indices
 
     # Sort descending by num_gt_k (primary key)
     bitonic_sort(
-        [sort_vals_scratch_ref.at[token_slice, :],
-         sort_idxs_scratch_ref.at[token_slice, :]],
+        [sort_vals_scratch_ref, sort_idxs_scratch_ref],
         stage_ref=None,
         num_keys=1,
         descending=True,
     )
 
     # Extract sorted indices
-    argsort_indices = sort_idxs_scratch_ref[token_slice, :]
+    argsort_indices = sort_idxs_scratch_ref[...]
 
     # Extract top NUM_LANES (128) bin indices
     # Shape: (block_token, NUM_LANES)
@@ -506,8 +505,8 @@ def top_dynamic_k(
   ]
   if enable_bin_sorting:
       scratch_shapes.extend([
-          pltpu.VMEM((num_tokens, num_bins), jnp.float32),
-          pltpu.VMEM((num_tokens, num_bins), jnp.int32),
+          pltpu.VMEM((block_token, num_bins), jnp.float32),
+          pltpu.VMEM((block_token, num_bins), jnp.int32),
       ])
 
   results = pl.pallas_call(
