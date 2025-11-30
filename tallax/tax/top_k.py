@@ -118,11 +118,15 @@ def dynamic_topk_kernel(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     termination_flag_ref,
+    sorted_bins_ref,
+    packed_data_vals_ref,
+    packed_data_idxs_ref,
     *,
     max_k: int,
     num_bins: int,
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
+    enable_bin_sorting: bool,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -216,8 +220,116 @@ def dynamic_topk_kernel(
       @pl.when(termination_flag_ref[0] != block_token)
       def _():
         termination_flag_ref[0] = 0
-        
-        
+
+  # Bin sorting optimization for rare non-convergence cases
+  @pl.when(enable_bin_sorting & (termination_flag_ref[0] == 0))
+  def _():
+    # This optimization applies when:
+    # - bin_schedule = (5,9), k=128, num_bins=256
+    # - Not converged at iteration 9 (checking k up to 8)
+    # - At most 16 bins contain values contributing to top-k
+
+    m = bins_topm_schedule[-1]  # Should be 9 for the (5,9) schedule
+
+    # Assertion: bins_topm_schedule should be (0, 5, 9) for this optimization
+    assert len(bins_topm_schedule) == 3, "Expected schedule (0, 5, 9) for bin sorting"
+    assert bins_topm_schedule[1] == 5 and bins_topm_schedule[2] == 9, \
+        "Expected schedule (0, 5, 9) for bin sorting"
+
+    # Count contribution of each bin to top-k
+    # bins_topm_vals has shape (m, block_token, num_bins)
+    # We want to count how many values in each bin are >= pivot
+    pivot = bins_topm_vals_ref[token_slice, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
+
+    # Count contributions per bin across the m-1 top bins
+    # Shape: (block_token, num_bins)
+    num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
+    for i in range(m - 1):
+      bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
+      num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
+
+    # Assertion: at most 16 bins should have contributions (num_gt_k > 0)
+    num_active_bins = (num_gt_k > 0).sum(-1)
+    for i in range(block_token):
+      assert num_active_bins[i] <= 16, \
+          f"Expected at most 16 active bins, got {num_active_bins[i]}"
+
+    # Use jax argsort descending to get bin indices ordered by contribution count
+    # argsort gives indices that would sort the array (ascending by default)
+    # For descending, we negate the values
+    argsort_indices = jnp.argsort(-num_gt_k, axis=1)
+
+    # Extract top NUM_LANES (128) bin indices
+    # Shape: (block_token, NUM_LANES)
+    permutation = argsort_indices[:, :NUM_LANES]
+
+    # Store sorted bin indices for reference
+    sorted_bins_ref[token_slice] = permutation.astype(sorted_bins_ref.dtype)
+
+    # Make permutation repeat first 16 values using modulo
+    # Create 2D iota and take modulo 16
+    iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
+    repeated_indices = iota_2d % 16
+    permutation_repeated = jnp.take_along_axis(
+        permutation, repeated_indices, axis=1
+    )
+
+    # Process blocks of data
+    num_blocks = num_bins
+    # Output will have shape (block_token, NUM_LANES) after packing
+    # Initialize output with -inf
+    packed_vals = jnp.full(
+        (block_token, NUM_LANES),
+        jnp.finfo(jnp.float32).min,
+        dtype=jnp.float32
+    )
+    packed_idxs = jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
+
+    # Loop over blocks in chunks of NUM_LANES
+    for offset in range(0, num_blocks, NUM_LANES):
+      # Tile permutation by subtracting offset
+      tile_permutation = permutation_repeated - offset
+
+      # Mask for valid indices in this block
+      in_range_mask = (tile_permutation >= 0) & (tile_permutation < NUM_LANES)
+
+      # Clip tile_permutation to valid range for take_along_axis
+      tile_permutation_clipped = jnp.clip(tile_permutation, 0, NUM_LANES - 1)
+
+      # For each m-1 bin level, gather the data
+      for bin_level in range(m - 1):
+        # Get the logit values for this bin level
+        bin_vals = bins_topm_vals_ref[
+            token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)
+        ]
+        bin_idxs = bins_topm_idxs_ref[
+            token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)
+        ]
+
+        # Permute according to tile_permutation
+        # Clip is safe to use because we mask out-of-range values anyway
+        permuted_vals = jnp.take_along_axis(bin_vals, tile_permutation_clipped, axis=1)
+        permuted_idxs = jnp.take_along_axis(bin_idxs, tile_permutation_clipped, axis=1)
+
+        # Only keep valid values (mask out-of-range)
+        permuted_vals = jnp.where(in_range_mask, permuted_vals, jnp.finfo(jnp.float32).min)
+        permuted_idxs = jnp.where(in_range_mask, permuted_idxs, 0)
+
+        # Pack into output: first 16 positions get bin_level 0,
+        # next 16 get bin_level 1, etc.
+        # Create mask for this bin level's positions
+        start_pos = bin_level * 16
+        end_pos = (bin_level + 1) * 16
+        pack_mask = (iota_2d >= start_pos) & (iota_2d < end_pos) & in_range_mask
+
+        # Update packed data where mask is true
+        packed_vals = jnp.where(pack_mask, permuted_vals, packed_vals)
+        packed_idxs = jnp.where(pack_mask, permuted_idxs, packed_idxs)
+
+    # Write packed data to output refs
+    packed_data_vals_ref[token_slice] = packed_vals.astype(packed_data_vals_ref.dtype)
+    packed_data_idxs_ref[token_slice] = packed_idxs.astype(packed_data_idxs_ref.dtype)
+
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
   # Final top-k extraction (done by last program)
@@ -266,6 +378,7 @@ def dynamic_topk_kernel(
         "bins_topm_unroll",
         "bins_topm_schedule",
         "guarantee_convergence",
+        "enable_bin_sorting",
         "interpret"
     ),
 )
@@ -278,15 +391,16 @@ def top_dynamic_k(
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
+    enable_bin_sorting: bool = False,
     interpret: bool = False,
 ):
   """
   High-level interface for adaptive binned top-k computation on TPU.
-  
+
   Supports dynamic k per token (each token can have a different k value) while
   maintaining efficient TPU execution through static compilation based on max_k.
   Automatically computes optimal search schedules if not provided.
-  
+
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Per-token k values. Can be scalar (broadcast to all tokens) or array
@@ -301,15 +415,25 @@ def top_dynamic_k(
           If None, automatically computed based on convergence probability thresholds.
       guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
           (default: False).
+      enable_bin_sorting: If True, enables bin sorting optimization for rare non-convergence
+          cases. Requires bins_topm_schedule=(0,5,9), k=128, num_bins=256 (default: False).
+          Returns additional outputs when enabled.
       interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
-  
+
   Returns:
-      Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
-          - topk_vals: Top-k values of shape [num_tokens, max_k].
-          - topk_idxs: Top-k indices of shape [num_tokens, max_k].
-          - valid: Boolean indicating if algorithm fully converged.
-          - depths: Per-token convergence depth of shape [num_tokens].
-          - cutoff_vals: Per-token pivot values of shape [num_tokens].
+      When enable_bin_sorting=False:
+          Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
+              - topk_vals: Top-k values of shape [num_tokens, max_k].
+              - topk_idxs: Top-k indices of shape [num_tokens, max_k].
+              - valid: Boolean indicating if algorithm fully converged.
+              - depths: Per-token convergence depth of shape [num_tokens].
+              - cutoff_vals: Per-token pivot values of shape [num_tokens].
+      When enable_bin_sorting=True:
+          Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins,
+                    packed_data_vals, packed_data_idxs):
+              - sorted_bins: Bin indices sorted by contribution count, shape [num_tokens, 128].
+              - packed_data_vals: Packed values from top 16 bins, shape [num_tokens, 128].
+              - packed_data_idxs: Packed indices from top 16 bins, shape [num_tokens, 128].
   """
   num_tokens, vocab_size = logits.shape
 
@@ -341,6 +465,9 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.float32),
+      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), logits.dtype) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), jnp.int32),
   )
 
   output_specs = (
@@ -349,15 +476,19 @@ def top_dynamic_k(
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
-  topk_vals, topk_idxs, valid, depths, cutoff_vals = pl.pallas_call(
+  results = pl.pallas_call(
       functools.partial(
           dynamic_topk_kernel,
           max_k=max_k,
           num_bins=num_bins,
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
+          enable_bin_sorting=enable_bin_sorting,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
@@ -376,7 +507,14 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths, cutoff_vals
+
+  topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_data_vals, packed_data_idxs = results
+
+  if enable_bin_sorting:
+    return (topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool),
+            depths, cutoff_vals, sorted_bins, packed_data_vals, packed_data_idxs)
+  else:
+    return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths, cutoff_vals
 
   
 @functools.partial(
