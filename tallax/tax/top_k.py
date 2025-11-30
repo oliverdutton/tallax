@@ -251,8 +251,8 @@ def dynamic_topk_kernel(
 
     # Initialize scratch refs for sorting (following sort.py style with refs as list)
     sort_scratch_refs = [sort_vals_scratch_ref, sort_idxs_scratch_ref]
-    for ref, arr in zip(sort_scratch_refs, [num_gt_k.astype(jnp.float32), bin_indices]):
-      ref[...] = arr
+    sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
+    sort_scratch_refs[1][...] = bin_indices
 
     # Sort descending by num_gt_k
     bitonic_sort(sort_scratch_refs, stage_ref=None, num_keys=1, descending=True)
