@@ -404,6 +404,16 @@ def top_dynamic_k(
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
+  # Validate bin sorting configuration
+  if enable_bin_sorting:
+    if bins_topm_schedule is None:
+      raise ValueError("bins_topm_schedule must be specified when enable_bin_sorting=True")
+    m = bins_topm_schedule[-1]
+    # This assertion is the reason why bin sorting works:
+    # At most k//(m-1) bins can contribute to top-k
+    assert 16 >= max_k // (m - 1), \
+        f"Bin sorting requires 16 >= k//(m-1), got {max_k}//{m-1} = {max_k // (m - 1)}"
+
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.98, 0.9999))
