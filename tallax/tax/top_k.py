@@ -171,8 +171,8 @@ def _compute_packed_top_bins(
 
     for bin_level in range(m - 1):
       bin_refs = [
-          bins_topm_vals_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)],
-          bins_topm_idxs_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
+          ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
+          for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)
       ]
 
       permuted = jax.tree.map(
@@ -321,8 +321,7 @@ def dynamic_topk_kernel(
     # - At most 16 bins contain values contributing to top-k
     # - Logical: k/(m-1) = 128/8 = 16 max active bins
 
-    m = bins_topm_schedule[-1]  # Should be 9 for the (5,9) schedule
-
+    # m should be 9 for the (5,9) schedule
     _compute_packed_top_bins(
         bins_topm_vals_ref,
         bins_topm_idxs_ref,
@@ -333,7 +332,7 @@ def dynamic_topk_kernel(
         token_slice=token_slice,
         block_token=block_token,
         num_bins=num_bins,
-        m=m
+        m=bins_topm_schedule[-1]
     )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
