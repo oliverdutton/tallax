@@ -159,7 +159,7 @@ def _compute_packed_top_bins(
   perm = jnp.take_along_axis(permutation, iota_2d % bins_per_group, axis=1)
 
   # Initialize packed output
-  packed_refs = [
+  packed_arrs = [
       jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32),
       jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
   ]
@@ -170,14 +170,14 @@ def _compute_packed_top_bins(
     in_range_mask = (perm >= offset) & (perm < offset + NUM_LANES)
 
     for bin_level in range(m - 1):
-      bin_refs = [
+      bin_arrs = [
           ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
           for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)
       ]
 
       permuted = jax.tree.map(
-          lambda ref: jnp.take_along_axis(ref, tile_permutation, axis=1),
-          bin_refs
+          lambda arr: jnp.take_along_axis(arr, tile_permutation, axis=1),
+          bin_arrs
       )
 
       # Pack into positions [bin_level*16 : (bin_level+1)*16]
@@ -186,13 +186,13 @@ def _compute_packed_top_bins(
           (iota_2d < (bin_level + 1) * bins_per_group) &
           in_range_mask
       )
-      packed_refs = [
+      packed_arrs = [
           jnp.where(pack_mask, p, curr)
-          for p, curr in zip(permuted, packed_refs, strict=True)
+          for p, curr in zip(permuted, packed_arrs, strict=True)
       ]
 
   # Write packed data to output refs
-  for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_refs, strict=True):
+  for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_arrs, strict=True):
     out_ref[token_slice] = packed.astype(out_ref.dtype)
 
 
