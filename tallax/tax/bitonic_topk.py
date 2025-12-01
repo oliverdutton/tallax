@@ -24,22 +24,25 @@ from tallax.utils import (
     pad,
     canonicalize_operand,
     transpose_list_of_lists,
+    convert_to_sublane_sort_format,
+    convert_from_sublane_sort_format,
 )
 from tallax.tax.sort import (
     _compute_subtile_substages_inner,
     _compare,
+    _compute_start_index,
 )
 
 
-def _merge_tiles_max(arrs_tiles, num_keys):
+def _merge_tiles_max(arrs_tiles, num_keys, separation=16, is_descending=True):
     """
-    Merge consecutive pairs of tiles using max operation.
-
-    Takes pairs of tiles and keeps the maximum values, reducing tile count by half.
+    Merge tile pairs with given separation using max (or min) operation.
 
     Args:
         arrs_tiles: Tuple of lists of tile arrays [tiles_op0, tiles_op1, ...]
         num_keys: Number of sort keys
+        separation: Distance between tiles to compare (default 16 for blocks of 32)
+        is_descending: If True, keep max. If False, keep min.
 
     Returns:
         Tuple of lists of merged tile arrays
@@ -51,89 +54,34 @@ def _merge_tiles_max(arrs_tiles, num_keys):
 
     merged_tiles = [[] for _ in arrs_tiles]
 
-    # Process pairs of consecutive tiles
-    for i in range(0, num_tiles, 2):
-        lefts = [op_tiles[i] for op_tiles in arrs_tiles]
-        rights = [op_tiles[i + 1] for op_tiles in arrs_tiles]
+    # Process pairs using _compute_start_index
+    for i in range(num_tiles // 2):
+        idx = _compute_start_index(i, separation=separation)
 
-        # Use _compare with is_descending=True to put larger values in the "left" (first) position
-        # We only keep the "left" (max) result.
-        compared = _compare(lefts, rights, num_keys=num_keys, is_descending=True)
+        lefts = [op_tiles[idx] for op_tiles in arrs_tiles]
+        rights = [op_tiles[idx + separation] for op_tiles in arrs_tiles]
 
-        for op_idx, (max_val, _) in enumerate(compared):
-            merged_tiles[op_idx].append(max_val)
+        # Compare
+        # If is_descending=True: left > right. Left gets max. We keep left.
+        # If is_descending=False: right > left. Left gets min. We keep left.
+        compared = _compare(lefts, rights, num_keys=num_keys, is_descending=is_descending)
+
+        for op_idx, (kept_val, _) in enumerate(compared):
+            merged_tiles[op_idx].append(kept_val)
 
     return tuple(merged_tiles)
 
 
-def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
-    """
-    Progressive lane permute merging with decreasing distances and stages.
-
-    Runs log2(128//b) iterations with:
-    - Iteration i: distance = 64 >> i, stage = initial_stage - i
-    - Each iteration: permute, max merge, run substages 6-0
-
-    Args:
-        arrs_tiles: Tuple of lists of tile arrays
-        initial_stage: Starting stage (7 + log2(128//b))
-        num_keys: Number of sort keys
-        b: Block size (num_tokens)
-
-    Returns:
-        Tuple of lists of merged tile arrays
-    """
-    num_tiles = len(arrs_tiles[0])
-
-    # Reconstruct arrays from tiles
-    tile_rows = NUM_LANES // NUM_SUBLANES
-    tile_cols = num_tiles // tile_rows
-    shape = (NUM_LANES, tile_cols * NUM_LANES)
-
-    arrs = [join_tiles_to_array(shape, tiles) for tiles in arrs_tiles]
-
-    # Progressive merging: log2(128//b) iterations
-    num_iterations = log2(NUM_LANES // b)
-
-    for i in range(num_iterations):
-        distance = 64 >> i  # 64, 32, 16, ..., down to b
-        current_stage = initial_stage - i
-
-        # Create permutation: XOR with distance (equivalent to roll for power-of-2 distances)
-        # Element at position i gets combined with element at i XOR distance
-        # We need indices matching the full array shape (128, N)
-        index = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
-        permutation = jnp.bitwise_xor(index, distance)
-
-        # Permute using take_along_axis (TPU-supported for (8, 128) tiles)
-        arrs_permuted = [
-            jnp.take_along_axis(arr, permutation, axis=1)
-            for arr in arrs
-        ]
-
-        # Max merge: keep the larger values
-        compared = _compare(arrs, arrs_permuted, num_keys=num_keys, is_descending=True)
-        arrs = [l for l, r in compared]
-
-        # Run substages 6-0 for current stage
-        arrs_tiles = [split_array_to_tiles(arr) for arr in arrs]
-
-        arrs_tiles = _compute_subtile_substages_inner(
-            arrs_tiles,
-            num_substages=7,  # substages 0-6
-            stage=current_stage,
-            b=b,
-            use_lane_permute=False,
-            num_keys=num_keys,
-            dim1_offset=0,
-        )
-
-        arrs = [join_tiles_to_array(shape, tiles) for tiles in arrs_tiles]
-
-    # Convert back to tiles
-    arrs_tiles = tuple(split_array_to_tiles(arr) for arr in arrs)
-
-    return arrs_tiles
+def _transpose_tiles(tiles, num_rows=16):
+    """Transpose tile layout from row-major to column-major (or vice versa)."""
+    num_cols = len(tiles) // num_rows
+    if num_cols == 0:
+        return tiles
+    new_tiles = []
+    for c in range(num_cols):
+        for r in range(num_rows):
+            new_tiles.append(tiles[r * num_cols + c])
+    return new_tiles
 
 
 def bitonic_topk_kernel(
@@ -145,16 +93,6 @@ def bitonic_topk_kernel(
 ):
     """
     Pallas kernel for bitonic top-k with k=128 in sublane format.
-
-    Algorithm:
-    1. Convert to sublane transposed format: (num_tokens, vocab) -> (128, num_tokens*chunks)
-    2. Run stages 1-6 to sort up to 64 within each lane
-    3. Run substages 6-0 for stage 7+log2(128//b) to create bitonic sequences
-    4. While tiles >= 32: merge tile pairs using max, then run substages
-    5. When tiles <= 16: progressive lane permute merging:
-       - log2(128//b) iterations with decreasing distance (64, 32, ..., b)
-       - Each iteration: roll permute, max merge, run substages for decreasing stage
-    6. Transpose back from sublane format and extract top-128 per token
     """
     num_tokens = in_refs[0].shape[0]
     vocab_size = in_refs[0].shape[1]
@@ -163,57 +101,75 @@ def bitonic_topk_kernel(
     if b > NUM_LANES:
         raise ValueError(f"num_tokens must be <= NUM_LANES, got {num_tokens}")
 
-    # Calculate dim1_offset for descending sort
-    dim1_offset = int(descending) * vocab_size
+    # Process all input operands using convert_to_sublane_sort_format
+    def _get_pad_val(ref):
+        if descending:
+            if jnp.issubdtype(ref.dtype, jnp.floating):
+                return jnp.finfo(ref.dtype).min
+            elif jnp.issubdtype(ref.dtype, jnp.integer):
+                return jnp.iinfo(ref.dtype).min
+            else:
+                return -1
+        return None  # Default max/nan
 
-    # Convert to sublane format: (num_tokens, vocab_size) -> (128, num_tokens * num_chunks)
-    # where num_chunks = vocab_size // 128
-    num_chunks = vocab_size // NUM_LANES
+    arrs_tiles = tuple(
+        convert_to_sublane_sort_format(
+            in_ref,
+            pad_val=_get_pad_val(in_ref)
+        )
+        for in_ref in in_refs
+    )
 
-    # Process all input operands
-    operands_sublane = []
+    # Transpose tiles to Column-Major (Blocked) layout initially
+    arrs_tiles = tuple(_transpose_tiles(tiles) for tiles in arrs_tiles)
+    num_tiles = len(arrs_tiles[0])
 
-    for in_ref in in_refs:
-        # Stack chunks: for each 128-wide chunk, stack all tokens
-        chunks = []
-        for chunk_idx in range(num_chunks):
-            chunk_start = chunk_idx * NUM_LANES
-            chunk = in_ref[:, pl.dslice(chunk_start, NUM_LANES)]  # (num_tokens, 128)
-            chunks.append(chunk)
+    # Loop while we have more than 1 chunk (more than 16 tiles)
+    while num_tiles > 16:
+        # Sort chunks alternating Desc/Asc by processing chunks individually
+        num_chunks = num_tiles // 16
+        sorted_chunks = [[] for _ in arrs_tiles]
 
-        # Concatenate chunks and transpose to sublane format
-        # (num_tokens, vocab_size) -> (vocab_size, num_tokens) -> (128, num_chunks * num_tokens)
-        full = jnp.concatenate(chunks, axis=1).T  # (vocab_size, num_tokens)
-
-        # Reshape to sublane format: (128, num_chunks * num_tokens)
-        reshaped = []
         for i in range(num_chunks):
-            reshaped.append(full[i * NUM_LANES:(i + 1) * NUM_LANES, :])
+            # Extract chunk i (16 tiles)
+            chunk_slice = slice(i*16, (i+1)*16)
+            chunk_tiles = tuple(op_tiles[chunk_slice] for op_tiles in arrs_tiles)
 
-        sublane = jnp.concatenate(reshaped, axis=1)  # (128, num_chunks * num_tokens)
-        operands_sublane.append(sublane)
+            # Determine direction: Even -> Desc, Odd -> Asc (assuming descending=True)
+            is_chunk_desc = (i % 2 == 0) if descending else (i % 2 == 1)
+            chunk_dim1_offset = 128 if is_chunk_desc else 0
 
-    # Pad to power of 2
-    target_dim1 = 2 ** log2(operands_sublane[0].shape[1])
-    if target_dim1 < NUM_LANES:
-        target_dim1 = NUM_LANES
+            # Run sort stages 1..7 for this chunk
+            for s in range(1, 8):
+                chunk_tiles = _compute_subtile_substages_inner(
+                    chunk_tiles,
+                    num_substages=s,
+                    stage=s,
+                    b=b,
+                    use_lane_permute=False,
+                    num_keys=num_keys,
+                    dim1_offset=chunk_dim1_offset,
+                )
 
-    if operands_sublane[0].shape[1] < target_dim1:
-        pad_size = target_dim1 - operands_sublane[0].shape[1]
-        operands_sublane = tuple(
-            jnp.pad(
-                op,
-                ((0, 0), (0, pad_size)),
-                constant_values=jnp.finfo(op.dtype).min if jnp.issubdtype(op.dtype, jnp.floating) else -1
-            )
-            for op in operands_sublane
+            # Append sorted chunk
+            for op_idx, tiles in enumerate(chunk_tiles):
+                sorted_chunks[op_idx].extend(tiles)
+
+        arrs_tiles = tuple(sorted_chunks)
+
+        # Merge tile pairs (C_i and C_i+1) with separation 16
+        arrs_tiles = _merge_tiles_max(
+            arrs_tiles,
+            num_keys=num_keys,
+            separation=16,
+            is_descending=descending
         )
 
-    # Convert to tiles for processing
-    arrs_tiles = tuple(split_array_to_tiles(op) for op in operands_sublane)
+        num_tiles = len(arrs_tiles[0])
 
-    # Stage 1: Bitonic sort stages 1-6 (sort up to 64 within each lane)
-    for s in range(1, 7):
+    # Final Sort of the single remaining chunk (Desc)
+    final_dim1_offset = 128 if descending else 0
+    for s in range(1, 8):
         arrs_tiles = _compute_subtile_substages_inner(
             arrs_tiles,
             num_substages=s,
@@ -221,70 +177,13 @@ def bitonic_topk_kernel(
             b=b,
             use_lane_permute=False,
             num_keys=num_keys,
-            dim1_offset=dim1_offset,
+            dim1_offset=final_dim1_offset,
         )
 
-    # Stage 2: Run substages for higher stage
-    # stage = 7 + log2(128 // b)
-    merge_stage = 7 + log2(NUM_LANES // b)
-
-    # Run substages 6 down to 0 for this stage
-    arrs_tiles = _compute_subtile_substages_inner(
-        arrs_tiles,
-        num_substages=7,  # Run substages 0-6 (that's 7 substages)
-        stage=merge_stage,
-        b=b,
-        use_lane_permute=False,
-        num_keys=num_keys,
-        dim1_offset=dim1_offset,
-    )
-
-    # Stage 3: Iteratively merge tiles
-    # While we have >= 32 tiles (16 pairs), merge using max
-    num_tiles = len(arrs_tiles[0])
-
-    while num_tiles >= 32:  # Can merge 16 pairs of tiles
-        # Merge consecutive pairs using max
-        arrs_tiles = _merge_tiles_max(
-            arrs_tiles,
-            num_keys=num_keys
-        )
-
-        # Run substages again after merge
-        arrs_tiles = _compute_subtile_substages_inner(
-            arrs_tiles,
-            num_substages=7,
-            stage=merge_stage,
-            b=b,
-            use_lane_permute=False,
-            num_keys=num_keys,
-            dim1_offset=dim1_offset,
-        )
-
-        num_tiles = len(arrs_tiles[0])
-
-    # Stage 4: When <= 16 tiles remain, use progressive lane permutes
-    # Only do this if b < NUM_LANES (otherwise no merging needed)
-    if b < NUM_LANES and num_tiles <= NUM_LANES // NUM_SUBLANES:
-        arrs_tiles = _lane_permute_merge_progressive(
-            arrs_tiles,
-            initial_stage=merge_stage,
-            num_keys=num_keys,
-            b=b
-        )
-
-    # Extract results and convert back from sublane format
-    final_shape = (NUM_LANES, len(arrs_tiles[0]) * NUM_SUBLANES)
-
-    # In sublane sorted format:
-    # - Row i contains the i-th ranked value from each token
-    # - First b columns contain values for tokens 0 to b-1
-    # - Next b columns contain values for tokens 0 to b-1 (next chunk), etc.
-    # After all merging, the first b columns should have the top-128 per token
-    # Transpose to get (num_tokens, 128)
+    # Reconstruct.
     for tiles, out_ref in zip(arrs_tiles, out_refs):
-        final = join_tiles_to_array(final_shape, tiles)  # (128, ...)
-        out_ref[...] = final[:, :num_tokens].T  # (num_tokens, 128)
+        out = convert_from_sublane_sort_format(tiles, shape=(num_tokens, NUM_LANES))
+        out_ref[...] = out
 
 
 @functools.partial(
@@ -340,8 +239,23 @@ def bitonic_topk(
         )
 
     # Pad operands to proper dimensions
+    def _get_pad_val(x):
+        if descending:
+            if jnp.issubdtype(x.dtype, jnp.floating):
+                return jnp.finfo(x.dtype).min
+            elif jnp.issubdtype(x.dtype, jnp.integer):
+                return jnp.iinfo(x.dtype).min
+            else:
+                return -1
+        return None
+
     operands = tuple(
-        pad(x, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'), prepend=(False, descending))
+        pad(
+            x,
+            block_shape=(NUM_SUBLANES, 'power_of_2_lanes'),
+            prepend=(False, descending),
+            val=_get_pad_val(x)
+        )
         for x in operands
     )
 
