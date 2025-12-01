@@ -10,7 +10,7 @@ from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jax import lax, jit
+from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -19,59 +19,51 @@ from tallax.utils import (
     NUM_SUBLANES,
     log2,
     iota_tile,
-    create_bit_indicator,
     split_array_to_tiles,
     join_tiles_to_array,
     pad,
     canonicalize_operand,
+    transpose_list_of_lists,
 )
 from tallax.tax.sort import (
     _compute_subtile_substages_inner,
-    _compute_substage_by_crosstile_comparison,
+    _compare,
 )
 
 
-def _merge_tiles_max(arrs_tiles, stage, dim1_offset, num_keys, b):
+def _merge_tiles_max(arrs_tiles, num_keys):
     """
     Merge consecutive pairs of tiles using max operation.
 
     Takes pairs of tiles and keeps the maximum values, reducing tile count by half.
 
     Args:
-        arrs_tiles: List of tile arrays [vals_tiles, idxs_tiles]
-        stage: Current bitonic stage
-        dim1_offset: Offset for bitonic direction computation
+        arrs_tiles: Tuple of lists of tile arrays [tiles_op0, tiles_op1, ...]
         num_keys: Number of sort keys
-        b: Block size (number of tokens)
 
     Returns:
-        List of merged tile arrays
+        Tuple of lists of merged tile arrays
     """
-    vals_tiles, idxs_tiles = arrs_tiles
-    num_tiles = len(vals_tiles)
+    num_tiles = len(arrs_tiles[0])
 
     if num_tiles % 2 != 0:
         raise ValueError(f"Cannot merge odd number of tiles: {num_tiles}")
 
-    merged_vals = []
-    merged_idxs = []
+    merged_tiles = [[] for _ in arrs_tiles]
 
     # Process pairs of consecutive tiles
     for i in range(0, num_tiles, 2):
-        left_val = vals_tiles[i]
-        right_val = vals_tiles[i + 1]
-        left_idx = idxs_tiles[i]
-        right_idx = idxs_tiles[i + 1]
+        lefts = [op_tiles[i] for op_tiles in arrs_tiles]
+        rights = [op_tiles[i + 1] for op_tiles in arrs_tiles]
 
-        # Element-wise max
-        mask = left_val > right_val
-        merged_val = jnp.where(mask, left_val, right_val)
-        merged_idx = jnp.where(mask, left_idx, right_idx)
+        # Use _compare with is_descending=True to put larger values in the "left" (first) position
+        # We only keep the "left" (max) result.
+        compared = _compare(lefts, rights, num_keys=num_keys, is_descending=True)
 
-        merged_vals.append(merged_val)
-        merged_idxs.append(merged_idx)
+        for op_idx, (max_val, _) in enumerate(compared):
+            merged_tiles[op_idx].append(max_val)
 
-    return [merged_vals, merged_idxs]
+    return tuple(merged_tiles)
 
 
 def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
@@ -83,24 +75,22 @@ def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
     - Each iteration: permute, max merge, run substages 6-0
 
     Args:
-        arrs_tiles: List of tile arrays [vals_tiles, idxs_tiles]
+        arrs_tiles: Tuple of lists of tile arrays
         initial_stage: Starting stage (7 + log2(128//b))
         num_keys: Number of sort keys
         b: Block size (num_tokens)
 
     Returns:
-        List of merged tile arrays
+        Tuple of lists of merged tile arrays
     """
-    vals_tiles, idxs_tiles = arrs_tiles
-    num_tiles = len(vals_tiles)
+    num_tiles = len(arrs_tiles[0])
 
     # Reconstruct arrays from tiles
     tile_rows = NUM_LANES // NUM_SUBLANES
     tile_cols = num_tiles // tile_rows
     shape = (NUM_LANES, tile_cols * NUM_LANES)
 
-    vals = join_tiles_to_array(shape, vals_tiles)
-    idxs = join_tiles_to_array(shape, idxs_tiles)
+    arrs = [join_tiles_to_array(shape, tiles) for tiles in arrs_tiles]
 
     # Progressive merging: log2(128//b) iterations
     num_iterations = log2(NUM_LANES // b)
@@ -111,24 +101,25 @@ def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
 
         # Create permutation: XOR with distance (equivalent to roll for power-of-2 distances)
         # Element at position i gets combined with element at i XOR distance
-        index = iota_tile(1)
+        # We need indices matching the full array shape (128, N)
+        index = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
         permutation = jnp.bitwise_xor(index, distance)
 
         # Permute using take_along_axis (TPU-supported for (8, 128) tiles)
-        vals_permuted = jnp.take_along_axis(vals, permutation, axis=1)
-        idxs_permuted = jnp.take_along_axis(idxs, permutation, axis=1)
+        arrs_permuted = [
+            jnp.take_along_axis(arr, permutation, axis=1)
+            for arr in arrs
+        ]
 
         # Max merge: keep the larger values
-        mask = vals > vals_permuted
-        vals = jnp.where(mask, vals, vals_permuted)
-        idxs = jnp.where(mask, idxs, idxs_permuted)
+        compared = _compare(arrs, arrs_permuted, num_keys=num_keys, is_descending=True)
+        arrs = [l for l, r in compared]
 
         # Run substages 6-0 for current stage
-        vals_tiles = split_array_to_tiles(vals)
-        idxs_tiles = split_array_to_tiles(idxs)
+        arrs_tiles = [split_array_to_tiles(arr) for arr in arrs]
 
         arrs_tiles = _compute_subtile_substages_inner(
-            [vals_tiles, idxs_tiles],
+            arrs_tiles,
             num_substages=7,  # substages 0-6
             stage=current_stage,
             b=b,
@@ -137,15 +128,12 @@ def _lane_permute_merge_progressive(arrs_tiles, initial_stage, num_keys, b):
             dim1_offset=0,
         )
 
-        vals_tiles, idxs_tiles = arrs_tiles
-        vals = join_tiles_to_array(shape, vals_tiles)
-        idxs = join_tiles_to_array(shape, idxs_tiles)
+        arrs = [join_tiles_to_array(shape, tiles) for tiles in arrs_tiles]
 
     # Convert back to tiles
-    vals_tiles = split_array_to_tiles(vals)
-    idxs_tiles = split_array_to_tiles(idxs)
+    arrs_tiles = tuple(split_array_to_tiles(arr) for arr in arrs)
 
-    return [vals_tiles, idxs_tiles]
+    return arrs_tiles
 
 
 def bitonic_topk_kernel(
@@ -225,15 +213,16 @@ def bitonic_topk_kernel(
     arrs_tiles = tuple(split_array_to_tiles(op) for op in operands_sublane)
 
     # Stage 1: Bitonic sort stages 1-6 (sort up to 64 within each lane)
-    arrs_tiles = _compute_subtile_substages_inner(
-        list(arrs_tiles),
-        num_substages=6,
-        stage=None,  # None means run stages 1-6 as fused block
-        b=b,
-        use_lane_permute=False,
-        num_keys=num_keys,
-        dim1_offset=dim1_offset,
-    )
+    for s in range(1, 7):
+        arrs_tiles = _compute_subtile_substages_inner(
+            arrs_tiles,
+            num_substages=s,
+            stage=s,
+            b=b,
+            use_lane_permute=False,
+            num_keys=num_keys,
+            dim1_offset=dim1_offset,
+        )
 
     # Stage 2: Run substages for higher stage
     # stage = 7 + log2(128 // b)
@@ -258,10 +247,7 @@ def bitonic_topk_kernel(
         # Merge consecutive pairs using max
         arrs_tiles = _merge_tiles_max(
             arrs_tiles,
-            stage=merge_stage,
-            dim1_offset=dim1_offset,
-            num_keys=num_keys,
-            b=b
+            num_keys=num_keys
         )
 
         # Run substages again after merge
@@ -388,7 +374,7 @@ def bitonic_topk(
             vmem_limit_bytes=int(0.9 * 2**27)
         ),
         interpret=interpret,
-    )(operands)
+    )(operands)[0]
 
     # Unpad if needed (extract k elements from the correct side)
     if not descending:
