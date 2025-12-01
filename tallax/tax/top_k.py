@@ -107,6 +107,95 @@ def binned_topk(
   return bins_topk_outs
 
 
+def _compute_packed_top_bins(
+    bins_topm_vals_ref,
+    bins_topm_idxs_ref,
+    sorted_bins_ref,
+    packed_data_vals_ref,
+    packed_data_idxs_ref,
+    sort_scratch_refs,
+    *,
+    token_slice,
+    block_token: int,
+    num_bins: int,
+    m: int,
+):
+  """Packs top bins into output format."""
+  # Count contribution of each bin to top-k
+  # bins_topm_vals has shape (m, block_token, num_bins)
+  # We want to count how many values in each bin are >= pivot
+  pivot = bins_topm_vals_ref[token_slice, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
+
+  # Count contributions per bin across the m-1 top bins
+  # Shape: (block_token, num_bins)
+  num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
+  for i in range(m - 1):
+    bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
+    num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
+
+  # Use bitonic_sort descending to get bin indices ordered by contribution count
+  bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
+
+  sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
+  sort_scratch_refs[1][...] = bin_indices
+
+  # Sort descending by num_gt_k
+  # Passing dim1_offset=num_bins is required to support 1D grid
+  bitonic_sort(
+      sort_scratch_refs,
+      stage_ref=None,
+      num_keys=1,
+      descending=True,
+      dim1_offset=num_bins
+  )
+
+  # Extract top NUM_LANES (128) bin indices
+  permutation = sort_scratch_refs[1][:, :NUM_LANES]
+  sorted_bins_ref[token_slice] = permutation.astype(sorted_bins_ref.dtype)
+
+  # Repeat first 16 values across NUM_LANES positions
+  bins_per_group = 16  # TODO: Make dynamic based on m?
+  iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
+  perm = jnp.take_along_axis(permutation, iota_2d % bins_per_group, axis=1)
+
+  # Initialize packed output
+  packed_refs = [
+      jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32),
+      jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
+  ]
+
+  # Loop over blocks and pack data from active bins
+  for offset in range(0, num_bins, NUM_LANES):
+    tile_permutation = (perm - offset) % NUM_LANES
+    in_range_mask = (perm >= offset) & (perm < offset + NUM_LANES)
+
+    for bin_level in range(m - 1):
+      bin_refs = [
+          bins_topm_vals_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)],
+          bins_topm_idxs_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
+      ]
+
+      permuted = jax.tree.map(
+          lambda ref: jnp.take_along_axis(ref, tile_permutation, axis=1),
+          bin_refs
+      )
+
+      # Pack into positions [bin_level*16 : (bin_level+1)*16]
+      pack_mask = (
+          (iota_2d >= bin_level * bins_per_group) &
+          (iota_2d < (bin_level + 1) * bins_per_group) &
+          in_range_mask
+      )
+      packed_refs = [
+          jnp.where(pack_mask, p, curr)
+          for p, curr in zip(permuted, packed_refs, strict=True)
+      ]
+
+  # Write packed data to output refs
+  for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_refs, strict=True):
+    out_ref[token_slice] = packed.astype(out_ref.dtype)
+
+
 def dynamic_topk_kernel(
     logits_ref,
     k_ref,
@@ -234,63 +323,18 @@ def dynamic_topk_kernel(
 
     m = bins_topm_schedule[-1]  # Should be 9 for the (5,9) schedule
 
-    # Count contribution of each bin to top-k
-    # bins_topm_vals has shape (m, block_token, num_bins)
-    # We want to count how many values in each bin are >= pivot
-    pivot = bins_topm_vals_ref[token_slice, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
-
-    # Count contributions per bin across the m-1 top bins
-    # Shape: (block_token, num_bins)
-    num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
-    for i in range(m - 1):
-      bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
-      num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
-
-    # Use bitonic_sort descending to get bin indices ordered by contribution count
-    bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
-
-    # Initialize scratch refs for sorting (following sort.py style with refs as list)
-    sort_scratch_refs = [sort_vals_scratch_ref, sort_idxs_scratch_ref]
-    sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
-    sort_scratch_refs[1][...] = bin_indices
-
-    # Sort descending by num_gt_k
-    bitonic_sort(sort_scratch_refs, stage_ref=None, num_keys=1, descending=True)
-
-    # Extract top NUM_LANES (128) bin indices
-    permutation = sort_scratch_refs[1][:, :NUM_LANES]
-    sorted_bins_ref[token_slice] = permutation.astype(sorted_bins_ref.dtype)
-
-    # Repeat first 16 values across NUM_LANES positions
-    iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
-    perm = jnp.take_along_axis(permutation, iota_2d % 16, axis=1)
-
-    # Initialize packed output
-    packed_refs = [
-        jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32),
-        jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
-    ]
-
-    # Loop over blocks and pack data from active bins
-    for offset in range(0, num_bins, NUM_LANES):
-      tile_permutation = (perm - offset) % NUM_LANES
-      in_range_mask = (perm >= offset) & (perm < offset + NUM_LANES)
-
-      for bin_level in range(m - 1):
-        bin_refs = [
-            bins_topm_vals_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)],
-            bins_topm_idxs_ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
-        ]
-
-        permuted = tuple(jnp.take_along_axis(ref, tile_permutation, axis=1) for ref in bin_refs)
-
-        # Pack into positions [bin_level*16 : (bin_level+1)*16]
-        pack_mask = (iota_2d >= bin_level * 16) & (iota_2d < (bin_level + 1) * 16) & in_range_mask
-        packed_refs = [jnp.where(pack_mask, permuted[i], packed_refs[i]) for i in range(2)]
-
-    # Write packed data to output refs
-    for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_refs):
-      out_ref[token_slice] = packed.astype(out_ref.dtype)
+    _compute_packed_top_bins(
+        bins_topm_vals_ref,
+        bins_topm_idxs_ref,
+        sorted_bins_ref,
+        packed_data_vals_ref,
+        packed_data_idxs_ref,
+        [sort_vals_scratch_ref, sort_idxs_scratch_ref],
+        token_slice=token_slice,
+        block_token=block_token,
+        num_bins=num_bins,
+        m=m
+    )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
