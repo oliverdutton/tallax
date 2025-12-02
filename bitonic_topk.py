@@ -76,7 +76,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
+def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -90,6 +90,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
         arrs_tiles: Tuple of lists of tile arrays
         num_keys: Number of sort keys
         b: Block size (num_tokens, must be power of 2)
+        dim1_size: Size of second dimension after sublane transpose
 
     Returns:
         Tuple of lists of merged tile arrays
@@ -137,21 +138,20 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
       )
 
     # Progressive intra-tile merging with lane permutations
-    # For b < 128: start at distance = 64 (NUM_LANES/2) and halve until reaching b
-    # This gives log2(128/b) compares, matching the bitonic merge pattern
+    # Calculate starting distance based on actual data size
+    # For (8,256): dim1_size=128, start = min(64, 128*8/128) = 8 (only 1 compare needed)
+    # For (8,2048): dim1_size=128, start = min(64, 128*8/128) = 8 (only 1 compare needed)
+    # For (16,2048): dim1_size=256, start = min(64, 256*16/128) = 32 (2 compares needed)
 
     if b < NUM_LANES:
-        # Always start at maximum distance within a tile
-        distance = NUM_LANES // 2  # 64
+        # Calculate optimal starting distance: min(64, dim1_size * b / NUM_LANES)
+        start_distance = min(NUM_LANES // 2, (dim1_size * b) // NUM_LANES)
+        distance = start_distance
     else:
-        # For b >= NUM_LANES, also start at NUM_LANES/2
+        # For b >= NUM_LANES, start at NUM_LANES/2
         distance = NUM_LANES // 2
 
     # Perform compares at each distance, halving each time until we reach b
-    # For b=8: distances 64, 32, 16, 8 (4 compares)
-    # For b=16: distances 64, 32, 16 (3 compares)
-    # For b=32: distances 64, 32 (2 compares)
-    # For b=64: distance 64 (1 compare)
     while distance >= b:
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
@@ -237,8 +237,14 @@ def bitonic_topk_kernel(
         for in_ref in in_refs
     )
 
+    # Calculate dim1_size from number of tiles
+    # After sublane transpose: (128, dim1_size) split into tiles of (8, 128)
+    # num_tiles = 16 * (dim1_size / 128), so dim1_size = num_tiles * 8
+    num_tiles = len(arrs_tiles[0])
+    dim1_size = num_tiles * NUM_SUBLANES
+
     # Run bitonic top-k algorithm
-    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, b=b)
+    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, b=b, dim1_size=dim1_size)
 
     # Convert back from sublane format and write to output
     for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
