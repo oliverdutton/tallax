@@ -109,11 +109,8 @@ def binned_topk(
 
 def _compute_packed_top_bins(
     bins_topm_vals_ref,
-    bins_topm_idxs_ref,
-    sorted_bins_ref,
-    packed_data_vals_ref,
-    packed_data_idxs_ref,
-    sort_scratch_refs,
+    active_bins_ref,
+    packed_vals_ref,
     *,
     token_slice,
     block_token: int,
@@ -134,66 +131,70 @@ def _compute_packed_top_bins(
     num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
   # Use bitonic_sort descending to get bin indices ordered by contribution count
-  bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
-
-  sort_scratch_refs[0][...] = num_gt_k.astype(jnp.float32)
-  sort_scratch_refs[1][...] = bin_indices
-
-  # Sort descending by num_gt_k
-  # Passing dim1_offset=num_bins is required to support 1D grid
-  bitonic_sort(
-      sort_scratch_refs,
-      stage_ref=None,
-      num_keys=1,
-      descending=True,
-      dim1_offset=num_bins
-  )
-
-  # Extract top NUM_LANES (128) bin indices
-  permutation = sort_scratch_refs[1][:, :NUM_LANES]
-  sorted_bins_ref[token_slice] = permutation.astype(sorted_bins_ref.dtype)
-
+  @pl.run_scoped(
+    sort_scratch_refs=(
+      pltpu.VMEM((block_token, num_bins), jnp.int32),
+      pltpu.VMEM((block_token, num_bins), jnp.int32),
+  ))
+  def _get_active_bins(sort_scrath_refs):
+    sort_scratch_refs[0][...] = num_gt_k
+    sort_scratch_refs[1][...] = jax.lax.broadcasted_iota(
+      jnp.int32, (block_token, num_bins), 1)
+    # Sort descending by num_gt_k
+    bitonic_sort(
+        sort_scratch_refs,
+        stage_ref=None,
+        num_keys=1,
+        dim1_offset=num_bins # makes sort descending 
+        # (and required to specify dim1_offset to avoid program_id issue)
+    )
+    # Extract top NUM_LANES (128) bin indices
+    permutation = sort_scratch_refs[1][:, :NUM_LANES]
+    active_bins_ref[token_slice] = permutation
+  
+  # produce the (token_slice, num_bins) mask
+  index = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
+  indicator = jnp.zeros((block_token, num_bins), jnp.int32)
+  for i in range(num_packed_bins):
+    indicator += (indicator ==
+    active_bins_ref[token_slice, i:i+1])
+  bins_topm_vals_ref[...] = jnp.concat([
+    jnp.where(
+    indicator, jnp.finfo(float32).min,
+    bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
+    for i in range(bins_topm_vals_ref.shape[1] // num_bins)], 1)
+  
   # Repeat first 16 values across NUM_LANES positions
-  bins_per_group = 16  # TODO: Make dynamic based on m?
-  iota_2d = jax.lax.broadcasted_iota(jnp.int32, (block_token, NUM_LANES), 1)
-  perm = jnp.take_along_axis(permutation, iota_2d % bins_per_group, axis=1)
-
-  # Initialize packed output
-  packed_arrs = [
-      jnp.full((block_token, NUM_LANES), jnp.finfo(jnp.float32).min, dtype=jnp.float32),
-      jnp.zeros((block_token, NUM_LANES), dtype=jnp.int32)
-  ]
-
+  num_packed_bins = 16
+  perm = jnp.take_along_axis(permutation, iota_tile(1) % num_packed_bins, axis=1)
+  
   # Loop over blocks and pack data from active bins
+  packed_vals = [jnp.full(
+    (block_token, NUM_LANES),
+    jnp.finfo(jnp.float32).min, dtype=jnp.float32
+    ) for _ in pl.cdiv(logits_ref.shape[1] // num_bins, num_bins // num_packed_bins)]
   for offset in range(0, num_bins, NUM_LANES):
-    tile_permutation = (perm - offset) % NUM_LANES
-    in_range_mask = (perm >= offset) & (perm < offset + NUM_LANES)
-
-    for bin_level in range(m - 1):
-      bin_arrs = [
-          ref[token_slice, pl.dslice(bin_level * num_bins + offset, NUM_LANES)]
-          for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)
-      ]
-
-      permuted = jax.tree.map(
-          lambda arr: jnp.take_along_axis(arr, tile_permutation, axis=1),
-          bin_arrs
-      )
-
-      # Pack into positions [bin_level*16 : (bin_level+1)*16]
+    local_perm = (perm - offset) % NUM_LANES
+    in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
+     
+    vals = [logits_ref[..., pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(logits_ref.shape[1] // num_bins)]
+    # apply permutation
+    vals = [jnp.take_along_axis(arr, local_perm, axis=1) for tile in vals]
+    # Pack into positions [bin_level*16 : (bin_level+1)*16]
+    index = iota_tile(1)
+    for i in range(num_packed_bins):
       pack_mask = (
-          (iota_2d >= bin_level * bins_per_group) &
-          (iota_2d < (bin_level + 1) * bins_per_group) &
+          (index >= i * num_packed_bins) &
+          (index < (i + 1) * num_packed_bins) &
           in_range_mask
       )
-      packed_arrs = [
+      assert len(vals[i::num_packed_bins]) <= len(packed_vals)
+      packed_vals = [
           jnp.where(pack_mask, p, curr)
-          for p, curr in zip(permuted, packed_arrs, strict=True)
+          for p, curr in zip(vals[i::num_packed_bins], packed_vals, strict=False)
       ]
-
-  # Write packed data to output refs
-  for out_ref, packed in zip([packed_data_vals_ref, packed_data_idxs_ref], packed_arrs, strict=True):
-    out_ref[token_slice] = packed.astype(out_ref.dtype)
+  
+  packed_vals_ref[token_slice] = jnp.concat(packed_vals, 1).astype(packed_vals_ref.dtype)
 
 
 def dynamic_topk_kernel(
@@ -204,14 +205,12 @@ def dynamic_topk_kernel(
     valid_ref,
     max_depth_ref,
     cutoff_vals_ref,
+    active_bins_ref,
+    packed_vals_ref,
+    # scratch
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     termination_flag_ref,
-    sorted_bins_ref,
-    packed_data_vals_ref,
-    packed_data_idxs_ref,
-    sort_vals_scratch_ref,
-    sort_idxs_scratch_ref,
     *,
     max_k: int,
     num_bins: int,
@@ -324,16 +323,16 @@ def dynamic_topk_kernel(
     # m should be 9 for the (5,9) schedule
     _compute_packed_top_bins(
         bins_topm_vals_ref,
-        bins_topm_idxs_ref,
-        sorted_bins_ref,
-        packed_data_vals_ref,
-        packed_data_idxs_ref,
-        [sort_vals_scratch_ref, sort_idxs_scratch_ref],
+        active_bins_ref,
+        packed_vals_ref,
         token_slice=token_slice,
         block_token=block_token,
         num_bins=num_bins,
         m=bins_topm_schedule[-1]
     )
+    # invalidate active bins in bins_topm so not double counted?
+    # or invalidate in place pre-packing?
+    
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
@@ -474,15 +473,16 @@ def top_dynamic_k(
   # Updated padded size calculation using num_bins
   padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
+  
+  num_packed_bins = 16
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.float32),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), logits.dtype) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else jax.ShapeDtypeStruct((1,), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else None,
+      jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1] // num_bins, num_bins // num_packed_bins)), logits.dtype) if enable_bin_sorting else None,
   )
 
   output_specs = (
@@ -491,9 +491,8 @@ def top_dynamic_k(
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec((block_token, NUM_LANES), lambda i: (i, 0)) if enable_bin_sorting else pl.BlockSpec(memory_space=pltpu.SMEM),
+      pl.BlockSpec() if enable_bin_sorting else None,
+      pl.BlockSpec() if enable_bin_sorting else None,
   )
 
   # Add scratch shapes for bin sorting if enabled
@@ -502,13 +501,8 @@ def top_dynamic_k(
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
   ]
-  if enable_bin_sorting:
-      scratch_shapes.extend([
-          pltpu.VMEM((block_token, num_bins), jnp.float32),
-          pltpu.VMEM((block_token, num_bins), jnp.int32),
-      ])
 
-  results = pl.pallas_call(
+  outputs = pl.pallas_call(
       functools.partial(
           dynamic_topk_kernel,
           max_k=max_k,
@@ -530,14 +524,15 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-
-  topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_data_vals, packed_data_idxs = results
-
+  topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_vals = outputs
+  
+  topk_vals, topk_idxs = (x[:,:max_k] for x in (topk_vals, topk_idxs))
+  valid = valid.squeeze().astype(bool)
+  
   if enable_bin_sorting:
-    return (topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool),
-            depths, cutoff_vals, sorted_bins, packed_data_vals, packed_data_idxs)
-  else:
-    return topk_vals[:,:max_k], topk_idxs[:,:max_k], valid.squeeze().astype(bool), depths, cutoff_vals
+    return (topk_vals, topk_idxs, valid,
+            depths, cutoff_vals, sorted_bins, packed_vals)  
+  return topk_vals, topk_idxs, valid, depths, cutoff_vals
 
   
 @functools.partial(
@@ -592,3 +587,4 @@ def top_k(
     guarantee_convergence=True,
     interpret=interpret,
   )[:2]
+
