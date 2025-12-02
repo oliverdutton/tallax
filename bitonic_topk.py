@@ -119,7 +119,6 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
       # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
-
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=7,
@@ -138,25 +137,11 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
       )
 
     # Progressive intra-tile merging with lane permutations
-    # Calculate starting distance based on actual data size
-    # For (8,256): dim1_size=128, start = min(64, 128*8/128) = 8 (only 1 compare needed)
-    # For (8,2048): dim1_size=128, start = min(64, 128*8/128) = 8 (only 1 compare needed)
-    # For (16,2048): dim1_size=256, start = min(64, 256*16/128) = 32 (2 compares needed)
-
-    if b < NUM_LANES:
-        # Calculate optimal starting distance: min(64, dim1_size * b / NUM_LANES)
-        start_distance = min(NUM_LANES // 2, (dim1_size * b) // NUM_LANES)
-        distance = start_distance
-    else:
-        # For b >= NUM_LANES, start at NUM_LANES/2
-        distance = NUM_LANES // 2
-
-    # Perform compares at each distance, halving each time until we reach b
+    distance = min(NUM_LANES // 2, (dim1_size * b) // NUM_LANES)
     while distance >= b:
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
-
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
           num_substages=7,
