@@ -59,7 +59,7 @@ def _merge_max_crosstile(
     Tuple of lists with half the tiles (max halves only)
   """
   num_tiles = len(arrs_tiles[0])
-  separation = max(1, b // NUM_SUBLANES)  # Tiles per token block row
+  separation = max(1, b // NUM_LANES)  # Tiles per token block row
   outs_tiles = [[] for t in arrs_tiles]
 
   for i in range(num_tiles // 2):
@@ -99,8 +99,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     # For b >= NUM_LANES: we want more tiles proportional to b
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
 
-    # Build bitonic sequences up to length 128 (stage 7)
-    for stage in range(1, 8):  # stages 1-7 inclusive
+    # Build bitonic sequences up to length 64 (stage 6)
+    for stage in range(1, 7):  # stages 1-6 inclusive
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=stage,
@@ -114,10 +114,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     # Cross-tile merging: reduce tile count by half each iteration
     # Keep merging until we hit target tile count
     while len(arrs_tiles[0]) > target_num_tiles:
-      # Run stage for merging bitonic sequences
-      # Stage number: 7 + log2(current_length / 128)
-      current_length = len(arrs_tiles[0]) * NUM_SUBLANES * NUM_LANES // b
-      merge_stage = 7 + log2(current_length // NUM_LANES)
+      # Run substages sorting NUM_LANES but with stage for merging bitonic sequences so different tiles sets have different orders.
+      # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
+      merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
 
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
@@ -157,11 +156,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
 
         # Distance for lane permutation: 64, 32, 16, ..., down to b
         distance = NUM_LANES >> (i + 1)
-
         # Create permutation indices for tiles
-        tile_shape = (NUM_SUBLANES, NUM_LANES)
-        index = jax.lax.broadcasted_iota(jnp.int32, tile_shape, 1)
-        permutation = jnp.bitwise_xor(index, distance)
+        permutation = jnp.bitwise_xor(iota_tile(1), distance)
 
         # Apply permutation to all tiles
         arrs_tiles_permuted = jax.tree.map(
@@ -184,7 +180,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
         arrs_tiles = outs_tiles
 
     # Final sort: convert bitonic sequence to fully descending order
-    # Use dim1_offset=2**7 to ensure proper bitonic direction
+    # Use dim1_offset=2**7 to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=7,
@@ -194,7 +190,6 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
         num_keys=num_keys,
         use_lane_permute=False,
     )
-
     return arrs_tiles
 
 
