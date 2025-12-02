@@ -15,11 +15,6 @@ For input (b, vocab) where b=num_tokens:
 - After sublane transpose: (128, b*n) split into (8, 128) tiles
 - Number of tiles: (b * n_vocab_chunks) // 8 where n_vocab_chunks = vocab // 128
 - Target: reduce to (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES) tiles
-
-for (b, n) shape input
-The total number of merges is log2(n // num_lanes)
-The final (NUM_LANES // b) merges are intra permutations
-
 """
 
 import functools
@@ -81,7 +76,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
+def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -94,7 +89,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     Args:
         arrs_tiles: Tuple of lists of tile arrays
         num_keys: Number of sort keys
-        shape: untransformed input shape
+        b: Block size (num_tokens, must be power of 2)
 
     Returns:
         Tuple of lists of merged tile arrays
@@ -102,24 +97,10 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     # Target number of tiles after cross-tile merging
     # For b < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For b >= NUM_LANES: we want more tiles proportional to b
-    b = shape[0]
-    log_lanes = log2(NUM_LANES)
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
 
-    # Number of cross-tile merges depends on how much data we have
-    # After sublane transpose: (128, b * vocab/128), split into tiles
-    # Each tile covers 128 values in dim1, so num_tiles = b * vocab / (8 * 128)
-    num_tiles_from_shape = (b * shape[1]) // (NUM_SUBLANES * NUM_LANES)
-    num_cross_tile_merges = log2(num_tiles_from_shape // target_num_tiles) if num_tiles_from_shape > target_num_tiles else 0
-
-    # Number of intra-tile merges is always log2(NUM_LANES / b)
-    # This merges from distance=64 down to distance=b
-    num_intra_merges = log2(pl.cdiv(NUM_LANES, b))
-
-    num_merges = num_cross_tile_merges + num_intra_merges
-
     # Build bitonic sequences up to length 64 (stage 6)
-    for stage in range(1, log_lanes):  # stages 1-6 inclusive
+    for stage in range(1, 7):  # stages 1-6 inclusive
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=stage,
@@ -132,14 +113,15 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
 
     # Cross-tile merging: reduce tile count by half each iteration
     # Keep merging until we hit target tile count
-    for _ in range(num_cross_tile_merges):
+    while len(arrs_tiles[0]) > target_num_tiles:
       # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
       # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
+
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=log_lanes,
+        num_substages=7,
         stage=merge_stage,
         dim1_offset=0,
         b=b,
@@ -154,21 +136,27 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
           num_keys=num_keys
       )
 
-    # Progressive intra-tile merging with lane 
-    for i in range(num_intra_merges)[::-1]:
-        distance = b * (2**i)
-        # Calculate stage based on current merge size
-        # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
-        stage = log2(2 * distance)
+    # Progressive intra-tile merging with lane permutations
+    # For b < 128: merge across lanes within tiles
+    if b < NUM_LANES:
+      num_iterations = log2(NUM_LANES // b)
+
+      for i in range(num_iterations):
+        # Stage decreases as we merge smaller distances
+        stage = 7 + num_iterations - 1 - i
+
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
-          num_substages=log_lanes,
+          num_substages=7,
           stage=stage,
           dim1_offset=0,
           b=b,
           num_keys=num_keys,
           use_lane_permute=False,
         )
+
+        # Distance for lane permutation: 64, 32, 16, ..., down to b
+        distance = NUM_LANES >> (i + 1)
 
         # Create permutation indices for tiles using iota_tile
         permutation = jnp.bitwise_xor(iota_tile(1), distance)
@@ -197,9 +185,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     # Use dim1_offset=2**7 to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=log_lanes,
-        stage=log_lanes,
-        dim1_offset=NUM_LANES,
+        num_substages=7,
+        stage=7,
+        dim1_offset=2**7,
         b=b,
         num_keys=num_keys,
         use_lane_permute=False,
@@ -223,7 +211,12 @@ def bitonic_topk_kernel(
     3. Convert back from sublane format
     4. Extract top-128 per token
     """
-    shape = in_refs[0].shape
+    num_tokens = in_refs[0].shape[0]
+    vocab_size = in_refs[0].shape[1]
+    b = num_tokens
+
+    if b > NUM_LANES:
+        raise ValueError(f"num_tokens must be <= NUM_LANES, got {num_tokens}")
 
     # Convert to sublane transposed format
     # Note: padding handled by convert_to_sublane_sort_format internally
@@ -233,12 +226,12 @@ def bitonic_topk_kernel(
     )
 
     # Run bitonic top-k algorithm
-    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=shape)
+    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, b=b)
 
     # Convert back from sublane format and write to output
     for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
-        out = convert_from_sublane_sort_format(tiles, shape=(shape[0], NUM_LANES))
-        out_ref[...] = out[:out_ref.shape[0]].astype(out_ref.dtype)
+        out = convert_from_sublane_sort_format(tiles, shape=(num_tokens, NUM_LANES))
+        out_ref[...] = out.astype(out_ref.dtype)
 
 
 @functools.partial(
@@ -286,6 +279,11 @@ def bitonic_topk(
     if vocab_size % NUM_LANES != 0:
         raise ValueError(
             f"vocab_size must be multiple of NUM_LANES={NUM_LANES}, got {vocab_size}"
+        )
+
+    if num_tokens > NUM_LANES:
+        raise ValueError(
+            f"num_tokens must be <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
 
     # Pad operands to proper dimensions
