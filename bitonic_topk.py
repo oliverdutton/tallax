@@ -138,7 +138,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
 
     # Progressive intra-tile merging with lane permutations
     distance = min(NUM_LANES // 2, (dim1_size * b) // NUM_LANES)
-    while distance >= b:
+    while distance >= b and b < NUM_LANES:
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
