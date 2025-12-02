@@ -145,8 +145,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
       num_intra_merges = log2(NUM_LANES // b)
 
       for i in range(num_intra_merges):
-        # Stage continues from where cross-tile merging left off
-        stage = log_lanes + num_cross_tile_merges + i
+        # Stage decreases as we merge smaller distances
+        # Starting from the largest stage after cross-tile merging
+        stage = log_lanes + num_cross_tile_merges + num_intra_merges - 1 - i
 
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
