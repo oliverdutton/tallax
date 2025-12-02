@@ -137,13 +137,24 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
       )
 
     # Progressive intra-tile merging with lane permutations
-    # For b < 128: merge across lanes within tiles
-    if b < NUM_LANES:
-      num_iterations = log2(NUM_LANES // b)
+    # Number of compares needed = log2(effective_data_size / 128)
+    # After cross-tile merging, each tile represents part of the data
+    # We need to select top 128 from the remaining data
 
-      for i in range(num_iterations):
-        # Stage decreases as we merge smaller distances
-        stage = 7 + num_iterations - 1 - i
+    # Calculate effective data size from number of tiles
+    # Each tile holds data for 128 lanes across b rows
+    num_tiles = len(arrs_tiles[0])
+    effective_data_per_token = (num_tiles * NUM_SUBLANES * NUM_LANES) // b
+
+    # Calculate compare distances: start from effective_data_per_token/2, halve until reaching b
+    # But distances must be within [b, NUM_LANES/2] range
+    distance = min(NUM_LANES // 2, effective_data_per_token // 2)
+
+    # Perform compares at each distance, halving each time until we reach b
+    while distance >= b and num_tiles > (NUM_LANES // NUM_SUBLANES):
+        # Calculate stage based on current merge size
+        # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
+        stage = log2(2 * distance)
 
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
@@ -154,9 +165,6 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
           num_keys=num_keys,
           use_lane_permute=False,
         )
-
-        # Distance for lane permutation: 64, 32, 16, ..., down to b
-        distance = NUM_LANES >> (i + 1)
 
         # Create permutation indices for tiles using iota_tile
         permutation = jnp.bitwise_xor(iota_tile(1), distance)
@@ -180,6 +188,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
             )):
               outs_tiles[j].append(o)
         arrs_tiles = outs_tiles
+
+        # Halve the distance for next iteration
+        distance = distance >> 1
 
     # Final sort: convert bitonic sequence to fully descending order
     # Use dim1_offset=2**7 to ensure descending direction
