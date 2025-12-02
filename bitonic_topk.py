@@ -274,11 +274,6 @@ def bitonic_topk(
             f"vocab_size must be multiple of NUM_LANES={NUM_LANES}, got {vocab_size}"
         )
 
-    if num_tokens > NUM_LANES:
-        raise ValueError(
-            f"num_tokens must be <= NUM_LANES={NUM_LANES}, got {num_tokens}"
-        )
-
     # Pad operands to proper dimensions
     def _get_pad_val(x):
         if descending:
