@@ -137,21 +137,22 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
       )
 
     # Progressive intra-tile merging with lane permutations
-    # Number of compares needed = log2(effective_data_size / 128)
-    # After cross-tile merging, each tile represents part of the data
-    # We need to select top 128 from the remaining data
+    # For b < 128: start at distance = 64 (NUM_LANES/2) and halve until reaching b
+    # This gives log2(128/b) compares, matching the bitonic merge pattern
 
-    # Calculate effective data size from number of tiles
-    # Each tile holds data for 128 lanes across b rows
-    num_tiles = len(arrs_tiles[0])
-    effective_data_per_token = (num_tiles * NUM_SUBLANES * NUM_LANES) // b
-
-    # Calculate compare distances: start from effective_data_per_token/2, halve until reaching b
-    # But distances must be within [b, NUM_LANES/2] range
-    distance = min(NUM_LANES // 2, effective_data_per_token // 2)
+    if b < NUM_LANES:
+        # Always start at maximum distance within a tile
+        distance = NUM_LANES // 2  # 64
+    else:
+        # For b >= NUM_LANES, also start at NUM_LANES/2
+        distance = NUM_LANES // 2
 
     # Perform compares at each distance, halving each time until we reach b
-    while distance >= b and num_tiles > (NUM_LANES // NUM_SUBLANES):
+    # For b=8: distances 64, 32, 16, 8 (4 compares)
+    # For b=16: distances 64, 32, 16 (3 compares)
+    # For b=32: distances 64, 32 (2 compares)
+    # For b=64: distance 64 (1 compare)
+    while distance >= b:
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
