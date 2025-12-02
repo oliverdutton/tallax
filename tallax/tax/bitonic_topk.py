@@ -217,10 +217,16 @@ def bitonic_topk_kernel(
     """
     shape = in_refs[0].shape
 
+    # Determine padding value for float32 (since we cast to float32)
+    pad_val = jnp.finfo(jnp.float32).min if descending else jnp.finfo(jnp.float32).max
+
     # Convert to sublane transposed format
     # Note: padding handled by convert_to_sublane_sort_format internally
     arrs_tiles = tuple(
-        convert_to_sublane_sort_format(in_ref[...].astype(jnp.float32))
+        convert_to_sublane_sort_format(
+            in_ref[...].astype(jnp.float32),
+            pad_val=pad_val
+        )
         for in_ref in in_refs
     )
 

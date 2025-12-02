@@ -259,7 +259,7 @@ def create_bit_indicator(bit_position: int, index=None):
   return (index >> bit_position) & 1
 
 
-def convert_to_sublane_sort_format(arr):
+def convert_to_sublane_sort_format(arr, pad_val=None):
   """Convert array to sublane-oriented format for faster permutes."""
   arrs = [
       arr[:, i * NUM_LANES:(i + 1) * NUM_LANES]
@@ -267,7 +267,7 @@ def convert_to_sublane_sort_format(arr):
   ]
   arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
   if arr.shape[1] < NUM_LANES:
-    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'))
+    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'), val=pad_val)
   tiles = split_array_to_tiles(arr)
   return tiles
 
