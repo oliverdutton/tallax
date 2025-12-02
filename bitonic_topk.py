@@ -301,12 +301,14 @@ def bitonic_topk(
 
     # Critical: ensure vocab is large enough that convert_to_sublane_sort_format
     # won't need to pad (which would use wrong default values).
+    # After transpose in sublane format: (128, b*n) where n = vocab//128
+    # We need b*n >= 128, so vocab >= 128*128/b = 16384/b
+    min_vocab_for_no_internal_padding = (NUM_LANES * NUM_LANES) // num_tokens
+
     operands = tuple(
         pad(
             x,
-            block_shape=(
-                max(NUM_SUBLANES, (NUM_LANES * NUM_LANES) // vocab_size),
-                NUM_LANES),
+            block_shape=(NUM_SUBLANES, max(NUM_LANES, min_vocab_for_no_internal_padding)),
             val=_get_pad_val(x)
         )
         for x in operands
