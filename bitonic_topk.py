@@ -185,9 +185,6 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
               outs_tiles[j].append(o)
         arrs_tiles = outs_tiles
 
-        # Halve the distance for next iteration
-        distance = distance >> 1
-
     # Final sort: convert bitonic sequence to fully descending order
     # Use dim1_offset=2**7 to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
