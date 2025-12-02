@@ -81,7 +81,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     Progressive bitonic merge for top-k selection.
 
     Strategy:
-    1. Build bitonic sequences (stages 1-7) within tiles
+    1. Build bitonic sequences (stages 1-6) within tiles
     2. Cross-tile bitonic merge until we reach target tile count
     3. Final progressive merge with lane permutations
     4. Sort final bitonic sequence to descending order
@@ -114,7 +114,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     # Cross-tile merging: reduce tile count by half each iteration
     # Keep merging until we hit target tile count
     while len(arrs_tiles[0]) > target_num_tiles:
-      # Run substages sorting NUM_LANES but with stage for merging bitonic sequences so different tiles sets have different orders.
+      # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
+      # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
 
@@ -156,7 +157,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
 
         # Distance for lane permutation: 64, 32, 16, ..., down to b
         distance = NUM_LANES >> (i + 1)
-        # Create permutation indices for tiles
+
+        # Create permutation indices for tiles using iota_tile
         permutation = jnp.bitwise_xor(iota_tile(1), distance)
 
         # Apply permutation to all tiles
@@ -295,10 +297,16 @@ def bitonic_topk(
                 return -1
         return None
 
+    # Critical: ensure vocab is large enough that convert_to_sublane_sort_format
+    # won't need to pad (which would use wrong default values).
+    # After transpose in sublane format: (128, b*n) where n = vocab//128
+    # We need b*n >= 128, so vocab >= 128*128/b = 16384/b
+    min_vocab_for_no_internal_padding = (NUM_LANES * NUM_LANES) // num_tokens
+
     operands = tuple(
         pad(
             x,
-            block_shape=(NUM_SUBLANES, 'power_of_2_lanes'),
+            block_shape=(NUM_SUBLANES, max(NUM_LANES, min_vocab_for_no_internal_padding)),
             val=_get_pad_val(x)
         )
         for x in operands
