@@ -76,7 +76,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
+def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -89,8 +89,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
     Args:
         arrs_tiles: Tuple of lists of tile arrays
         num_keys: Number of sort keys
-        b: Block size (num_tokens, must be power of 2)
-        dim1_size: Size of second dimension after sublane transpose
+        shape: untransformed input shape
 
     Returns:
         Tuple of lists of merged tile arrays
@@ -98,10 +97,12 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
     # Target number of tiles after cross-tile merging
     # For b < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For b >= NUM_LANES: we want more tiles proportional to b
+    b = shape[0]
+    log_lanes = log2(NUM_LANES)
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
 
     # Build bitonic sequences up to length 64 (stage 6)
-    for stage in range(1, 7):  # stages 1-6 inclusive
+    for stage in range(1, log_lanes):  # stages 1-6 inclusive
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=stage,
@@ -121,7 +122,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=7,
+        num_substages=log_lanes,
         stage=merge_stage,
         dim1_offset=0,
         b=b,
@@ -137,14 +138,14 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
       )
 
     # Progressive intra-tile merging with lane permutations
-    distance = min(NUM_LANES // 2, (dim1_size * b) // NUM_LANES)
+    distance = min(NUM_LANES // 2, (shape[1] * b) // NUM_LANES)
     while distance >= b and b < NUM_LANES:
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
-          num_substages=7,
+          num_substages=log_lanes,
           stage=stage,
           dim1_offset=0,
           b=b,
@@ -182,9 +183,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b, dim1_size):
     # Use dim1_offset=2**7 to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=7,
-        stage=7,
-        dim1_offset=2**7,
+        num_substages=log_lanes,
+        stage=log_lanes,
+        dim1_offset=NUM_LANES,
         b=b,
         num_keys=num_keys,
         use_lane_permute=False,
@@ -208,12 +209,7 @@ def bitonic_topk_kernel(
     3. Convert back from sublane format
     4. Extract top-128 per token
     """
-    num_tokens = in_refs[0].shape[0]
-    vocab_size = in_refs[0].shape[1]
-    b = num_tokens
-
-    if b > NUM_LANES:
-        raise ValueError(f"num_tokens must be <= NUM_LANES, got {num_tokens}")
+    shape = in_refs[0].shape
 
     # Convert to sublane transposed format
     # Note: padding handled by convert_to_sublane_sort_format internally
@@ -222,18 +218,12 @@ def bitonic_topk_kernel(
         for in_ref in in_refs
     )
 
-    # Calculate dim1_size from number of tiles
-    # After sublane transpose: (128, dim1_size) split into tiles of (8, 128)
-    # num_tiles = 16 * (dim1_size / 128), so dim1_size = num_tiles * 8
-    num_tiles = len(arrs_tiles[0])
-    dim1_size = num_tiles * NUM_SUBLANES
-
     # Run bitonic top-k algorithm
-    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, b=b, dim1_size=dim1_size)
+    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=shape)
 
     # Convert back from sublane format and write to output
     for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
-        out = convert_from_sublane_sort_format(tiles, shape=(num_tokens, NUM_LANES))
+        out = convert_from_sublane_sort_format(tiles, shape=(shape[0], NUM_LANES))
         out_ref[...] = out.astype(out_ref.dtype)
 
 
