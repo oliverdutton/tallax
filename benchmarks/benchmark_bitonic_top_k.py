@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Quick benchmark and validation script for bitonic_topk.
+Quick benchmark and validation script for bitonic_top_k.
 
-For comprehensive testing, use: pytest tests/bitonic_topk_test.py -v
-For benchmarking, use: python tests/bitonic_topk_test.py
+For comprehensive testing, use: pytest tests/bitonic_top_k_test.py -v
+For benchmarking, run this script directly.
 """
 
 import jax
 import jax.numpy as jnp
-from tallax.tax.bitonic_topk import bitonic_topk
+from tallax.tax.bitonic_top_k import bitonic_top_k
 from tallax.utils import is_cpu_platform
 from tallax.test_utils import benchmark, verify_topk_output
 
@@ -42,7 +42,7 @@ def quick_validation():
         # Test values only
         try:
             interpret = is_cpu_platform()
-            result = bitonic_topk(x, k=128, descending=True, interpret=interpret)
+            result = bitonic_top_k(x, k=128, descending=True, interpret=interpret)
             xla_result = jax.vmap(lambda y: jax.lax.top_k(y, 128))(x)
 
             pallas_values = result[0] if isinstance(result, tuple) else result
@@ -65,7 +65,7 @@ def quick_validation():
         try:
             indices = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
             interpret = is_cpu_platform()
-            result = bitonic_topk((x, indices), k=128, num_keys=1, descending=True, interpret=interpret)
+            result = bitonic_top_k((x, indices), k=128, num_keys=1, descending=True, interpret=interpret)
             validation = verify_topk_output(x, result)
 
             if bool(validation.all()):
@@ -109,9 +109,9 @@ def quick_benchmark():
         total_size = num_tokens * vocab_size
         x = -jax.random.permutation(key, total_size).reshape(shape).astype(jnp.int32)
 
-        print("  Pallas bitonic_topk:")
+        print("  Pallas bitonic_top_k:")
         interpret = is_cpu_platform()
-        benchmark(lambda: bitonic_topk(x, k=128, descending=True, interpret=interpret))
+        benchmark(lambda: bitonic_top_k(x, k=128, descending=True, interpret=interpret))
 
         print("  XLA top_k:")
         benchmark(lambda: jax.vmap(lambda y: jax.lax.top_k(y, 128))(x))

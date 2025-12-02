@@ -198,7 +198,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     return arrs_tiles
 
 
-def bitonic_topk_kernel(
+def bitonic_top_k_kernel(
     in_refs,
     out_refs,
     *,
@@ -236,7 +236,7 @@ def bitonic_topk_kernel(
     jit,
     static_argnames=("k", "num_keys", "descending", "interpret"),
 )
-def bitonic_topk(
+def bitonic_top_k(
     operand: jax.Array | Sequence[jax.Array],
     k: int = NUM_LANES,
     num_keys: int = 1,
@@ -268,7 +268,7 @@ def bitonic_topk(
     """
     if k != NUM_LANES:
         raise ValueError(
-            f"bitonic_topk only supports k=NUM_LANES={NUM_LANES}, got k={k}"
+            f"bitonic_top_k only supports k=NUM_LANES={NUM_LANES}, got k={k}"
         )
 
     operands, shape = canonicalize_operand(operand)
@@ -281,7 +281,7 @@ def bitonic_topk(
 
     if num_tokens > NUM_LANES:
         raise ValueError(
-            f"bitonic_topk requires num_tokens <= NUM_LANES={NUM_LANES}, got {num_tokens}"
+            f"bitonic_top_k requires num_tokens <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
 
     # Pad operands to proper dimensions
@@ -316,7 +316,7 @@ def bitonic_topk(
 
     outputs = pl.pallas_call(
         functools.partial(
-            bitonic_topk_kernel,
+            bitonic_top_k_kernel,
             num_keys=num_keys,
             descending=descending,
         ),
