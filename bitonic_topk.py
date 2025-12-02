@@ -106,7 +106,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     log_lanes = log2(NUM_LANES)
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
     num_merges = log2(shape[1] // NUM_LANES)
-    num_intra_merges = log2(pl.cdiv(NUM_LANES, b))
+    num_intra_merges = min(
+    log2(pl.cdiv(NUM_LANES, b)), num_merges)
     # are intra permutations
 
     # Build bitonic sequences up to length 64 (stage 6)
@@ -146,7 +147,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
       )
 
     # Progressive intra-tile merging with lane 
-    for distance in b*(2**range(num_intra_merges)[::-1])
+    for i in range(num_intra_merges)[::-1]:
+        distance = b * (2**i)
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
