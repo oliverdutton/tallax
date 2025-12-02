@@ -150,12 +150,11 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     for i in range(num_intra_merges)[::-1]:
         distance = b * (2**i)
         # Calculate stage based on current merge size
-        # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
-        stage = log2(2 * distance)
+        # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)        
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
           num_substages=log_lanes,
-          stage=stage,
+          stage=log_lanes+i,
           dim1_offset=0,
           b=b,
           num_keys=num_keys,
