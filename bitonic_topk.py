@@ -295,7 +295,9 @@ def bitonic_topk(
     operands = tuple(
         pad(
             x,
-            block_shape=(max(NUM_SUBLANES, (NUM_LANES * NUM_LANES) // vocab_size), NUM_LANES),
+            block_shape=(
+                max(NUM_SUBLANES, (NUM_LANES * NUM_LANES) // vocab_size),
+                NUM_LANES),
             val=_get_pad_val(x)
         )
         for x in operands
