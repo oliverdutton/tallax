@@ -132,7 +132,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
 
     # Cross-tile merging: reduce tile count by half each iteration
     # Keep merging until we hit target tile count
-    for _ in range(num_merges - num_intra_merges):
+    for _ in range(num_cross_tile_merges):
       # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
       # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
