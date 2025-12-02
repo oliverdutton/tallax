@@ -94,13 +94,15 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     Returns:
         Tuple of lists of merged tile arrays
     """
+    log_lanes = log2(NUM_LANES)
+
     # Target number of tiles after cross-tile merging
     # For b < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For b >= NUM_LANES: we want more tiles proportional to b
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
 
     # Build bitonic sequences up to length 64 (stage 6)
-    for stage in range(1, 7):  # stages 1-6 inclusive
+    for stage in range(1, log_lanes):  # stages 1-6 inclusive
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=stage,
@@ -112,16 +114,17 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
       )
 
     # Cross-tile merging: reduce tile count by half each iteration
-    # Keep merging until we hit target tile count
-    while len(arrs_tiles[0]) > target_num_tiles:
-      # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
-      # so different tile sets have different orders.
-      # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
-      merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
+    # Stage increases with each merge: 7, 8, 9, ...
+    current_tile_count = len(arrs_tiles[0])
+    num_cross_tile_merges = log2(current_tile_count // target_num_tiles) if current_tile_count > target_num_tiles else 0
+
+    for merge_iter in range(num_cross_tile_merges):
+      # Stage increases with each cross-tile merge
+      merge_stage = log_lanes + merge_iter
 
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=7,
+        num_substages=log_lanes,
         stage=merge_stage,
         dim1_offset=0,
         b=b,
@@ -139,15 +142,15 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
     # Progressive intra-tile merging with lane permutations
     # For b < 128: merge across lanes within tiles
     if b < NUM_LANES:
-      num_iterations = log2(NUM_LANES // b)
+      num_intra_merges = log2(NUM_LANES // b)
 
-      for i in range(num_iterations):
-        # Stage decreases as we merge smaller distances
-        stage = 7 + num_iterations - 1 - i
+      for i in range(num_intra_merges):
+        # Stage continues from where cross-tile merging left off
+        stage = log_lanes + num_cross_tile_merges + i
 
         arrs_tiles = _compute_subtile_substages_inner(
           arrs_tiles,
-          num_substages=7,
+          num_substages=log_lanes,
           stage=stage,
           dim1_offset=0,
           b=b,
@@ -182,12 +185,12 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, b):
         arrs_tiles = outs_tiles
 
     # Final sort: convert bitonic sequence to fully descending order
-    # Use dim1_offset=2**7 to ensure descending direction
+    # Use dim1_offset=NUM_LANES to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
-        num_substages=7,
-        stage=7,
-        dim1_offset=2**7,
+        num_substages=log_lanes,
+        stage=log_lanes,
+        dim1_offset=NUM_LANES,
         b=b,
         num_keys=num_keys,
         use_lane_permute=False,
