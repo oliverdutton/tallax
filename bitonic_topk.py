@@ -105,10 +105,18 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     b = shape[0]
     log_lanes = log2(NUM_LANES)
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
-    num_merges = log2(shape[1] // NUM_LANES)
-    num_intra_merges = min(
-    log2(pl.cdiv(NUM_LANES, b)), num_merges)
-    # are intra permutations
+
+    # Number of cross-tile merges depends on how much data we have
+    # After sublane transpose: (128, b * vocab/128), split into tiles
+    # Each tile covers 128 values in dim1, so num_tiles = b * vocab / (8 * 128)
+    num_tiles_from_shape = (b * shape[1]) // (NUM_SUBLANES * NUM_LANES)
+    num_cross_tile_merges = log2(num_tiles_from_shape // target_num_tiles) if num_tiles_from_shape > target_num_tiles else 0
+
+    # Number of intra-tile merges is always log2(NUM_LANES / b)
+    # This merges from distance=64 down to distance=b
+    num_intra_merges = log2(pl.cdiv(NUM_LANES, b))
+
+    num_merges = num_cross_tile_merges + num_intra_merges
 
     # Build bitonic sequences up to length 64 (stage 6)
     for stage in range(1, log_lanes):  # stages 1-6 inclusive
