@@ -15,6 +15,11 @@ For input (b, vocab) where b=num_tokens:
 - After sublane transpose: (128, b*n) split into (8, 128) tiles
 - Number of tiles: (b * n_vocab_chunks) // 8 where n_vocab_chunks = vocab // 128
 - Target: reduce to (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES) tiles
+
+for (b, n) shape input
+The total number of merges is log2(n // num_lanes)
+The final (NUM_LANES // b) merges are intra permutations
+
 """
 
 import functools
@@ -100,6 +105,9 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     b = shape[0]
     log_lanes = log2(NUM_LANES)
     target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
+    num_merges = log2(shape[1] // NUM_LANES)
+    num_intra_merges = log2(pl.cdiv(NUM_LANES, b))
+    # are intra permutations
 
     # Build bitonic sequences up to length 64 (stage 6)
     for stage in range(1, log_lanes):  # stages 1-6 inclusive
@@ -115,7 +123,7 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
 
     # Cross-tile merging: reduce tile count by half each iteration
     # Keep merging until we hit target tile count
-    while len(arrs_tiles[0]) > target_num_tiles:
+    for _ in range(num_merges - num_intra_merges):
       # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
       # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
@@ -137,9 +145,8 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
           num_keys=num_keys
       )
 
-    # Progressive intra-tile merging with lane permutations
-    distance = min(NUM_LANES // 2, (shape[1] * b) // NUM_LANES)
-    while distance >= b and b < NUM_LANES:
+    # Progressive intra-tile merging with lane 
+    for distance in b*(2**range(num_intra_merges)[::-1])
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)
         stage = log2(2 * distance)
