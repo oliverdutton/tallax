@@ -203,8 +203,16 @@ def _compute_packed_top_bins(
 
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
-  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
-  (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
+
+  # Compute bin indices for packed values
+  # Each active bin occupies stride consecutive positions in each chunk
+  stride = NUM_LANES // num_packed_bins
+  active_bins = packed_bins_ref[token_slice, :num_packed_bins]  # Shape: (block_token, 16)
+  bin_indices_pattern = jnp.repeat(active_bins, stride, axis=1)  # Shape: (block_token, 128)
+  bin_indices_full = jnp.concat([bin_indices_pattern] * (n//NUM_LANES), axis=1)  # Shape: (block_token, n)
+
+  # packed_idxs[i] = (chunk_index) * num_bins + bin_index
+  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // NUM_LANES) * num_bins + bin_indices_full
   dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
 
