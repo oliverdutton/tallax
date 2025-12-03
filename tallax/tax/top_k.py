@@ -194,6 +194,7 @@ def _compute_packed_top_bins(
           in_range_mask
       )
       # FIXED: Use stride in vals iterator to match packed_vals length
+      assert (len(packed_vals) - len(vals[i::stride])) in (0,1)
       packed_vals = [
           jnp.where(pack_mask, p, curr)
           for p, curr in zip(vals[i::stride], packed_vals, strict=False)
