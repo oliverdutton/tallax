@@ -49,7 +49,7 @@ def pad(
     arr: jax.Array,
     block_shape: tuple[int | str, ...] = None,
     prepend: bool | tuple[bool, ...] = False,
-    val = None
+    val = 'max_nan',
 ) -> jax.Array:
   """Pad array to satisfy alignment requirements.
 
@@ -101,10 +101,18 @@ def pad(
       pad_widths.append((0, pad_size))
 
   # Determine padding value
-  if val is None:
-    pad_val = get_dtype_info(arr).max
-    if jnp.issubdtype(arr.dtype, jnp.floating):
-      pad_val = jnp.nan
+  if isinstance(val, str):
+    info = get_dtype_info(arr)
+    if val == 'min':
+      pad_val = info.min
+    elif val == 'max':
+      pad_val = info.max
+    elif val == 'max_nan':
+      pad_val = info.max
+      if jnp.issubdtype(arr.dtype, jnp.floating):
+        pad_val = jnp.nan
+    else:
+      raise ValueError
   else:
     pad_val = val
 
