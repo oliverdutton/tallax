@@ -205,7 +205,7 @@ def _compute_packed_top_bins(
   packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + packed_bins_ref[token_slice]
   n = packed_vals.shape[1]
   dim1_size = 2**log2(packed_vals.shape[1] + NUM_LANES)
-  overwrite_refs = (ref.at[token_slice, pl.dslice((m - 2) * num_bins, NUM_LANES)] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref))
+  overwrite_refs = (ref.at[token_slice, :NUM_LANES)] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref))
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   @functools.partial(pl.run_scoped,
@@ -359,8 +359,6 @@ def dynamic_topk_kernel(
         num_bins=num_bins,
         m=bins_topm_schedule[-1]
     )
-    # invalidate active bins in bins_topm so not double counted?
-    # or invalidate in place pre-packing?
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
@@ -387,18 +385,14 @@ def dynamic_topk_kernel(
       ))
       def _():
         # Sort the binned superset
-        bitonic_sort(
-            [ref.at[:, :depth_upper * num_bins]
+        bitonic_topk_kernel(
+          [ref.at[:, :depth_upper * num_bins]
             for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)],
-            stage_ref=None,
-            # this is a trick to make the sort descending
-            dim1_offset=depth_upper * num_bins,
-            num_keys=1,
+          [topk_vals_ref, topk_idxs_ref],
+          num_keys=1,
+          descending=True,
         )
-        for ref, out_ref in zip(
-          (bins_topm_vals_ref, bins_topm_idxs_ref),
-          (topk_vals_ref, topk_idxs_ref)):
-          out_ref[...] = ref[...,:out_ref.shape[1]].astype(out_ref.dtype)
+
 
 @functools.partial(
     jit,
