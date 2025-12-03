@@ -173,7 +173,7 @@ def _compute_packed_top_bins(
   packed_vals = [jnp.full(
     (block_token, NUM_LANES),
     jnp.finfo(jnp.float32).min, dtype=jnp.float32
-    ) for _ in pl.cdiv(logits_ref.shape[1] // num_bins, num_bins // num_packed_bins)]
+    ) for _ in range(pl.cdiv(logits_ref.shape[1] // num_bins, num_bins // num_packed_bins))]
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
