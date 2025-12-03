@@ -205,14 +205,23 @@ def _compute_packed_top_bins(
   n = packed_vals.shape[1]
 
   # Compute bin indices for packed values
-  # Each active bin occupies stride consecutive positions in each chunk
+  # The packing uses vals[i::stride], so input chunk = i + output_j * stride
+  # where i = lane // stride and output_j = position // NUM_LANES
   stride = NUM_LANES // num_packed_bins
   active_bins = packed_bins_ref[token_slice, :num_packed_bins]  # Shape: (block_token, 16)
-  bin_indices_pattern = jnp.repeat(active_bins, stride, axis=1)  # Shape: (block_token, 128)
-  bin_indices_full = jnp.concat([bin_indices_pattern] * (n//NUM_LANES), axis=1)  # Shape: (block_token, n)
 
-  # packed_idxs[i] = (chunk_index) * num_bins + bin_index
-  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // NUM_LANES) * num_bins + bin_indices_full
+  # Tile active_bins to match the repeating pattern in perm (every 16 lanes)
+  bin_indices_full = jnp.tile(active_bins, (1, n // 16 + 1))[:, :n]  # Shape: (block_token, n)
+
+  # For position p: lane = p % 128, i = lane // stride, output_j = p // 128
+  # input_chunk = i + output_j * stride
+  # vocab_index = input_chunk * num_bins + bin_index
+  p = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
+  lane = p % NUM_LANES
+  i = lane // stride
+  output_j = p // NUM_LANES
+  input_chunk = i + output_j * stride
+  packed_idxs = input_chunk * num_bins + bin_indices_full
   dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
 
