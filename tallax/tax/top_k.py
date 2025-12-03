@@ -202,9 +202,10 @@ def _compute_packed_top_bins(
         packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
-  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + packed_bins_ref[token_slice]
   n = packed_vals.shape[1]
-  dim1_size = 2**log2(packed_vals.shape[1] + NUM_LANES)
+  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
+  (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
+  dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = (ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref))
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
