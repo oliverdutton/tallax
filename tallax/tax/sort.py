@@ -348,7 +348,7 @@ def _compute_subtile_substages(
     
     # pad in dim0 (if needed)
     arrs = (pad(ref_slice[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]) if not use_lane_permute else 1, slice_shape[1]) for ref_slice in ref_slices)
+        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]) if not use_lane_permute else 1, slice_shape[1])) for ref_slice in ref_slices)
     b = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(
         (split_array_to_tiles if use_lane_permute
