@@ -151,6 +151,8 @@ def _compute_packed_top_bins(
     permutation = sort_scratch_refs[1][:, :NUM_LANES]
     active_bins_ref[token_slice] = permutation
   
+  num_packed_bins = 16
+
   # produce the (token_slice, num_bins) mask
   index = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   indicator = jnp.zeros((block_token, num_bins), jnp.int32)
@@ -164,7 +166,6 @@ def _compute_packed_top_bins(
     for i in range(bins_topm_vals_ref.shape[1] // num_bins)], 1)
   
   # Repeat first 16 values across NUM_LANES positions
-  num_packed_bins = 16
   perm = jnp.take_along_axis(permutation, iota_tile(1) % num_packed_bins, axis=1)
   
   # Loop over blocks and pack data from active bins
