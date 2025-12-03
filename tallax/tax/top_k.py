@@ -155,11 +155,12 @@ def _compute_packed_top_bins(
   num_packed_bins = 16
 
   # produce the (token_slice, num_bins) mask
+  # index[t, b] = b (the bin index in the second dimension)
   index = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
-  indicator = jnp.zeros((block_token, num_bins), jnp.int32)
+  indicator = jnp.zeros((block_token, num_bins), dtype=jnp.bool_)
   for i in range(num_packed_bins):
-    indicator += (indicator ==
-    active_bins_ref[token_slice, i:i+1])
+    # Mark positions where bin index matches the i-th active bin
+    indicator |= (index == active_bins_ref[token_slice, i:i+1])
   bins_topm_vals_ref[...] = jnp.concat([
     jnp.where(
     indicator, jnp.finfo(jnp.float32).min,
