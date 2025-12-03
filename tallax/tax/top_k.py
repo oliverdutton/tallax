@@ -161,7 +161,7 @@ def _compute_packed_top_bins(
     active_bins_ref[token_slice, i:i+1])
   bins_topm_vals_ref[...] = jnp.concat([
     jnp.where(
-    indicator, jnp.finfo(float32).min,
+    indicator, jnp.finfo(jnp.float32).min,
     bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
     for i in range(bins_topm_vals_ref.shape[1] // num_bins)], 1)
   
