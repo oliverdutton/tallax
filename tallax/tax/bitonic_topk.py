@@ -283,27 +283,11 @@ def bitonic_topk(
         raise ValueError(
             f"bitonic_topk requires num_tokens <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
-
-    # Pad operands to proper dimensions
-    def _get_pad_val(x):
-        if descending:
-            if jnp.issubdtype(x.dtype, jnp.floating):
-                return jnp.finfo(x.dtype).min
-            elif jnp.issubdtype(x.dtype, jnp.integer):
-                return jnp.iinfo(x.dtype).min
-            else:
-                return -1
-        return None
-
-    # Critical: ensure vocab is large enough that convert_to_sublane_sort_format
-    # won't need to pad (which would use wrong default values).
     operands = tuple(
         pad(
             x,
-            block_shape=(
-                max(NUM_SUBLANES, (NUM_LANES * NUM_LANES) // vocab_size),
-                NUM_LANES),
-            val=_get_pad_val(x)
+            block_shape=(NUM_SUBLANES, NUM_LANES),
+            val='min'
         )
         for x in operands
     )
