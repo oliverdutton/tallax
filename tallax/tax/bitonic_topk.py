@@ -36,8 +36,6 @@ from tallax.utils import (
     NUM_SUBLANES,
     log2,
     iota_tile,
-    split_array_to_tiles,
-    join_tiles_to_array,
     pad,
     canonicalize_operand,
     transpose_list_of_lists,
@@ -105,7 +103,6 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     # For b >= NUM_LANES: we want more tiles proportional to b
     b = shape[0]
     log_lanes = log2(NUM_LANES)
-    target_num_tiles = (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES)
     num_merges = log2(shape[1] // NUM_LANES)
     num_intra_merges = min(
     log2(pl.cdiv(NUM_LANES, b)), num_merges)
@@ -222,8 +219,8 @@ def bitonic_topk_kernel(
     
     # pad in dim0 (if needed)
     arrs = (pad(in_ref[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1]) for in_ref in in_refs)
-    arrs = (x.astype(to_32bit_dtype(x.dtype) for x in arrs)
+        pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1])) for in_ref in in_refs)
+    arrs = (x.astype(to_32bit_dtype(x.dtype)) for x in arrs)
     arrs_tiles = tuple(
         convert_to_sublane_sort_format(arr)
         for arr in arrs
