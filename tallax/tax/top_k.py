@@ -166,7 +166,7 @@ def _compute_packed_top_bins(
     for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
   
   # Repeat first 16 values across NUM_LANES positions
-  perm = jnp.take_along_axis(permutation, iota_tile(1) % num_packed_bins, axis=1)
+  perm = jnp.take_along_axis(active_bins_ref[token_slice], iota_tile(1) % num_packed_bins, axis=1)
   
   # Loop over blocks and pack data from active bins
   packed_vals = [jnp.full(
