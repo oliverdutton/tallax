@@ -43,6 +43,7 @@ from tallax.utils import (
     transpose_list_of_lists,
     convert_to_sublane_sort_format,
     convert_from_sublane_sort_format,
+    to_32bit_dtype,
 )
 from tallax.tax.sort import (
     _compute_subtile_substages_inner,
