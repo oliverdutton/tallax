@@ -166,7 +166,7 @@ def _compute_packed_top_bins(
 
   bins_topm_vals_ref[token_slice] = jnp.concat([
       jnp.where(
-          indicator, get_dtype_info(bins_topm_vals_ref[token_slice]).min,
+          indicator, get_dtype_info(bins_topm_vals_ref).min,
           bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
       for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
 
@@ -176,7 +176,7 @@ def _compute_packed_top_bins(
   # Loop over blocks and pack data from active bins
   packed_vals = [jnp.full(
       (block_token, NUM_LANES),
-      get_dtype_info(logits_ref[...]).min, dtype=logits_ref.dtype
+      get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
 
   stride = NUM_LANES // num_packed_bins  # 128 // 16 = 8
@@ -264,7 +264,7 @@ def dynamic_topk_kernel(
   token_slice = pl.dslice(pid * block_token, block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
-      shape, get_dtype_info(logits_ref[...]).min, dtype=logits_ref.dtype
+      shape, get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   )
 
   for i in range(block_token):
