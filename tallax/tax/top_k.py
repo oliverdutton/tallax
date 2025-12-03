@@ -99,7 +99,7 @@ def binned_topk(
     # Load the final boundary segment
     final_vals = logits[..., pl.dslice(num_full_slices * num_bins, remainder)]
     # Pad to num_bins with f32 min
-    final_vals = pad(final_vals, (1, num_bins), val=get_dtype_info(final_vals).min)
+    final_vals = pad(final_vals, (1, num_bins), val='min')
     # Create idxs for the final segment
     final_idxs = compute_idxs(num_full_slices)
     # Update bins topk with the overspill
@@ -212,7 +212,7 @@ def _compute_packed_top_bins(
       val_ref=pltpu.VMEM((block_token, dim1_size), packed_vals_ref.dtype),
       idx_ref=pltpu.VMEM((block_token, dim1_size), jnp.int32))
   def _merge_topk(val_ref, idx_ref):
-    val_ref[...] = pad(packed_vals, (NUM_SUBLANES, dim1_size), get_dtype_info(packed_vals).min)
+    val_ref[...] = pad(packed_vals, (NUM_SUBLANES, dim1_size), val='min')
     idx_ref[:,:n] = packed_idxs
     sort_refs = [val_ref, idx_ref]
     for sort_ref, overwrite_ref in zip(sort_refs, overwrite_refs, strict=True):
