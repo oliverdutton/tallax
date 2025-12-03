@@ -218,13 +218,13 @@ def bitonic_topk_kernel(
     # Note: padding handled by convert_to_sublane_sort_format internally
     
     # pad in dim0 (if needed)
-    arrs = (pad(in_ref[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1])) for in_ref in in_refs)
-    arrs = (x.astype(to_32bit_dtype(x.dtype)) for x in arrs)
-    arrs_tiles = tuple(
+    arrs = [pad(in_ref[...], block_shape=(
+        pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1])) for in_ref in in_refs]
+    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
+    arrs_tiles = [
         convert_to_sublane_sort_format(arr)
         for arr in arrs
-    )
+    ]
 
     # Run bitonic top-k algorithm
     arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=arrs[0].shape)
