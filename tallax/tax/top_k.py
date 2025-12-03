@@ -195,7 +195,7 @@ def _compute_packed_top_bins(
           for p, curr in zip(vals[i::num_packed_bins], packed_vals, strict=False)
       ]
   
-  packed_vals_ref[token_slice] = jnp.concat(packed_vals, 1).astype(packed_vals_ref.dtype)
+  packed_vals_ref[token_slice] = jnp.concat(packed_vals, axis=1).astype(packed_vals_ref.dtype)
 
 
 def dynamic_topk_kernel(
