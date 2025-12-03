@@ -284,7 +284,9 @@ def convert_from_sublane_sort_format(tiles, shape):
   """Convert from sublane format back to original layout."""
   b, m = shape
   assert m >= NUM_LANES
-  arr = join_tiles_to_array(((b * m) // NUM_LANES, NUM_LANES), tiles) # (128, n*b)
+  arr = join_tiles_to_array(
+  (NUM_LANES, (b * m) // NUM_LANES),
+  tiles) # (128, n*b)
   arr = arr.T
   return jnp.concatenate(
       [arr[i * b:(i + 1) * b] for i in range(arr.shape[0] // b)],
