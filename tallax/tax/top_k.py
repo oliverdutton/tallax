@@ -173,7 +173,7 @@ def _compute_packed_top_bins(
   packed_vals = [jnp.full(
     (block_token, NUM_LANES),
     jnp.finfo(jnp.float32).min, dtype=jnp.float32
-    ) for _ in range(pl.cdiv(logits_ref.shape[1] // num_bins, num_bins // num_packed_bins))]
+    ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
@@ -189,7 +189,7 @@ def _compute_packed_top_bins(
           (index < (i + 1) * num_packed_bins) &
           in_range_mask
       )
-      assert len(vals[i::num_packed_bins]) <= len(packed_vals)
+      assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
       packed_vals = [
           jnp.where(pack_mask, p, curr)
           for p, curr in zip(vals[i::num_packed_bins], packed_vals, strict=False)
@@ -484,7 +484,7 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.float32),
       jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else None,
-      jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1] // num_bins, num_bins // num_packed_bins)), logits.dtype) if enable_bin_sorting else None,
+      jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype) if enable_bin_sorting else None,
   )
 
   output_specs = (
