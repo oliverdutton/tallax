@@ -195,10 +195,8 @@ def _compute_packed_top_bins(
       )
       # FIXED: Use stride in vals iterator to match packed_vals length
       assert (len(packed_vals) - len(vals[i::stride])) in (0,1)
-      packed_vals = [
-          jnp.where(pack_mask, p, curr)
-          for p, curr in zip(vals[i::stride], packed_vals, strict=False)
-      ]
+      for j, v in enumerate(vals[i::stride]):
+        packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals_ref[token_slice] = jnp.concat(packed_vals, axis=1).astype(packed_vals_ref.dtype)
 
