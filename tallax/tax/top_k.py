@@ -163,7 +163,7 @@ def _compute_packed_top_bins(
     jnp.where(
     indicator, jnp.finfo(jnp.float32).min,
     bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
-    for i in range(bins_topm_vals_ref.shape[1] // num_bins)], 1)
+    for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
   
   # Repeat first 16 values across NUM_LANES positions
   perm = jnp.take_along_axis(permutation, iota_tile(1) % num_packed_bins, axis=1)
