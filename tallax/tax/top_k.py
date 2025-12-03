@@ -208,10 +208,9 @@ def _compute_packed_top_bins(
   # The packing uses vals[i::stride], so input chunk = i + output_j * stride
   # where i = lane // stride and output_j = position // NUM_LANES
   stride = NUM_LANES // num_packed_bins
-  active_bins = packed_bins_ref[token_slice, :num_packed_bins]  # Shape: (block_token, 16)
 
-  # Tile active_bins to match the repeating pattern in perm (every 16 lanes)
-  bin_indices_full = jnp.tile(active_bins, (1, n // 16 + 1))[:, :n]  # Shape: (block_token, n)
+  # packed_bins_ref already has the repeating pattern across 128 lanes, just tile it
+  bin_indices_full = jnp.tile(packed_bins_ref[token_slice], (1, n // NUM_LANES + 1))[:, :n]  # Shape: (block_token, n)
 
   # For position p: lane = p % 128, i = lane // stride, output_j = p // 128
   # input_chunk = i + output_j * stride
