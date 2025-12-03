@@ -38,9 +38,9 @@ def get_dtype_info(x):
   """Get finfo or iinfo for array dtype."""
   dtype = x.dtype
   if jnp.issubdtype(dtype, jnp.floating):
-    return jnp.finfo(x)
+    return jnp.finfo(dtype)
   elif jnp.issubdtype(dtype, jnp.integer):
-    return jnp.iinfo(x)
+    return jnp.iinfo(dtype)
   else:
     raise ValueError('Only int and float supported')
 

@@ -9,7 +9,7 @@ from jax.experimental.pallas import tpu as pltpu
 from tallax.tax.sort import bitonic_sort
 from tallax.tax.bitonic_topk import bitonic_topk_kernel
 from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile
+from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
 def binned_topk(
     logits,
@@ -56,7 +56,7 @@ def binned_topk(
       # We use the idxs list to check identity
       bubble_vals = jnp.where(
           bubble_idxs == bins_topk_idxs[i],
-          jnp.finfo(jnp.float32).min,
+          get_dtype_info(bubble_vals).min,
           bubble_vals
       )
     for i in range(completed_k, k):
@@ -166,7 +166,7 @@ def _compute_packed_top_bins(
 
   bins_topm_vals_ref[token_slice] = jnp.concat([
       jnp.where(
-          indicator, jnp.finfo(jnp.float32).min,
+          indicator, get_dtype_info(bins_topm_vals_ref).min,
           bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
       for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
 
@@ -176,7 +176,7 @@ def _compute_packed_top_bins(
   # Loop over blocks and pack data from active bins
   packed_vals = [jnp.full(
       (block_token, NUM_LANES),
-      jnp.finfo(jnp.float32).min, dtype=jnp.float32
+      get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
 
   stride = NUM_LANES // num_packed_bins  # 128 // 16 = 8
@@ -264,7 +264,7 @@ def dynamic_topk_kernel(
   token_slice = pl.dslice(pid * block_token, block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
-      shape, jnp.finfo(jnp.float32).min, dtype=jnp.float32
+      shape, get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   )
 
   for i in range(block_token):
@@ -282,7 +282,7 @@ def dynamic_topk_kernel(
           bins_topk_vals=[
               bins_topm_vals_ref[
                   token_slice, pl.dslice(i * num_bins, num_bins)
-              ].astype(jnp.float32)
+              ].astype(to_32bit_dtype(logits_ref.dtype))
               for i in range(m)
           ],
           bins_topk_idxs=[
@@ -312,7 +312,7 @@ def dynamic_topk_kernel(
       pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
       num_larger = (
           sum([(v >= pivot) for v in bins_topm_vals[:m - 1]])
-          .astype(jnp.float32)
+          .astype(to_32bit_dtype(logits_ref.dtype))
           .sum(-1)
       )
 
@@ -500,7 +500,7 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), jnp.float32),
+      jax.ShapeDtypeStruct((num_tokens,), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else None,
       jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype) if enable_bin_sorting else None,
   )
@@ -517,7 +517,7 @@ def top_dynamic_k(
 
   # Add scratch shapes for bin sorting if enabled
   scratch_shapes = [
-      pltpu.VMEM((num_tokens, buffer_size), jnp.float32),
+      pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
   ]
