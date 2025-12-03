@@ -108,6 +108,7 @@ def binned_topk(
 
 
 def _compute_packed_top_bins(
+    logits_ref,
     bins_topm_vals_ref,
     active_bins_ref,
     packed_vals_ref,
@@ -322,6 +323,7 @@ def dynamic_topk_kernel(
 
     # m should be 9 for the (5,9) schedule
     _compute_packed_top_bins(
+        logits_ref,
         bins_topm_vals_ref,
         active_bins_ref,
         packed_vals_ref,
