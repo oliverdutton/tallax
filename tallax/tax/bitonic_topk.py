@@ -287,25 +287,20 @@ def bitonic_topk(
             f"bitonic_topk requires num_tokens <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
     # Define output shapes
-    output_shapes = tuple(
+    output_shapes = [
         jax.ShapeDtypeStruct((num_tokens, NUM_LANES), op.dtype)
         for op in operands
-    )
+    ]
     outputs = pl.pallas_call(
         functools.partial(
             bitonic_topk_kernel,
             num_keys=num_keys,
             descending=descending,
         ),
-        in_specs=(tuple(
-            pl.BlockSpec()
-            for _ in operands
-        ),),
+        #in_specs=(tuple(pl.BlockSpec() for _ in operands),),
         out_shape=(output_shapes,),
-        out_specs=(tuple(
-            pl.BlockSpec()
-            for _ in output_shapes
-        ),),
+        
+        #out_specs=([pl.BlockSpec() for _ in output_shapes),),
         grid=(),
         compiler_params=pltpu.CompilerParams(
             vmem_limit_bytes=int(0.9 * 2**27)
