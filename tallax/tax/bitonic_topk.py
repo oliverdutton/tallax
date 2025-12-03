@@ -218,6 +218,11 @@ def bitonic_topk_kernel(
 
     # Convert to sublane transposed format
     # Note: padding handled by convert_to_sublane_sort_format internally
+    
+    # pad in dim0 (if needed)
+    arrs = (pad(in_ref[...], block_shape=(
+        pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1]) for in_ref in in_refs)
+    arrs = (x.astype(jnp.float32) if 
     arrs_tiles = tuple(
         convert_to_sublane_sort_format(in_ref[...].astype(jnp.float32))
         for in_ref in in_refs
