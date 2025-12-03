@@ -217,7 +217,6 @@ def _compute_packed_top_bins(
     sort_refs = [val_ref, idx_ref]
     for sort_ref, overwrite_ref in zip(sort_refs, overwrite_refs, strict=True):
       sort_ref[:,n:n+NUM_LANES] = overwrite_ref[...]
-    # Sort descending by num_gt_k
     bitonic_topk_kernel(
         sort_refs,
         overwrite_refs,
