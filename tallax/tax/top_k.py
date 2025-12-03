@@ -135,7 +135,7 @@ def _compute_packed_top_bins(
     sort_scratch_refs=(
       pltpu.VMEM((block_token, num_bins), jnp.int32),
       pltpu.VMEM((block_token, num_bins), jnp.int32)))
-  def _get_active_bins(sort_scrath_refs):
+  def _get_active_bins(sort_scratch_refs):
     sort_scratch_refs[0][...] = num_gt_k
     sort_scratch_refs[1][...] = jax.lax.broadcasted_iota(
       jnp.int32, (block_token, num_bins), 1)
