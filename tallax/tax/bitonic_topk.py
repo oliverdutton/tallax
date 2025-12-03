@@ -222,18 +222,18 @@ def bitonic_topk_kernel(
     # pad in dim0 (if needed)
     arrs = (pad(in_ref[...], block_shape=(
         pl.cdiv(NUM_LANES * NUM_LANES, shape[1]), shape[1]) for in_ref in in_refs)
-    arrs = (x.astype(jnp.float32) if 
+    arrs = (x.astype(to_32bit_dtype(x.dtype) for x in arrs)
     arrs_tiles = tuple(
-        convert_to_sublane_sort_format(in_ref[...].astype(jnp.float32))
-        for in_ref in in_refs
+        convert_to_sublane_sort_format(arr)
+        for arr in arrs
     )
 
     # Run bitonic top-k algorithm
-    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=shape)
+    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=arrs[0].shape)
 
     # Convert back from sublane format and write to output
     for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
-        out = convert_from_sublane_sort_format(tiles, shape=(shape[0], NUM_LANES))
+        out = convert_from_sublane_sort_format(tiles, shape=(arrs[0].shape[0], NUM_LANES))[:shape[0]]
         out_ref[...] = out[:out_ref.shape[0]].astype(out_ref.dtype)
 
 
@@ -288,21 +288,11 @@ def bitonic_topk(
         raise ValueError(
             f"bitonic_topk requires num_tokens <= NUM_LANES={NUM_LANES}, got {num_tokens}"
         )
-    operands = tuple(
-        pad(
-            x,
-            block_shape=(NUM_SUBLANES, NUM_LANES),
-            val='min'
-        )
-        for x in operands
-    )
-
     # Define output shapes
     output_shapes = tuple(
         jax.ShapeDtypeStruct((num_tokens, NUM_LANES), op.dtype)
         for op in operands
     )
-
     outputs = pl.pallas_call(
         functools.partial(
             bitonic_topk_kernel,
@@ -324,4 +314,4 @@ def bitonic_topk(
         ),
         interpret=interpret,
     )(operands)[0]
-    return tuple(x[:num_tokens, :k] for x in outputs)
+    return tuple(x[:, :k] for x in outputs)
