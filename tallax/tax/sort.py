@@ -345,12 +345,15 @@ def _compute_subtile_substages(
     ]
 
     slice_shape = ref_slices[0].shape
-    b = slice_shape[0]
-
+    
+    # pad in dim0 (if needed)
+    arrs = (pad(ref_slice[...], block_shape=(
+        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]) if not use_lane_permute else 1, slice_shape[1]) for ref_slice in ref_slices)
+    b = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(
         (split_array_to_tiles if use_lane_permute
          else convert_to_sublane_sort_format),
-        ref_slices
+        arrs
     )
 
     if stage is not None:
@@ -380,7 +383,7 @@ def _compute_subtile_substages(
 
     outs = [
         (join_tiles_to_array(slice_shape, tiles) if use_lane_permute
-         else convert_from_sublane_sort_format(tiles, shape=slice_shape))
+         else convert_from_sublane_sort_format(tiles, shape=(b, slice_shape[1]))[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
 
