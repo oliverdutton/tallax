@@ -180,7 +180,7 @@ def _compute_packed_top_bins(
      
     vals = [logits_ref[..., pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(logits_ref.shape[1] // num_bins)]
     # apply permutation
-    vals = [jnp.take_along_axis(arr, local_perm, axis=1) for tile in vals]
+    vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
     # Pack into positions [bin_level*16 : (bin_level+1)*16]
     index = iota_tile(1)
     for i in range(num_packed_bins):
