@@ -382,8 +382,12 @@ def _compute_subtile_substages(
         )
 
     outs = [
-        (join_tiles_to_array(slice_shape, tiles) if use_lane_permute
-         else convert_from_sublane_sort_format(tiles, shape=(b, slice_shape[1]))[:slice_shape[0]]
+        (join_tiles_to_array(
+        slice_shape, tiles) if use_lane_permute
+         else convert_from_sublane_sort_format(
+        tiles,
+        shape=(b, slice_shape[1])
+        ))[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
 
