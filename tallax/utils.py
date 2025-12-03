@@ -49,7 +49,7 @@ def pad(
     arr: jax.Array,
     block_shape: tuple[int | str, ...] = None,
     prepend: bool | tuple[bool, ...] = False,
-    val = None
+    val = 'max_nan',
 ) -> jax.Array:
   """Pad array to satisfy alignment requirements.
 
@@ -101,10 +101,18 @@ def pad(
       pad_widths.append((0, pad_size))
 
   # Determine padding value
-  if val is None:
-    pad_val = get_dtype_info(arr).max
-    if jnp.issubdtype(arr.dtype, jnp.floating):
-      pad_val = jnp.nan
+  if isinstance(val, str):
+    info = get_dtype_info(arr)
+    if val == 'min':
+      pad_val = info.min
+    elif val == 'max':
+      pad_val = info.max
+    elif val == 'max_nan':
+      pad_val = info.max
+      if jnp.issubdtype(arr.dtype, jnp.floating):
+        pad_val = jnp.nan
+    else:
+      raise ValueError
   else:
     pad_val = val
 
@@ -261,13 +269,13 @@ def create_bit_indicator(bit_position: int, index=None):
 
 def convert_to_sublane_sort_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
+  nelems = arr.shape[0] * arr.shape[1]
+  assert (nelems % NUM_LANES**2) == 0
   arrs = [
       arr[:, i * NUM_LANES:(i + 1) * NUM_LANES]
       for i in range(pl.cdiv(arr.shape[1], NUM_LANES))
   ]
   arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
-  if arr.shape[1] < NUM_LANES:
-    arr = pad(arr, block_shape=(NUM_SUBLANES, 'power_of_2_lanes'))
   tiles = split_array_to_tiles(arr)
   return tiles
 
@@ -276,11 +284,9 @@ def convert_from_sublane_sort_format(tiles, shape):
   """Convert from sublane format back to original layout."""
   b, m = shape
   assert m >= NUM_LANES
-  n = m // NUM_LANES
-  dim1 = len(tiles) * NUM_SUBLANES
-  arr = join_tiles_to_array((NUM_LANES, dim1), tiles) # (128, n*b)
-  if dim1 != n * b:
-    arr = arr[..., :n * b]
+  arr = join_tiles_to_array(
+  (NUM_LANES, (b * m) // NUM_LANES),
+  tiles) # (128, n*b)
   arr = arr.T
   return jnp.concatenate(
       [arr[i * b:(i + 1) * b] for i in range(arr.shape[0] // b)],
