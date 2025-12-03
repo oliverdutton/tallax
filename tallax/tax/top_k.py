@@ -175,7 +175,8 @@ def _compute_packed_top_bins(
     jnp.finfo(jnp.float32).min, dtype=jnp.float32
     ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
 
-  segment_size = NUM_LANES // num_packed_bins  # 128 // 16 = 8
+  segment_size = num_packed_bins  # 16
+  stride = NUM_LANES // num_packed_bins  # 128 // 16 = 8
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
@@ -186,15 +187,17 @@ def _compute_packed_top_bins(
     # Pack into positions based on active bin index
     index = iota_tile(1)
     for i in range(num_packed_bins):
-      # FIXED: Use segment_size instead of num_packed_bins for range check
+      # FIXED: Use stride (NUM_LANES // num_packed_bins) for range check
       pack_mask = (
-          (index >= i * segment_size) &
-          (index < (i + 1) * segment_size) &
+          (index >= i * stride) &
+          (index < (i + 1) * stride) &
           in_range_mask
       )
-      # FIXED: Update each packed_vals[i] individually instead of reassigning entire list
-      for v in vals[i::num_packed_bins]:
-        packed_vals[i] = jnp.where(pack_mask, v, packed_vals[i])
+      # FIXED: Use stride in vals iterator to match packed_vals length
+      packed_vals = [
+          jnp.where(pack_mask, p, curr)
+          for p, curr in zip(vals[i::stride], packed_vals, strict=False)
+      ]
 
   packed_vals_ref[token_slice] = jnp.concat(packed_vals, axis=1).astype(packed_vals_ref.dtype)
 
