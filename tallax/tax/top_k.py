@@ -131,11 +131,10 @@ def _compute_packed_top_bins(
     num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
   # Use bitonic_sort descending to get bin indices ordered by contribution count
-  @pl.run_scoped(
+  @functools.partial(pl.run_scoped,
     sort_scratch_refs=(
       pltpu.VMEM((block_token, num_bins), jnp.int32),
-      pltpu.VMEM((block_token, num_bins), jnp.int32),
-  ))
+      pltpu.VMEM((block_token, num_bins), jnp.int32)))
   def _get_active_bins(sort_scrath_refs):
     sort_scratch_refs[0][...] = num_gt_k
     sort_scratch_refs[1][...] = jax.lax.broadcasted_iota(
