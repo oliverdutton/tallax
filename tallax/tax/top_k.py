@@ -111,15 +111,18 @@ def _compute_packed_top_bins(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     packed_bins_ref,
-    packed_vals_ref,
     *,
     token_slice,
     block_token: int,
     num_bins: int,
     m: int,
+    max_k: int,
 ):
   """Packs top bins into output format."""
-  num_packed_bins = 16
+
+  # Derive num_packed_bins from max_k and m
+  # Compute smallest power of 2 >= ceil(max_k / (m - 1))
+  num_packed_bins = 2**log2(pl.cdiv(max_k, m - 1))
 
   # Count contribution of each bin to top-k
   # bins_topm_vals has shape (m, block_token, num_bins)
@@ -232,18 +235,17 @@ def dynamic_topk_kernel(
     valid_ref,
     max_depth_ref,
     cutoff_vals_ref,
-    packed_bins_ref,
-    packed_vals_ref,
     # scratch
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     termination_flag_ref,
+    packed_bins_ref,
     *,
     max_k: int,
     num_bins: int,
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
-    enable_bin_sorting: bool,
+    guarantee_convergence: bool,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -338,26 +340,24 @@ def dynamic_topk_kernel(
       def _():
         termination_flag_ref[0] = 0
 
-  # Bin sorting optimization for rare non-convergence cases
-  @pl.when(enable_bin_sorting & (termination_flag_ref[0] == 0))
+  # Bin packing optimization for non-convergence cases
+  m_final = bins_topm_schedule[-1]
+  @pl.when(guarantee_convergence & (m_final != max_k) & (termination_flag_ref[0] == 0))
   def _():
-    # This optimization applies when:
-    # - bin_schedule = (5,9), k=128, num_bins=256
-    # - Not converged at iteration 9 (checking k up to 8)
-    # - At most 16 bins contain values contributing to top-k
-    # - Logical: k/(m-1) = 128/8 = 16 max active bins
+    # This optimization applies when guarantee_convergence is enabled but
+    # we haven't fully converged (m_final != max_k) and termination criterion not met.
+    # Packs the most active bins to help converge.
 
-    # m should be 9 for the (5,9) schedule
     _compute_packed_top_bins(
         logits_ref,
         bins_topm_vals_ref,
         bins_topm_idxs_ref,
         packed_bins_ref,
-        packed_vals_ref,
         token_slice=token_slice,
         block_token=block_token,
         num_bins=num_bins,
-        m=bins_topm_schedule[-1]
+        m=m_final,
+        max_k=max_k
     )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
@@ -403,7 +403,6 @@ def dynamic_topk_kernel(
         "bins_topm_unroll",
         "bins_topm_schedule",
         "guarantee_convergence",
-        "enable_bin_sorting",
         "interpret"
     ),
 )
@@ -416,7 +415,6 @@ def top_dynamic_k(
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
-    enable_bin_sorting: bool = False,
     interpret: bool = False,
 ):
   """
@@ -439,24 +437,21 @@ def top_dynamic_k(
       bins_topm_schedule: Increasing sequence of m values for incremental top-m search.
           If None, automatically computed based on convergence probability thresholds.
       guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
-          (default: False).
-      enable_bin_sorting: If True, enables bin sorting optimization for rare non-convergence
-          cases. Requires bins_topm_schedule=(0,5,9), k=128, num_bins=256 (default: False).
-          Returns additional outputs when enabled.
+          and enables bin packing optimization for rare non-convergence cases (default: False).
       interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
 
   Returns:
-      When enable_bin_sorting=False:
+      When guarantee_convergence=False:
           Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
           - valid: Boolean indicating if algorithm fully converged.
           - depths: Per-token convergence depth of shape [num_tokens].
           - cutoff_vals: Per-token pivot values of shape [num_tokens].
-      When enable_bin_sorting=True:
-          Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_vals):
-          - sorted_bins: Bin indices sorted by contribution count, shape [num_tokens, 128].
-          - packed_vals: Packed values from top 16 bins, shape [num_tokens, 2048].
+      When guarantee_convergence=True:
+          Tuple of (topk_vals, topk_idxs):
+          - topk_vals: Top-k values of shape [num_tokens, max_k].
+          - topk_idxs: Top-k indices of shape [num_tokens, max_k].
   """
   num_tokens, vocab_size = logits.shape
 
@@ -464,16 +459,6 @@ def top_dynamic_k(
     raise ValueError("num_tokens must be divisible by block_token")
 
   k = jnp.broadcast_to(k, (num_tokens,))
-
-  # Validate bin sorting configuration
-  if enable_bin_sorting:
-    if bins_topm_schedule is None:
-      raise ValueError("bins_topm_schedule must be specified when enable_bin_sorting=True")
-    m = bins_topm_schedule[-1]
-    # This assertion is the reason why bin sorting works:
-    # At most k//(m-1) bins can contribute to top-k
-    assert 16 >= max_k // (m - 1), \
-      f"Bin sorting requires 16 >= k//(m-1), got {max_k}//{m-1} = {max_k // (m - 1)}"
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -493,15 +478,12 @@ def top_dynamic_k(
   # Updated padded size calculation using num_bins
   padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
-  num_packed_bins = 16
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if enable_bin_sorting else None,
-      jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype) if enable_bin_sorting else None,
   )
 
   output_specs = (
@@ -510,15 +492,14 @@ def top_dynamic_k(
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec() if enable_bin_sorting else None,
-      pl.BlockSpec() if enable_bin_sorting else None,
   )
 
-  # Add scratch shapes for bin sorting if enabled
+  # Add scratch shapes
   scratch_shapes = [
       pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
+      pltpu.VMEM((num_tokens, NUM_LANES), jnp.int32),  # packed_bins
   ]
 
   outputs = pl.pallas_call(
@@ -528,7 +509,7 @@ def top_dynamic_k(
           num_bins=num_bins,
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
-          enable_bin_sorting=enable_bin_sorting,
+          guarantee_convergence=guarantee_convergence,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
@@ -543,14 +524,13 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_vals = outputs
+  topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
   topk_vals, topk_idxs = (x[:,:max_k] for x in (topk_vals, topk_idxs))
   valid = valid.squeeze().astype(bool)
 
-  if enable_bin_sorting:
-    return (topk_vals, topk_idxs, valid,
-            depths, cutoff_vals, sorted_bins, packed_vals)
+  if guarantee_convergence:
+    return topk_vals, topk_idxs
   return topk_vals, topk_idxs, valid, depths, cutoff_vals
 
 
@@ -605,4 +585,4 @@ def top_k(
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
     interpret=interpret,
-  )[:2]
+  )
