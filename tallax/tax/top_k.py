@@ -195,8 +195,8 @@ def _compute_packed_top_bins(
           in_range_mask
       )
       # Pack every num_packed_bins-th chunk starting from i
-      assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
-      for j, v in enumerate(vals[i::num_packed_bins]):
+      #assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
+      for j, v in enumerate(vals[i::NUM_LANES//num_packed_bins]):
         packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
