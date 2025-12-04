@@ -179,7 +179,6 @@ def _compute_packed_top_bins(
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
 
-  stride = NUM_LANES // num_packed_bins  # 128 // 16 = 8
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
@@ -189,22 +188,22 @@ def _compute_packed_top_bins(
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
     # Pack into positions based on active bin index
     index = iota_tile(1)
-    for i in range(num_packed_bins):
-      # FIXED: Use stride (NUM_LANES // num_packed_bins) for range check
+    for i in range(NUM_LANES // num_packed_bins):
       pack_mask = (
-          (index >= i * stride) &
-          (index < (i + 1) * stride) &
+          (index >= i * num_packed_bins) &
+          (index < (i + 1) * num_packed_bins) &
           in_range_mask
       )
-      # FIXED: Use stride in vals iterator to match packed_vals length
-      assert (len(packed_vals) - len(vals[i::stride])) in (0,1)
-      for j, v in enumerate(vals[i::stride]):
+      # Pack every num_packed_bins-th chunk starting from i
+      #assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
+      for j, v in enumerate(vals[i::NUM_LANES//num_packed_bins]):
         packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
+
   packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
-  (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
+    (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
   dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
 
