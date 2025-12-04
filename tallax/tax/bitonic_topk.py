@@ -247,8 +247,13 @@ this avoids any ops on then during the phase
       
     
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
-      arrs_tiles, remainder_arrs_tiles = transpose_list_of_lists([
+      
+      has_remainder = ((len(arrs_tiles[0])%2) != 0)
+      print('pre lengths', len(arrs_tiles[0]))
+      if has_remainder:
+        arrs_tiles, remainder_arrs_tiles = transpose_list_of_lists([
         split_actives(x) for x in arrs_tiles])
+        print("lengths", len(arrs_tiles[0]), len(remainder_arrs_tiles[0]))
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=log_lanes,
@@ -265,8 +270,9 @@ this avoids any ops on then during the phase
           b=b,
           num_keys=num_keys
       )
-      
-      arrs_tiles = [merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
+      if has_remainder:
+        arrs_tiles = [merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
+        print("lengths merged", len(arrs_tiles[0]),)
 
     # Progressive intra-tile merging with lane 
     for i in range(num_intra_merges)[::-1]:
