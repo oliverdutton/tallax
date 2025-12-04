@@ -117,9 +117,13 @@ def _compute_packed_top_bins(
     block_token: int,
     num_bins: int,
     m: int,
-    num_packed_bins: int,
+    max_k: int,
 ):
   """Packs top bins into output format."""
+
+  # Derive num_packed_bins from max_k and m
+  # Compute smallest power of 2 >= ceil(max_k / (m - 1))
+  num_packed_bins = 2**log2(pl.cdiv(max_k, m - 1))
 
   # Count contribution of each bin to top-k
   # bins_topm_vals has shape (m, block_token, num_bins)
@@ -244,7 +248,6 @@ def dynamic_topk_kernel(
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
     enable_bin_sorting: bool,
-    num_packed_bins: int,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -359,7 +362,7 @@ def dynamic_topk_kernel(
         block_token=block_token,
         num_bins=num_bins,
         m=bins_topm_schedule[-1],
-        num_packed_bins=num_packed_bins
+        max_k=max_k
     )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
@@ -483,21 +486,20 @@ def top_dynamic_k(
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
   bins_topm_schedule = (0,) + bins_topm_schedule
 
-  # Derive num_packed_bins from schedule when guarantee_convergence is True
-  m_final = bins_topm_schedule[-1]
-  if guarantee_convergence and m_final != max_k:
-    # Compute smallest power of 2 >= ceil(max_k / (m_final - 1))
-    num_packed_bins = 2**log2(pl.cdiv(max_k, m_final - 1))
-  else:
-    # Default value when not used
-    num_packed_bins = 16
-
   # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
 
   # Updated padded size calculation using num_bins
   padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
+
+  # Compute num_packed_bins only when needed for output shape with bin sorting
+  if enable_bin_sorting:
+    m_final = bins_topm_schedule[-1]
+    # Compute smallest power of 2 >= ceil(max_k / (m_final - 1))
+    num_packed_bins = 2**log2(pl.cdiv(max_k, m_final - 1))
+  else:
+    num_packed_bins = 16  # Default (unused)
 
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
@@ -534,7 +536,6 @@ def top_dynamic_k(
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
           enable_bin_sorting=enable_bin_sorting,
-          num_packed_bins=num_packed_bins,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
