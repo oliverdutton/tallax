@@ -20,9 +20,16 @@ for (b, n) shape input
 The total number of merges is log2(n // num_lanes)
 The final (NUM_LANES // b) merges are intra permutations
 
+if 16*11 tiles -> first -4 to 7 then -2 to 5 then -2 to 3 then -1 to 2 then -1 to 1
+
+that 11,7,5,3,2,1 - inefficient.
+combine in halves until < 32 left then combine 
+176 to 88 to 44 to 22 !to 16!
+
 """
 
 import functools
+from itertools import chain 
 import math
 from collections.abc import Sequence
 
@@ -50,6 +57,30 @@ from tallax.tax.sort import (
     _compute_start_index,
 )
 
+def flat(xs):
+  return list(chain.from_iterable(xs))
+
+def split_rows(tiles):
+  num_rows = NUM_LANES // NUM_SUBLANES
+  num_cols = len(tiles) // num_rows
+  return [tiles[row*num_cols:(row+1)*num_cols] for row in range(num_rows)]
+
+
+def split_actives(tiles):
+  num_rows = NUM_LANES // NUM_SUBLANES
+  num_cols = len(tiles) // num_rows
+  num_active_cols = 2 * (num_cols // 2)  
+  active = flat((
+    x[:num_active_cols] for x in split_rows(tiles)
+  ))
+  remainder = flat((
+    x[num_active_cols:] for x in split_rows(tiles)
+  ))
+  return active, remainder
+
+def merge_remainder(merged, remainder):
+  return flat(map(flat, zip(*map(split_rows, (merged, remainder)))))
+
 
 def _compute_padded_shape(dim0: int, dim1: int) -> tuple[int, int]:
     """Compute padded shape for bitonic top-k.
@@ -68,6 +99,9 @@ def _compute_padded_shape(dim0: int, dim1: int) -> tuple[int, int]:
     Examples:
     - (8, 256) -> (64, 256): prod = 16384 = NUM_LANES**2
     - (8, 8320) -> (8, 10240): prod = 81920 = 5 * NUM_LANES**2 (pad dim1, not dim0!)
+    
+    dim0 must be a power of 2
+    dim1*dim0 must be a multiple of NUM_LANES^2 
 
     Args:
         dim0: First dimension size
@@ -124,7 +158,9 @@ def _merge_max_crosstile(
   num_tiles = len(arrs_tiles[0])
   separation = max(1, b // NUM_LANES)  # Tiles per token block row
   outs_tiles = [[] for t in arrs_tiles]
-
+  
+  # round down to nearest power of 2
+  # so if 48 tiles, this becomes 32 active which merge. and final 16 untouched
   for i in range(num_tiles // 2):
     idx = _compute_start_index(i, separation=separation)
     lefts, rights = (
@@ -135,14 +171,7 @@ def _merge_max_crosstile(
     for j, (o_left, _) in enumerate(_compare(
         lefts, rights, is_descending=True, num_keys=num_keys
     )):
-      outs_tiles[j].append(o_left)
-
-  # Handle odd number of tiles - add the remainder tile directly
-  if num_tiles % 2 == 1:
-    remainder_idx = num_tiles - 1
-    for j, arr in enumerate(arrs_tiles):
-      outs_tiles[j].append(arr[remainder_idx])
-
+      outs_tiles[j].append(o_left)  
   return outs_tiles
 
 
@@ -192,7 +221,34 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
       # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
       # so different tile sets have different orders.
       # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
+      '''
+      take b=32
+tile 0 is 00000,128,128,128..256,256...,384,384
+plus arange(8) in dim1
+tile 1 is 888888,136,136,....
+
+merge stage is 9 (7+log2(4))
+hmmmm
+
+take (dim0, dim1), dim0 is power of 2
+NUM_LANES**2 // dim0 makes a portion in dim1
+
+
+for (8,8192+2048) its (16,5)
+
+during the merge phases we're reducing down to 16
+take to log2(num_cols) for the merge phase
+use np.array(vals, dtype=object)?
+take out them before the merge phase, then add back afterwards
+
+if num cols is even - fine, continue
+this avoids any ops on then during the phase
+      '''
+      
+    
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
+      arrs_tiles, remainder_arrs_tiles = transpose_list_of_lists([
+        split_actives(x) for x in arrs_tiles])
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=log_lanes,
@@ -209,55 +265,57 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
           b=b,
           num_keys=num_keys
       )
+      
+      arrs_tiles = [merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
 
     # Progressive intra-tile merging with lane 
     for i in range(num_intra_merges)[::-1]:
-        distance = b * (2**i)
-        # Calculate stage based on current merge size
-        # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)        
-        arrs_tiles = _compute_subtile_substages_inner(
-          arrs_tiles,
-          num_substages=log_lanes,
-          stage=log_lanes+i,
-          dim1_offset=0,
-          b=b,
-          num_keys=num_keys,
-          use_lane_permute=False,
-        )
+      distance = b * (2**i)
+      # Calculate stage based on current merge size
+      # Stage = log2(2 * distance * b / NUM_LANES * NUM_LANES) = log2(2 * distance)        
+      arrs_tiles = _compute_subtile_substages_inner(
+        arrs_tiles,
+        num_substages=log_lanes,
+        stage=log_lanes+i,
+        dim1_offset=0,
+        b=b,
+        num_keys=num_keys,
+        use_lane_permute=False,
+      )
 
-        # Create permutation indices for tiles using iota_tile
-        permutation = jnp.bitwise_xor(iota_tile(1), distance)
+      # Create permutation indices for tiles using iota_tile
+      permutation = jnp.bitwise_xor(iota_tile(1), distance)
 
-        # Apply permutation to all tiles
-        arrs_tiles_permuted = jax.tree.map(
-          lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
-          arrs_tiles
-        )
+      # Apply permutation to all tiles
+      arrs_tiles_permuted = jax.tree.map(
+        lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
+        arrs_tiles
+      )
 
-        # Compare and merge with permuted values
-        outs_tiles = [[] for _ in arrs_tiles]
-        for _, (lefts, rights) in enumerate(zip(
-              *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-              strict=True
+      # Compare and merge with permuted values
+      outs_tiles = [[] for _ in arrs_tiles]
+      for _, (lefts, rights) in enumerate(zip(
+            *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+            strict=True
+        )):
+          for j, (o, _) in enumerate(_compare(
+              lefts, rights,
+              is_descending=True,
+              num_keys=num_keys
           )):
-            for j, (o, _) in enumerate(_compare(
-                lefts, rights,
-                is_descending=True,
-                num_keys=num_keys
-            )):
-              outs_tiles[j].append(o)
-        arrs_tiles = outs_tiles
+            outs_tiles[j].append(o)
+      arrs_tiles = outs_tiles
 
     # Final sort: convert bitonic sequence to fully descending order
     # Use dim1_offset=2**7 to ensure descending direction
     arrs_tiles = _compute_subtile_substages_inner(
-        arrs_tiles,
-        num_substages=log_lanes,
-        stage=log_lanes,
-        dim1_offset=NUM_LANES,
-        b=b,
-        num_keys=num_keys,
-        use_lane_permute=False,
+      arrs_tiles,
+      num_substages=log_lanes,
+      stage=log_lanes,
+      dim1_offset=NUM_LANES,
+      b=b,
+      num_keys=num_keys,
+      use_lane_permute=False,
     )
     return arrs_tiles
 
@@ -290,10 +348,7 @@ def bitonic_topk_kernel(
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     # Convert to sublane transposed format
-    arrs_tiles = [
-        convert_to_sublane_sort_format(arr)
-        for arr in arrs
-    ]
+    arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
 
     # Run bitonic top-k algorithm
     arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=arrs[0].shape)
@@ -322,7 +377,7 @@ def bitonic_topk(
     format for maximum TPU efficiency. Supports multiple operands like sort().
 
     Supports arbitrary input shapes - padding is handled automatically:
-    - For small inputs (prod < NUM_LANES²): pads dim0 to make prod = NUM_LANES²
+    - For small inputs (prod < NUM_LANES2): pads dim0 to make prod = NUM_LANES2
     - For larger inputs: pads both dims minimally to satisfy alignment
 
     Args:
