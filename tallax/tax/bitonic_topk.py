@@ -248,7 +248,7 @@ this avoids any ops on then during the phase
     
       merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
       
-      has_remainder = ((len(arrs_tiles[0])%2) != 0)
+      has_remainder = ((len(arrs_tiles[0][::16])%2) != 0)
       print('pre lengths', len(arrs_tiles[0]))
       if has_remainder:
         arrs_tiles, remainder_arrs_tiles = transpose_list_of_lists([
