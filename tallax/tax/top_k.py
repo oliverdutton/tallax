@@ -117,9 +117,9 @@ def _compute_packed_top_bins(
     block_token: int,
     num_bins: int,
     m: int,
+    num_packed_bins: int,
 ):
   """Packs top bins into output format."""
-  num_packed_bins = 16
 
   # Count contribution of each bin to top-k
   # bins_topm_vals has shape (m, block_token, num_bins)
@@ -244,6 +244,7 @@ def dynamic_topk_kernel(
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
     enable_bin_sorting: bool,
+    num_packed_bins: int,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -357,7 +358,8 @@ def dynamic_topk_kernel(
         token_slice=token_slice,
         block_token=block_token,
         num_bins=num_bins,
-        m=bins_topm_schedule[-1]
+        m=bins_topm_schedule[-1],
+        num_packed_bins=num_packed_bins
     )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
@@ -404,6 +406,7 @@ def dynamic_topk_kernel(
         "bins_topm_schedule",
         "guarantee_convergence",
         "enable_bin_sorting",
+        "num_packed_bins",
         "interpret"
     ),
 )
@@ -417,6 +420,7 @@ def top_dynamic_k(
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
     enable_bin_sorting: bool = False,
+    num_packed_bins: int = 16,
     interpret: bool = False,
 ):
   """
@@ -443,6 +447,9 @@ def top_dynamic_k(
       enable_bin_sorting: If True, enables bin sorting optimization for rare non-convergence
           cases. Requires bins_topm_schedule=(0,5,9), k=128, num_bins=256 (default: False).
           Returns additional outputs when enabled.
+      num_packed_bins: Number of packed bins for bin sorting optimization (default: 16).
+          Must be a power of 2 in range [1, 64]. Must satisfy:
+          num_packed_bins >= k // (block_topm_schedule[-1] - 1) to guarantee top-k coverage.
       interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
 
   Returns:
@@ -465,6 +472,14 @@ def top_dynamic_k(
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
+  # Validate num_packed_bins
+  if num_packed_bins < 1 or num_packed_bins > 64:
+    raise ValueError(f"num_packed_bins must be in range [1, 64], got {num_packed_bins}")
+
+  # Check if num_packed_bins is a power of 2
+  if (num_packed_bins & (num_packed_bins - 1)) != 0:
+    raise ValueError(f"num_packed_bins must be a power of 2, got {num_packed_bins}")
+
   # Validate bin sorting configuration
   if enable_bin_sorting:
     if bins_topm_schedule is None:
@@ -472,8 +487,8 @@ def top_dynamic_k(
     m = bins_topm_schedule[-1]
     # This assertion is the reason why bin sorting works:
     # At most k//(m-1) bins can contribute to top-k
-    assert 16 >= max_k // (m - 1), \
-      f"Bin sorting requires 16 >= k//(m-1), got {max_k}//{m-1} = {max_k // (m - 1)}"
+    assert num_packed_bins >= max_k // (m - 1), \
+      f"Bin sorting requires num_packed_bins >= k//(m-1), got {num_packed_bins} but need >= {max_k // (m - 1)}"
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -486,6 +501,17 @@ def top_dynamic_k(
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
   bins_topm_schedule = (0,) + bins_topm_schedule
 
+  # Validate that num_packed_bins guarantees top-k coverage
+  m_final = bins_topm_schedule[-1]
+  if m_final > 1:
+    min_required_bins = max_k // (m_final - 1)
+    if num_packed_bins < min_required_bins:
+      raise ValueError(
+        f"num_packed_bins must be >= k // (block_topm_schedule[-1] - 1) to guarantee top-k coverage. "
+        f"Got num_packed_bins={num_packed_bins}, but need at least {min_required_bins} "
+        f"(k={max_k}, m={m_final})"
+      )
+
   # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
@@ -493,7 +519,6 @@ def top_dynamic_k(
   # Updated padded size calculation using num_bins
   padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
-  num_packed_bins = 16
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
@@ -529,6 +554,7 @@ def top_dynamic_k(
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
           enable_bin_sorting=enable_bin_sorting,
+          num_packed_bins=num_packed_bins,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
@@ -562,6 +588,7 @@ def top_dynamic_k(
         "num_bins",
         "bins_topm_unroll",
         "bins_topm_schedule",
+        "num_packed_bins",
         "interpret"
     ),
 )
@@ -572,6 +599,7 @@ def top_k(
     num_bins: int = NUM_LANES,
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
+    num_packed_bins: int = 16,
     interpret: bool = False,
 ):
   """
@@ -588,6 +616,9 @@ def top_k(
       bins_topm_unroll: Loop unroll factor for inner loop (default: 32).
       bins_topm_schedule: Optional custom search schedule. If None, automatically
           computed.
+      num_packed_bins: Number of packed bins for bin sorting optimization (default: 16).
+          Must be a power of 2 in range [1, 64]. Must satisfy:
+          num_packed_bins >= k // (block_topm_schedule[-1] - 1) to guarantee top-k coverage.
       interpret: If True, run in CPU interpret mode (default: False).
 
   Returns:
@@ -604,5 +635,6 @@ def top_k(
     bins_topm_unroll=bins_topm_unroll,
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
+    num_packed_bins=num_packed_bins,
     interpret=interpret,
   )[:2]
