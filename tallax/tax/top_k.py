@@ -236,12 +236,12 @@ def dynamic_topk_kernel(
     valid_ref,
     max_depth_ref,
     cutoff_vals_ref,
-    packed_bins_ref,
-    packed_vals_ref,
     # scratch
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     termination_flag_ref,
+    packed_bins_ref,
+    packed_vals_ref,
     *,
     max_k: int,
     num_bins: int,
@@ -441,21 +441,20 @@ def top_dynamic_k(
           If None, automatically computed based on convergence probability thresholds.
       guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
           and enables bin packing optimization for rare non-convergence cases (default: False).
-          When enabled and not fully converged, returns additional outputs.
       interpret: If True, run in CPU interpret mode instead of TPU compilation (default: False).
 
   Returns:
-      When guarantee_convergence=False or fully converged:
+      When guarantee_convergence=False:
           Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals):
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
           - valid: Boolean indicating if algorithm fully converged.
           - depths: Per-token convergence depth of shape [num_tokens].
           - cutoff_vals: Per-token pivot values of shape [num_tokens].
-      When guarantee_convergence=True and not fully converged (m_final != max_k):
-          Tuple of (topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_vals):
-          - sorted_bins: Bin indices sorted by contribution count, shape [num_tokens, 128].
-          - packed_vals: Packed values from active bins, shape varies.
+      When guarantee_convergence=True:
+          Tuple of (topk_vals, topk_idxs):
+          - topk_vals: Top-k values of shape [num_tokens, max_k].
+          - topk_idxs: Top-k indices of shape [num_tokens, max_k].
   """
   num_tokens, vocab_size = logits.shape
 
@@ -486,7 +485,7 @@ def top_dynamic_k(
   m_final = bins_topm_schedule[-1]
   use_bin_packing = guarantee_convergence and (m_final != max_k)
 
-  # Compute num_packed_bins only when needed for output shape with bin packing
+  # Compute num_packed_bins only when needed for scratch shapes with bin packing
   if use_bin_packing:
     # Compute smallest power of 2 >= ceil(max_k / (m_final - 1))
     num_packed_bins = 2**log2(pl.cdiv(max_k, m_final - 1))
@@ -499,8 +498,6 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, NUM_LANES), jnp.int32) if use_bin_packing else None,
-      jax.ShapeDtypeStruct((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype) if use_bin_packing else None,
   )
 
   output_specs = (
@@ -509,15 +506,15 @@ def top_dynamic_k(
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec() if use_bin_packing else None,
-      pl.BlockSpec() if use_bin_packing else None,
   )
 
-  # Add scratch shapes for bin sorting if enabled
+  # Add scratch shapes
   scratch_shapes = [
       pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
+      pltpu.VMEM((num_tokens, NUM_LANES), jnp.int32),  # packed_bins
+      pltpu.VMEM((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype),  # packed_vals
   ]
 
   outputs = pl.pallas_call(
@@ -542,14 +539,13 @@ def top_dynamic_k(
       ),
       interpret=interpret,
   )(logits, k)
-  topk_vals, topk_idxs, valid, depths, cutoff_vals, sorted_bins, packed_vals = outputs
+  topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
   topk_vals, topk_idxs = (x[:,:max_k] for x in (topk_vals, topk_idxs))
   valid = valid.squeeze().astype(bool)
 
-  if use_bin_packing:
-    return (topk_vals, topk_idxs, valid,
-            depths, cutoff_vals, sorted_bins, packed_vals)
+  if guarantee_convergence:
+    return topk_vals, topk_idxs
   return topk_vals, topk_idxs, valid, depths, cutoff_vals
 
 
@@ -604,4 +600,4 @@ def top_k(
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
     interpret=interpret,
-  )[:2]
+  )
