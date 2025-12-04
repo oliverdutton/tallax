@@ -386,7 +386,8 @@ def _compute_subtile_substages(
         slice_shape, tiles) if use_lane_permute
          else convert_from_sublane_sort_format(
         tiles,
-        shape=(b, slice_shape[1])
+        dim0=b,
+        b=b
         ))[:slice_shape[0]]
         for tiles in arrs_tiles
     ]

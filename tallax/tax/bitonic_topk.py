@@ -231,7 +231,7 @@ def bitonic_topk_kernel(
 
     # Convert back from sublane format and write to output
     for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
-        out = convert_from_sublane_sort_format(tiles, shape=(arrs[0].shape[0], (len(tiles)*NUM_SUBLANES*NUM_LANES)//arrs[0].shape[0]))[:shape[0],:NUM_LANES]
+        out = convert_from_sublane_sort_format(tiles, dim0=arrs[0].shape[0], b=arrs[0].shape[0])[:shape[0],:NUM_LANES]
         out_ref[...] = out[:out_ref.shape[0]].astype(out_ref.dtype)
 
 
