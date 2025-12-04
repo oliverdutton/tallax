@@ -179,7 +179,6 @@ def _compute_packed_top_bins(
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
 
-  stride = NUM_LANES // num_packed_bins  # 128 // 16 = 8
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
@@ -189,11 +188,10 @@ def _compute_packed_top_bins(
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
     # Pack into positions based on active bin index
     index = iota_tile(1)
-    for i in range(num_packed_bins):
-      # Each active bin i gets lanes [i*stride, (i+1)*stride)
+    for i in range(NUM_LANES // num_packed_bins):
       pack_mask = (
-          (index >= i * stride) &
-          (index < (i + 1) * stride) &
+          (index >= i * num_packed_bins) &
+          (index < (i + 1) * num_packed_bins) &
           in_range_mask
       )
       # Pack every num_packed_bins-th chunk starting from i
@@ -204,23 +202,8 @@ def _compute_packed_top_bins(
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
 
-  # Compute bin indices for packed values
-  # The packing uses vals[i::num_packed_bins], so input chunk = i + output_j * num_packed_bins
-  # where i = lane // stride and output_j = position // NUM_LANES
-  stride = NUM_LANES // num_packed_bins
-
-  # packed_bins_ref already has the repeating pattern across 128 lanes, just tile it
-  bin_indices_full = jnp.tile(packed_bins_ref[token_slice], (1, n // NUM_LANES + 1))[:, :n]  # Shape: (block_token, n)
-
-  # For position p: lane = p % 128, i = lane // stride, output_j = p // 128
-  # input_chunk = i + output_j * num_packed_bins
-  # vocab_index = input_chunk * num_bins + bin_index
-  p = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
-  lane = p % NUM_LANES
-  i = lane // stride
-  output_j = p // NUM_LANES
-  input_chunk = i + output_j * num_packed_bins
-  packed_idxs = input_chunk * num_bins + bin_indices_full
+  packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
+    (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
   dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
 
