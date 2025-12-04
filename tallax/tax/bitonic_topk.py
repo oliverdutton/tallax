@@ -251,8 +251,10 @@ this avoids any ops on then during the phase
       has_remainder = ((len(arrs_tiles[0][::16])%2) != 0)
       print('pre lengths', len(arrs_tiles[0]))
       if has_remainder:
-        arrs_tiles, remainder_arrs_tiles = transpose_list_of_lists([
-        split_actives(x) for x in arrs_tiles])
+        remainder_arrs_tiles = [
+        split_actives(x)[1] for x in arrs_tiles]
+        arrs_tiles = [
+        split_actives(x)[0] for x in arrs_tiles]
         print("lengths", len(arrs_tiles[0]), len(remainder_arrs_tiles[0]))
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
