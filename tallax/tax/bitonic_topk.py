@@ -351,7 +351,7 @@ def bitonic_topk_kernel(
     padded_dim0, padded_dim1 = _compute_padded_shape(shape[0], shape[1])
 
     # Pad both dimensions if needed
-    arrs = [pad(in_ref[...], block_shape=(padded_dim0, padded_dim1))
+    arrs = [pad(in_ref[...], block_shape=(padded_dim0, padded_dim1), val='min' if descending else 'max')
             for in_ref in in_refs]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
