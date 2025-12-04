@@ -190,22 +190,22 @@ def _compute_packed_top_bins(
     # Pack into positions based on active bin index
     index = iota_tile(1)
     for i in range(num_packed_bins):
-      # FIXED: Use stride (NUM_LANES // num_packed_bins) for range check
+      # Each active bin i gets lanes [i*stride, (i+1)*stride)
       pack_mask = (
           (index >= i * stride) &
           (index < (i + 1) * stride) &
           in_range_mask
       )
-      # FIXED: Use stride in vals iterator to match packed_vals length
-      assert (len(packed_vals) - len(vals[i::stride])) in (0,1)
-      for j, v in enumerate(vals[i::stride]):
+      # Pack every num_packed_bins-th chunk starting from i
+      assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
+      for j, v in enumerate(vals[i::num_packed_bins]):
         packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
 
   # Compute bin indices for packed values
-  # The packing uses vals[i::stride], so input chunk = i + output_j * stride
+  # The packing uses vals[i::num_packed_bins], so input chunk = i + output_j * num_packed_bins
   # where i = lane // stride and output_j = position // NUM_LANES
   stride = NUM_LANES // num_packed_bins
 
@@ -213,13 +213,13 @@ def _compute_packed_top_bins(
   bin_indices_full = jnp.tile(packed_bins_ref[token_slice], (1, n // NUM_LANES + 1))[:, :n]  # Shape: (block_token, n)
 
   # For position p: lane = p % 128, i = lane // stride, output_j = p // 128
-  # input_chunk = i + output_j * stride
+  # input_chunk = i + output_j * num_packed_bins
   # vocab_index = input_chunk * num_bins + bin_index
   p = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
   lane = p % NUM_LANES
   i = lane // stride
   output_j = p // NUM_LANES
-  input_chunk = i + output_j * stride
+  input_chunk = i + output_j * num_packed_bins
   packed_idxs = input_chunk * num_bins + bin_indices_full
   dim1_size = 2**log2(n + NUM_LANES)
   overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
