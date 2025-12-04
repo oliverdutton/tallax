@@ -280,8 +280,9 @@ def convert_to_sublane_sort_format(arr):
   return tiles
 
 
-def convert_from_sublane_sort_format(tiles, dim0, b):
+def convert_from_sublane_sort_format(tiles, dim0):
   """Convert from sublane format back to original layout."""
+  b = dim0
   m = (len(tiles) * NUM_SUBLANES * NUM_LANES) // b
   assert m >= NUM_LANES
   arr = join_tiles_to_array(
