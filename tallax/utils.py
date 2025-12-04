@@ -282,15 +282,13 @@ def convert_to_sublane_sort_format(arr):
 
 def convert_from_sublane_sort_format(tiles, dim0):
   """Convert from sublane format back to original layout."""
-  b = dim0
-  m = (len(tiles) * NUM_SUBLANES * NUM_LANES) // b
-  assert m >= NUM_LANES
+  dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
   arr = join_tiles_to_array(
-      (NUM_LANES, (b * m) // NUM_LANES),
+      (NUM_LANES, (dim0 * dim1) // NUM_LANES),
       tiles) # (128, n*b)
   arr = arr.T
   return jnp.concatenate(
-      [arr[i * b:(i + 1) * b] for i in range(arr.shape[0] // b)],
+      [arr[i * dim0:(i + 1) * dim0] for i in range(arr.shape[0] // dim0)],
       axis=1
   )
 
