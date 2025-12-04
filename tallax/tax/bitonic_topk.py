@@ -76,7 +76,7 @@ def split_actives(tiles):
   remainder = flat((
     x[num_active_cols:] for x in split_rows(tiles)
   ))
-  return active, remainder
+  return [active, remainder]
 
 def merge_remainder(merged, remainder):
   return flat(map(flat, zip(*map(split_rows, (merged, remainder)))))
