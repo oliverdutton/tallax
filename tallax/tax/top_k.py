@@ -111,7 +111,6 @@ def _compute_packed_top_bins(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     packed_bins_ref,
-    packed_vals_ref,
     *,
     token_slice,
     block_token: int,
@@ -241,7 +240,6 @@ def dynamic_topk_kernel(
     bins_topm_idxs_ref,
     termination_flag_ref,
     packed_bins_ref,
-    packed_vals_ref,
     *,
     max_k: int,
     num_bins: int,
@@ -355,7 +353,6 @@ def dynamic_topk_kernel(
         bins_topm_vals_ref,
         bins_topm_idxs_ref,
         packed_bins_ref,
-        packed_vals_ref,
         token_slice=token_slice,
         block_token=block_token,
         num_bins=num_bins,
@@ -481,17 +478,6 @@ def top_dynamic_k(
   # Updated padded size calculation using num_bins
   padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
 
-  # Check if bin packing will be needed
-  m_final = bins_topm_schedule[-1]
-  use_bin_packing = guarantee_convergence and (m_final != max_k)
-
-  # Compute num_packed_bins only when needed for scratch shapes with bin packing
-  if use_bin_packing:
-    # Compute smallest power of 2 >= ceil(max_k / (m_final - 1))
-    num_packed_bins = 2**log2(pl.cdiv(max_k, m_final - 1))
-  else:
-    num_packed_bins = 16  # Default (unused)
-
   output_shapes = (
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
@@ -514,7 +500,6 @@ def top_dynamic_k(
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
       pltpu.VMEM((num_tokens, NUM_LANES), jnp.int32),  # packed_bins
-      pltpu.VMEM((num_tokens, pl.cdiv(logits.shape[1], num_bins // num_packed_bins)), logits.dtype),  # packed_vals
   ]
 
   outputs = pl.pallas_call(
