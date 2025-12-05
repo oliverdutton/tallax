@@ -164,30 +164,23 @@ def _topk_and_merge_unconverged_bins(
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(vocab_size, NUM_LANES * (num_bins // num_packed_bins)))]
 
-  # Calculate total number of bins (including partial bin)
-  remainder = vocab_size % num_bins
-  total_bins = num_full_bins + (1 if remainder > 0 else 0)
-
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (packing_perm - offset) % NUM_LANES
     in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
-    # Extract values from all bins at this offset
-    vals = []
-    for i in range(total_bins):
-      start_idx = num_bins * i + offset
-      if i < num_full_bins:
-        # Full bin - extract NUM_LANES elements
-        vals.append(logits_ref[:, pl.dslice(start_idx, NUM_LANES)])
+    # Extract values from all full bins at this offset
+    vals = [logits_ref[:, pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(num_full_bins)]
+
+    # Handle partial bin if present
+    if remainder > 0:
+      remainder_start = num_full_bins * num_bins + offset
+      remainder_size = max(0, vocab_size - remainder_start)
+      if remainder_size > 0:
+        remainder_slice = logits_ref[:, pl.dslice(remainder_start, remainder_size)]
+        vals.append(pad(remainder_slice, (1, NUM_LANES), val='min'))
       else:
-        # Partial bin - extract what's available and pad
-        available = max(0, min(NUM_LANES, vocab_size - start_idx))
-        if available > 0:
-          val_slice = logits_ref[:, pl.dslice(start_idx, available)]
-          vals.append(pad(val_slice, (1, NUM_LANES), val='min'))
-        else:
-          # Offset beyond partial bin, use min padding
-          vals.append(jnp.full((block_token, NUM_LANES), get_dtype_info(logits_ref).min, dtype=logits_ref.dtype))
+        # Offset is beyond the remainder, pad entirely
+        vals.append(jnp.full((block_token, NUM_LANES), get_dtype_info(logits_ref).min, dtype=logits_ref.dtype))
 
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
