@@ -158,8 +158,6 @@ def _topk_and_merge_unconverged_bins(
 
   # Loop over blocks and pack data from active bins
   vocab_size = logits_ref.shape[1]
-  num_full_bins = vocab_size // num_bins
-  remainder = vocab_size % num_bins
   packed_vals = [jnp.full(
       (block_token, NUM_LANES),
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
@@ -170,18 +168,7 @@ def _topk_and_merge_unconverged_bins(
     in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
     # Extract values from all full bins at this offset
-    vals = [logits_ref[:, pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(num_full_bins)]
-
-    # Handle partial bin if present
-    if remainder > 0:
-      remainder_start = num_full_bins * num_bins + offset
-      remainder_size = max(0, vocab_size - remainder_start)
-      if remainder_size > 0:
-        remainder_slice = logits_ref[:, pl.dslice(remainder_start, remainder_size)]
-        vals.append(pad(remainder_slice, (1, NUM_LANES), val='min'))
-      else:
-        # Offset is beyond the remainder, pad entirely
-        vals.append(jnp.full((block_token, NUM_LANES), get_dtype_info(logits_ref).min, dtype=logits_ref.dtype))
+    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)] for start_idx in range(offset, vocab_size, num_bins)]
 
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
