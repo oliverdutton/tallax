@@ -159,6 +159,7 @@ def _topk_and_merge_unconverged_bins(
   # Loop over blocks and pack data from active bins
   vocab_size = logits_ref.shape[1]
   num_full_bins = vocab_size // num_bins
+  remainder = vocab_size % num_bins
   packed_vals = [jnp.full(
       (block_token, NUM_LANES),
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
@@ -194,8 +195,7 @@ def _topk_and_merge_unconverged_bins(
       )
       # Pack every num_packed_bins-th chunk starting from i
       for j, v in enumerate(vals[i::NUM_LANES//num_packed_bins]):
-        if j < len(packed_vals):
-          packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
+        packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
