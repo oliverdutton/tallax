@@ -110,7 +110,6 @@ def _topk_and_merge_unconverged_bins(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     *,
-    token_slice,
     block_token: int,
     num_bins: int,
     m: int,
@@ -123,15 +122,15 @@ def _topk_and_merge_unconverged_bins(
   num_packed_bins = 2**log2(pl.cdiv(max_k, m - 1))
 
   # Count contribution of each bin to top-k
-  # bins_topm_vals has shape (num_tokens, m * num_bins)
+  # bins_topm_vals has shape (block_token, m * num_bins)
   # We want to count how many values in each bin are >= pivot
-  pivot = bins_topm_vals_ref[token_slice, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
+  pivot = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
 
   # Count contributions per bin across the m-1 top bins
   # Shape: (block_token, num_bins)
   num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
   for i in range(m - 1):
-    bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
+    bin_vals = bins_topm_vals_ref[:, pl.dslice(i * num_bins, num_bins)]
     num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
   # Use bitonic_topk_inner descending to get bin indices ordered by contribution count
@@ -149,10 +148,10 @@ def _topk_and_merge_unconverged_bins(
     # Mark positions where bin index matches the i-th active bin
     indicator |= (index == packed_bins[:, i:i+1])
 
-  bins_topm_vals_ref[token_slice] = jnp.concat([
+  bins_topm_vals_ref[...] = jnp.concat([
       jnp.where(
           indicator, get_dtype_info(bins_topm_vals_ref).min,
-          bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
+          bins_topm_vals_ref[:, i * num_bins:(i+1) * num_bins])
       for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
 
   # Use packed_bins for permutation
@@ -168,7 +167,7 @@ def _topk_and_merge_unconverged_bins(
     local_perm = (perm - offset) % NUM_LANES
     in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
 
-    vals = [logits_ref[token_slice, pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(logits_ref.shape[1] // num_bins)]
+    vals = [logits_ref[:, pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(logits_ref.shape[1] // num_bins)]
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
     # Pack into positions based on active bin index
@@ -192,14 +191,14 @@ def _topk_and_merge_unconverged_bins(
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
-  val_input = jnp.concat([packed_vals, bins_topm_vals_ref[token_slice, :NUM_LANES]], axis=1)
-  idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[token_slice, :NUM_LANES]], axis=1)
+  val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :NUM_LANES]], axis=1)
+  idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :NUM_LANES]], axis=1)
 
   # Use bitonic_topk_inner directly with jax arrays
   top_val, top_idx = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
 
-  bins_topm_vals_ref[token_slice, :NUM_LANES] = top_val
-  bins_topm_idxs_ref[token_slice, :NUM_LANES] = top_idx
+  bins_topm_vals_ref[:, :NUM_LANES] = top_val
+  bins_topm_idxs_ref[:, :NUM_LANES] = top_idx
 
 def dynamic_topk_kernel(
     logits_ref,
@@ -323,9 +322,8 @@ def dynamic_topk_kernel(
 
     _topk_and_merge_unconverged_bins(
         logits_ref,
-        bins_topm_vals_ref,
-        bins_topm_idxs_ref,
-        token_slice=token_slice,
+        bins_topm_vals_ref.at[token_slice],
+        bins_topm_idxs_ref.at[token_slice],
         block_token=block_token,
         num_bins=num_bins,
         m=m_final,
