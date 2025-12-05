@@ -72,7 +72,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
 
   The sublane format transpose requires the total number of elements (dim0 * dim1)
   to be a multiple of NUM_LANES^2 (128^2 = 16384). This function finds the minimal
-  padded shape that satisfies this constraint while keeping dim0 as a power of 2.
+  padded shape that satisfies this constraint while keeping dim0 as a power of 2 between NUM_SUBLANES and NUM_LANES.
 
   Args:
     unpadded_dim0: Original first dimension size
