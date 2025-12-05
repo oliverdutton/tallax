@@ -36,7 +36,7 @@ from tallax.utils import (
 
 ### Bitonic Sort Core Operations
 
-def _compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
+def compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
              has_unique_key=False):
   """Compare and conditionally swap array pairs.
 
@@ -149,7 +149,7 @@ def _compute_crosstile_substage(
 
       is_descending = create_bit_indicator(stage, dim1_offset + pair_offset)
 
-      for i, vs in enumerate(_compare(lefts, rights,
+      for i, vs in enumerate(compare(lefts, rights,
                                       is_descending=is_descending,
                                       num_keys=num_keys)):
         outs[i].extend(vs)
@@ -160,7 +160,7 @@ def _compute_crosstile_substage(
 
 ### Within-Tile Substages
 
-def _compute_start_index(i, separation, slice_length=1):
+def compute_start_index(i, separation, slice_length=1):
   """Compute start index for pair-wise array slicing."""
   if slice_length > separation:
     raise ValueError(
@@ -173,17 +173,17 @@ def _compute_start_index(i, separation, slice_length=1):
 
 
 def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
-                                dim1_offset, num_keys: int, b: int):
+                                dim1_offset, num_keys: int, dim0: int):
   """Perform substage using sublane or lane permutations."""
   if permute_dim == 0: # sublane
-    assert b is not None
+    assert dim0 is not None
     index = iota_tile(0)
-    global_base_index = iota_tile(0) + (((iota_tile(1) // b) * NUM_LANES))
+    global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
     tile_rows = NUM_LANES // NUM_SUBLANES
     tile_cols = len(arrs_tiles[0]) // tile_rows
   elif permute_dim == 1: # lane
     index = global_base_index = iota_tile(1)
-    tile_rows = b // NUM_SUBLANES
+    tile_rows = dim0 // NUM_SUBLANES
     tile_cols = len(arrs_tiles[0]) // tile_rows
   else:
     raise ValueError('dim must be 0 or 1, (sublane or lane)')
@@ -206,7 +206,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
       tile_row = tile_idx // tile_cols
       tile_col = tile_idx % tile_cols
       tile_offset = (tile_row * NUM_SUBLANES +
-                     tile_col * (NUM_LANES * (NUM_LANES // b)))
+                     tile_col * (NUM_LANES * (NUM_LANES // dim0)))
     else: # lane
       tile_offset = (tile_idx % tile_cols) * NUM_LANES
 
@@ -221,7 +221,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
       elif stage < log2(NUM_LANES):
         is_descending = create_bit_indicator(stage, tile_offset)
 
-    for i, o in enumerate(_compare(lefts, rights,
+    for i, o in enumerate(compare(lefts, rights,
                                    is_descending=is_descending,
                                    is_right_half=is_right_half,
                                    num_keys=num_keys)):
@@ -231,10 +231,10 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
 
 
 def _compute_substage_by_crosstile_comparison(
-    arrs_tiles, substage, b, num_keys: int, dim1_offset=0, stage=None
+    arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None
 ):
   """Perform substage by comparing explicit tile pairs."""
-  global_base_index = iota_tile(0) + (((iota_tile(1) // b) * NUM_LANES))
+  global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
   num_tiles = len(arrs_tiles[0])
   tile_rows = NUM_LANES // NUM_SUBLANES
   tile_cols = num_tiles // tile_rows
@@ -243,12 +243,12 @@ def _compute_substage_by_crosstile_comparison(
   outs_tiles = [[None for _ in t] for t in arrs_tiles]
 
   for i in range(num_tiles // 2):
-    idx = _compute_start_index(i, separation=separation)
+    idx = compute_start_index(i, separation=separation)
 
     tile_row = idx // tile_cols
     tile_col = idx % tile_cols
     pair_offset = (tile_row * NUM_SUBLANES +
-                   tile_col * (NUM_LANES * (NUM_LANES // b)))
+                   tile_col * (NUM_LANES * (NUM_LANES // dim0)))
     lefts, rights = (
         transpose_list_of_lists(arrs_tiles)[j]
         for j in (idx, idx + separation)
@@ -261,7 +261,7 @@ def _compute_substage_by_crosstile_comparison(
     if type(stage) == int and stage < log2(NUM_LANES):
       is_descending = create_bit_indicator(stage, pair_offset)
 
-    for i, (o_left, o_right) in enumerate(_compare(
+    for i, (o_left, o_right) in enumerate(compare(
         lefts, rights, is_descending=is_descending, num_keys=num_keys
     )):
       outs_tiles[i][idx] = o_left
@@ -274,13 +274,13 @@ def _compute_substage_by_crosstile_comparison(
   return outs_tiles
 
 
-def _compute_subtile_substages_inner(
+def compute_subtile_substages_inner(
     arrs_tiles,
     num_substages: int,
     stage: int,
-    b: int,
-    use_lane_permute: bool,
+    dim0: int,
     num_keys: int,
+    use_lane_permute: bool = False,
     dim1_offset: int = 0,
 ):
   """Execute multiple substages within tiles."""
@@ -290,19 +290,19 @@ def _compute_subtile_substages_inner(
     if use_lane_permute:
       arrs_tiles = _compute_substage_by_permute(
           substage, arrs_tiles, stage=stage, permute_dim=1,
-          b=b, dim1_offset=dim1_offset, num_keys=num_keys
+          dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
     elif substage >= log2(NUM_SUBLANES):
       # Inter-tile comparisons
       arrs_tiles = _compute_substage_by_crosstile_comparison(
-          arrs_tiles, substage=substage, b=b, dim1_offset=dim1_offset,
+          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
           stage=stage, num_keys=num_keys
       )
     else:
       # Intra-tile comparisons using sublane permute
       arrs_tiles = _compute_substage_by_permute(
           substage, arrs_tiles, stage=stage, permute_dim=0,
-          b=b, dim1_offset=dim1_offset, num_keys=num_keys
+          dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
   return arrs_tiles
 
@@ -349,7 +349,7 @@ def _compute_subtile_substages(
     # pad in dim0 (if needed)
     arrs = [pad(ref_slice[...], block_shape=(
         pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]) if not use_lane_permute else 1, slice_shape[1])) for ref_slice in ref_slices]
-    b = arrs[0].shape[0]
+    dim0 = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(
         (split_array_to_tiles if use_lane_permute
          else convert_to_sublane_sort_format),
@@ -358,12 +358,12 @@ def _compute_subtile_substages(
 
     if stage is not None:
       # Run single stage
-      arrs_tiles = _compute_subtile_substages_inner(
+      arrs_tiles = compute_subtile_substages_inner(
           arrs_tiles,
           num_substages=num_substages,
           stage=stage,
           dim1_offset=dim1_offset + (block_col * slice_dim1),
-          b=b,
+          dim0=dim0,
           num_keys=num_keys,
           use_lane_permute=use_lane_permute,
       )
@@ -371,12 +371,12 @@ def _compute_subtile_substages(
       # Run all stages 1 to num_substages (allows compiler fusion)
       num_stages = num_substages
       for stage_ in range(1, num_stages + 1):
-        arrs_tiles = _compute_subtile_substages_inner(
+        arrs_tiles = compute_subtile_substages_inner(
             arrs_tiles,
             num_substages=stage_,
             stage=stage_,
             dim1_offset=dim1_offset + (block_col * slice_dim1),
-            b=b,
+            dim0=dim0,
             num_keys=num_keys,
             use_lane_permute=use_lane_permute,
         )
@@ -386,7 +386,7 @@ def _compute_subtile_substages(
         slice_shape, tiles) if use_lane_permute
          else convert_from_sublane_sort_format(
         tiles,
-        dim0=b
+        dim0=dim0
         ))[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
@@ -755,7 +755,7 @@ def _substage_hbm_kernel(
         scratch_ref[slot] = input_ref[slot].astype(scratch_ref.dtype)
         refs.append(tuple(scratch_ref[slot]))
     is_descending = create_bit_indicator(stage, start_idx + int(descending) * shape[1])
-    outputs = _compare(
+    outputs = compare(
         *transpose_list_of_lists(refs),
         is_descending=is_descending,
         num_keys=num_keys
