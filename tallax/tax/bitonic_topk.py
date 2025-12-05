@@ -5,27 +5,11 @@ This implementation is optimized for TPU with k=128 and works entirely in
 sublane transposed format to maximize efficiency of permutation operations.
 
 Algorithm:
-- Convert input to sublane transposed format: (num_tokens, vocab) -> (128, num_tokens*chunks)
+- Convert input to sublane transposed format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
 - Build bitonic sequences using stages 1-7
 - Cross-tile merge with max selection, reducing tile count
 - Progressive lane permute merging with decreasing distances
 - Convert back to original format
-
-For input (b, vocab) where b=num_tokens:
-- After sublane transpose: (128, b*n) split into (8, 128) tiles
-- Number of tiles: (b * n_vocab_chunks) // 8 where n_vocab_chunks = vocab // 128
-- Target: reduce to (NUM_LANES // NUM_SUBLANES) * max(1, b // NUM_LANES) tiles
-
-for (b, n) shape input
-The total number of merges is log2(n // num_lanes)
-The final (NUM_LANES // b) merges are intra permutations
-
-if 16*11 tiles -> first -4 to 7 then -2 to 5 then -2 to 3 then -1 to 2 then -1 to 1
-
-that 11,7,5,3,2,1 - inefficient.
-combine in halves until < 32 left then combine 
-176 to 88 to 44 to 22 !to 16!
-
 """
 
 import functools
@@ -81,66 +65,19 @@ def split_actives(tiles):
 def merge_remainder(merged, remainder):
   return flat(map(flat, zip(*map(split_rows, (merged, remainder)))))
 
+def ceil_multiple(i, n):
+  return pl.cdiv(i, n) * n
 
-def _compute_padded_shape(dim0: int, dim1: int) -> tuple[int, int]:
-    """Compute padded shape for bitonic top-k.
-
-    Requirements:
-    - dim1 must be a multiple of NUM_LANES (for convert_to_sublane_sort_format)
-    - dim0 * dim1 must be multiple of NUM_LANES**2 (for tiling)
-
-    The bitonic merge handles odd tile counts via remainder propagation,
-    so dim1/NUM_LANES does NOT need to be a power of 2.
-
-    Strategy:
-    - For small inputs (prod < NUM_LANES**2): pad dim0 to make prod = NUM_LANES**2
-    - For larger inputs: choose between padding dim0 vs dim1 to minimize total size
-
-    Examples:
-    - (8, 256) -> (64, 256): prod = 16384 = NUM_LANES**2
-    - (8, 8320) -> (8, 10240): prod = 81920 = 5 * NUM_LANES**2 (pad dim1, not dim0!)
-    
-    dim0 must be a power of 2
-    dim1*dim0 must be a multiple of NUM_LANES^2 
-
-    Args:
-        dim0: First dimension size
-        dim1: Second dimension size
-
-    Returns:
-        Tuple of (padded_dim0, padded_dim1)
-    """
-    # Step 1: Pad dim1 to next multiple of NUM_LANES (minimal padding)
-    padded_dim1_min = pl.cdiv(dim1, NUM_LANES) * NUM_LANES
-
-    # Step 2: Check if we can make product exactly NUM_LANES**2 by padding dim0 only
-    prod = dim0 * padded_dim1_min
-    if prod < NUM_LANES**2:
-        # For small inputs, pad dim0 to make product exactly NUM_LANES**2
-        padded_dim0 = NUM_LANES**2 // padded_dim1_min
-        return padded_dim0, padded_dim1_min
-
-    # Step 3: For larger inputs, choose best padding strategy
-    # Option A: Pad dim0 minimally (keep dim1 = padded_dim1_min)
-    gcd_val_a = math.gcd(padded_dim1_min, NUM_LANES**2)
-    required_multiple_a = NUM_LANES**2 // gcd_val_a
-    padded_dim0_a = pl.cdiv(dim0, required_multiple_a) * required_multiple_a
-    cost_a = padded_dim0_a * padded_dim1_min
-
-    # Option B: Pad dim1 to reduce dim0 padding requirement (keep dim0)
-    gcd_val_b = math.gcd(dim0, NUM_LANES**2)
-    required_multiple_b = NUM_LANES**2 // gcd_val_b
-    # Ensure it's also a multiple of NUM_LANES
-    required_multiple_b = pl.cdiv(required_multiple_b, NUM_LANES) * NUM_LANES
-    padded_dim1_b = pl.cdiv(padded_dim1_min, required_multiple_b) * required_multiple_b
-    cost_b = dim0 * padded_dim1_b
-
-    # Choose the option with lower cost
-    if cost_a <= cost_b:
-        return padded_dim0_a, padded_dim1_min
-    else:
-        return dim0, padded_dim1_b
-
+def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:    
+  if unpadded_dim0 > NUM_LANES:
+    raise NotImplementedError
+  dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
+    if 2**i >= unpadded_dim0]
+  shapes = [
+    (dim0, ceil_multiple(unpadded_dim1, (NUM_LANES ** 2) // dim0))
+    for dim0 in dim0s]
+  # take minimal num elements, larger dim0 on ties
+  return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 def _merge_max_crosstile(
     arrs_tiles, b, num_keys: int = 1
@@ -156,11 +93,8 @@ def _merge_max_crosstile(
     Tuple of lists with half the tiles (max halves only), plus remainder if odd
   """
   num_tiles = len(arrs_tiles[0])
-  separation = max(1, b // NUM_LANES)  # Tiles per token block row
+  separation = 1
   outs_tiles = [[] for t in arrs_tiles]
-  
-  # round down to nearest power of 2
-  # so if 48 tiles, this becomes 32 active which merge. and final 16 untouched
   for i in range(num_tiles // 2):
     idx = _compute_start_index(i, separation=separation)
     lefts, rights = (
@@ -175,7 +109,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
+def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -193,12 +127,25 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     Returns:
         Tuple of lists of merged tile arrays
     """
+    if k > NUM_LANES:
+      raise NotImplementedError
+    # Compute padded shape that satisfies alignment requirements
+    shape = operands[0].shape
+    padded_shape = _compute_padded_shape(*shape)
+    # Pad both dimensions if needed
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max')
+            for op in operands]
+    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
+
+    # Convert to sublane transposed format
+    arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
+    
     # Target number of tiles after cross-tile merging
     # For b < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For b >= NUM_LANES: we want more tiles proportional to b
-    b = shape[0]
+    b = padded_shape[0]
     log_lanes = log2(NUM_LANES)
-    num_merges = log2(shape[1] // NUM_LANES)
+    num_merges = log2(shape[1]) - log_lanes
     num_intra_merges = min(
     log2(pl.cdiv(NUM_LANES, b)), num_merges)
     # are intra permutations
@@ -220,46 +167,17 @@ def compute_bitonic_top_k_stages(arrs_tiles, num_keys, shape):
     for _ in range(num_merges - num_intra_merges):
       # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
       # so different tile sets have different orders.
-      # tile 0 is different order to tile max(1,b//NUM_LANES), with which it will be max merged
-      '''
-      take b=32
-tile 0 is 00000,128,128,128..256,256...,384,384
-plus arange(8) in dim1
-tile 1 is 888888,136,136,....
-
-merge stage is 9 (7+log2(4))
-hmmmm
-
-take (dim0, dim1), dim0 is power of 2
-NUM_LANES**2 // dim0 makes a portion in dim1
-
-
-for (8,8192+2048) its (16,5)
-
-during the merge phases we're reducing down to 16
-take to log2(num_cols) for the merge phase
-use np.array(vals, dtype=object)?
-take out them before the merge phase, then add back afterwards
-
-if num cols is even - fine, continue
-this avoids any ops on then during the phase
-      '''
-      
-    
-      merge_stage = log2(NUM_LANES * max(1, NUM_LANES // b))
-      
       has_remainder = ((len(arrs_tiles[0][::16])%2) != 0)
-      print('pre lengths', len(arrs_tiles[0]))
       if has_remainder:
         remainder_arrs_tiles = [
         split_actives(x)[1] for x in arrs_tiles]
         arrs_tiles = [
         split_actives(x)[0] for x in arrs_tiles]
-        print("lengths", len(arrs_tiles[0]), len(remainder_arrs_tiles[0]))
       arrs_tiles = _compute_subtile_substages_inner(
         arrs_tiles,
         num_substages=log_lanes,
-        stage=merge_stage,
+        # tile i is different order to tile i+1, so they can be max merged
+        stage=log2(NUM_LANES * NUM_LANES // b),
         dim1_offset=0,
         b=b,
         num_keys=num_keys,
@@ -274,7 +192,6 @@ this avoids any ops on then during the phase
       )
       if has_remainder:
         arrs_tiles = [merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
-        print("lengths merged", len(arrs_tiles[0]),)
 
     # Progressive intra-tile merging with lane 
     for i in range(num_intra_merges)[::-1]:
@@ -325,8 +242,9 @@ this avoids any ops on then during the phase
       num_keys=num_keys,
       use_lane_permute=False,
     )
-    return arrs_tiles
 
+    return [convert_from_sublane_sort_format(
+      tiles, dim0=padded_shape[0])[:shape[0], :k] for tiles in arrs_tiles]
 
 def bitonic_topk_kernel(
     in_refs,
@@ -347,24 +265,14 @@ def bitonic_topk_kernel(
     """
     shape = in_refs[0].shape
 
-    # Compute padded shape that satisfies alignment requirements
-    padded_dim0, padded_dim1 = _compute_padded_shape(shape[0], shape[1])
-
-    # Pad both dimensions if needed
-    arrs = [pad(in_ref[...], block_shape=(padded_dim0, padded_dim1), val='min' if descending else 'max')
-            for in_ref in in_refs]
-    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
-
-    # Convert to sublane transposed format
-    arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
-
-    # Run bitonic top-k algorithm
-    arrs_tiles = compute_bitonic_top_k_stages(arrs_tiles, num_keys=num_keys, shape=arrs[0].shape)
-
     # Convert back from sublane format and unpad to original shape
-    for tiles, out_ref in zip(arrs_tiles, out_refs, strict=True):
-        out = convert_from_sublane_sort_format(tiles, dim0=arrs[0].shape[0])[:shape[0], :NUM_LANES]
-        out_ref[...] = out[:out_ref.shape[0]].astype(out_ref.dtype)
+    if not descending:
+      raise NotImplementedError
+    outs = bitonic_topk_inner(
+      [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
+      num_keys=num_keys)
+    for out, out_ref in zip(outs, out_refs, strict=True):
+      out_ref[...] = out.astype(out_ref.dtype)
 
 
 @functools.partial(
@@ -404,12 +312,14 @@ def bitonic_topk(
     Raises:
         ValueError: If k != NUM_LANES
     """
-    if k != NUM_LANES:
-        raise ValueError(
-            f"bitonic_topk only supports k=NUM_LANES={NUM_LANES}, got k={k}"
-        )
+    if k > NUM_LANES:
+      raise ValueError(
+          f"bitonic_topk only supports k<=NUM_LANES={NUM_LANES}, got k={k}"
+      )
 
     operands, shape = canonicalize_operand(operand)
+    operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
+      val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = shape
     # Define output shapes
     output_shapes = [
@@ -422,14 +332,10 @@ def bitonic_topk(
             num_keys=num_keys,
             descending=descending,
         ),
-        #in_specs=(tuple(pl.BlockSpec() for _ in operands),),
         out_shape=(output_shapes,),
-        
-        #out_specs=([pl.BlockSpec() for _ in output_shapes),),
-        grid=(),
         compiler_params=pltpu.CompilerParams(
             vmem_limit_bytes=int(0.9 * 2**27)
         ),
         interpret=interpret,
     )(operands)[0]
-    return tuple(x[:, :k] for x in outputs)
+    return tuple(x[:shape[0], :k] for x in outputs)
