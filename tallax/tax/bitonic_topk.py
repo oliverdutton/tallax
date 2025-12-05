@@ -14,7 +14,6 @@ Algorithm:
 
 import functools
 from itertools import chain 
-import math
 from collections.abc import Sequence
 
 import jax
@@ -133,8 +132,7 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
     shape = operands[0].shape
     padded_shape = _compute_padded_shape(*shape)
     # Pad both dimensions if needed
-    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max')
-            for op in operands]
+    arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     # Convert to sublane transposed format
@@ -263,9 +261,6 @@ def bitonic_topk_kernel(
     4. Convert back from sublane format
     5. Unpad and extract top-128 per token
     """
-    shape = in_refs[0].shape
-
-    # Convert back from sublane format and unpad to original shape
     if not descending:
       raise NotImplementedError
     outs = bitonic_topk_inner(
