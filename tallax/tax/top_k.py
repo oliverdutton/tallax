@@ -427,6 +427,9 @@ def top_dynamic_k(
 
   if num_tokens % block_token != 0:
     raise ValueError("num_tokens must be divisible by block_token")
+    
+  if max_k > NUM_LANES:
+    raise NotImplementedError
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
