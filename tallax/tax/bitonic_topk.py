@@ -6,7 +6,7 @@ sublane transposed format to maximize efficiency of permutation operations.
 
 Algorithm:
 - Convert input to sublane transposed format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
-- Build bitonic sequences using stages 1-6
+- Build bitonic sequences using stages 1-6 (so sorted in 64 length chunks)
 - Cross-tile merge with max selection, reducing tile count
 - Progressive lane permute merging with decreasing distances
 - Convert back to original format
