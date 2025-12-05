@@ -297,6 +297,8 @@ def convert_from_sublane_sort_format(tiles, dim0):
 
 def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
   """Execute for loop with manual unrolling for better performance."""
+  if length <= 0:
+    return init_val
   unroll = min(length, unroll)
 
   def unrolled_body(i, carry):
