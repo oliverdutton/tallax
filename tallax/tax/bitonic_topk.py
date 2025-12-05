@@ -312,10 +312,10 @@ def bitonic_topk(
           f"bitonic_topk only supports k<=NUM_LANES={NUM_LANES}, got k={k}"
       )
 
-    operands, shape = canonicalize_operand(operand)
+    operands, unpadded_shape = canonicalize_operand(operand)
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]
-    num_tokens, vocab_size = shape
+    num_tokens, vocab_size = operands[0].shape
     # Define output shapes
     output_shapes = [
         jax.ShapeDtypeStruct((num_tokens, NUM_LANES), op.dtype)
@@ -333,4 +333,4 @@ def bitonic_topk(
         ),
         interpret=interpret,
     )(operands)[0]
-    return tuple(x[:shape[0], :k] for x in outputs)
+    return tuple(x[:unpadded_shape[0], :k] for x in outputs)
