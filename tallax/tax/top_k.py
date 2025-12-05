@@ -436,8 +436,6 @@ def top_dynamic_k(
     bins_topm_schedule = tuple(t + 1 for t in thresholds)
     print(f"Auto-computed schedules for max_k={max_k}, num_bins={num_bins}:")
     print(f"  bins_topm_schedule: {bins_topm_schedule}")
-  if guarantee_convergence:
-    bins_topm_schedule += (max_k,)
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
   bins_topm_schedule = (0,) + bins_topm_schedule
 
