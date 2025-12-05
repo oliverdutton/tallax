@@ -110,12 +110,14 @@ def _topk_and_merge_unconverged_bins(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     *,
-    block_token: int,
     num_bins: int,
     m: int,
     max_k: int,
 ):
   """Compute top-k from most active bins and merge with unconverged bins."""
+
+  # Derive block_token from logits_ref shape
+  block_token = logits_ref.shape[0]
 
   # Derive num_packed_bins from max_k and m
   # Compute smallest power of 2 >= ceil(max_k / (m - 1))
@@ -137,8 +139,8 @@ def _topk_and_merge_unconverged_bins(
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
   _, sorted_bin_indices = bitonic_topk_inner([num_gt_k, bin_indices], k=NUM_LANES, num_keys=1)
-  # Repeat first num_packed_bins values across NUM_LANES positions
-  packed_bins = jnp.take_along_axis(sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1)
+  # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
+  packing_perm = jnp.take_along_axis(sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1)
 
   # produce the (block_token, num_bins) mask
   # index[t, b] = b (the bin index in the second dimension)
@@ -146,7 +148,7 @@ def _topk_and_merge_unconverged_bins(
   indicator = jnp.zeros((block_token, num_bins), dtype=jnp.bool_)
   for i in range(num_packed_bins):
     # Mark positions where bin index matches the i-th active bin
-    indicator |= (index == packed_bins[:, i:i+1])
+    indicator |= (index == packing_perm[:, i:i+1])
 
   bins_topm_vals_ref[...] = jnp.concat([
       jnp.where(
@@ -154,20 +156,39 @@ def _topk_and_merge_unconverged_bins(
           bins_topm_vals_ref[:, i * num_bins:(i+1) * num_bins])
       for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
 
-  # Use packed_bins for permutation
-  perm = packed_bins
-
   # Loop over blocks and pack data from active bins
+  vocab_size = logits_ref.shape[1]
+  num_full_bins = vocab_size // num_bins
   packed_vals = [jnp.full(
       (block_token, NUM_LANES),
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
-  ) for _ in range(pl.cdiv(logits_ref.shape[1], NUM_LANES * (num_bins // num_packed_bins)))]
+  ) for _ in range(pl.cdiv(vocab_size, NUM_LANES * (num_bins // num_packed_bins)))]
+
+  # Calculate total number of bins (including partial bin)
+  remainder = vocab_size % num_bins
+  total_bins = num_full_bins + (1 if remainder > 0 else 0)
 
   for offset in range(0, num_bins, NUM_LANES):
-    local_perm = (perm - offset) % NUM_LANES
-    in_range_mask = (perm >= offset) & (perm < (offset + NUM_LANES))
+    local_perm = (packing_perm - offset) % NUM_LANES
+    in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
-    vals = [logits_ref[:, pl.dslice(num_bins * i + offset, NUM_LANES)] for i in range(logits_ref.shape[1] // num_bins)]
+    # Extract values from all bins at this offset
+    vals = []
+    for i in range(total_bins):
+      start_idx = num_bins * i + offset
+      if i < num_full_bins:
+        # Full bin - extract NUM_LANES elements
+        vals.append(logits_ref[:, pl.dslice(start_idx, NUM_LANES)])
+      else:
+        # Partial bin - extract what's available and pad
+        available = max(0, min(NUM_LANES, vocab_size - start_idx))
+        if available > 0:
+          val_slice = logits_ref[:, pl.dslice(start_idx, available)]
+          vals.append(pad(val_slice, (1, NUM_LANES), val='min'))
+        else:
+          # Offset beyond partial bin, use min padding
+          vals.append(jnp.full((block_token, NUM_LANES), get_dtype_info(logits_ref).min, dtype=logits_ref.dtype))
+
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
     # Pack into positions based on active bin index
@@ -179,15 +200,15 @@ def _topk_and_merge_unconverged_bins(
           in_range_mask
       )
       # Pack every num_packed_bins-th chunk starting from i
-      #assert (len(packed_vals) - len(vals[i::num_packed_bins])) in (0,1)
       for j, v in enumerate(vals[i::NUM_LANES//num_packed_bins]):
-        packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
+        if j < len(packed_vals):
+          packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
 
   packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
-    (packed_bins,)*(n//NUM_LANES), axis=1)
+    (packing_perm,)*(n//NUM_LANES), axis=1)
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
@@ -324,7 +345,6 @@ def dynamic_topk_kernel(
         logits_ref,
         bins_topm_vals_ref.at[token_slice],
         bins_topm_idxs_ref.at[token_slice],
-        block_token=block_token,
         num_bins=num_bins,
         m=m_final,
         max_k=max_k
