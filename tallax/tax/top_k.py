@@ -6,8 +6,7 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.sort import bitonic_sort
-from tallax.tax.bitonic_topk import bitonic_topk_kernel
+from tallax.tax.bitonic_topk import bitonic_topk_kernel, bitonic_topk_inner
 from tallax.tax.topk_theory import calculate_depth_thresholds
 from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
@@ -106,75 +105,57 @@ def binned_topk(
     bins_topk_outs = update_bins_topk(final_vals, final_idxs, *bins_topk_outs)
   return bins_topk_outs
 
-def _compute_packed_top_bins(
+def _topk_and_merge_unconverged_bins(
     logits_ref,
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
-    packed_bins_ref,
     *,
-    token_slice,
     block_token: int,
     num_bins: int,
     m: int,
     max_k: int,
 ):
-  """Packs top bins into output format."""
+  """Compute top-k from most active bins and merge with unconverged bins."""
 
   # Derive num_packed_bins from max_k and m
   # Compute smallest power of 2 >= ceil(max_k / (m - 1))
   num_packed_bins = 2**log2(pl.cdiv(max_k, m - 1))
 
   # Count contribution of each bin to top-k
-  # bins_topm_vals has shape (m, block_token, num_bins)
+  # bins_topm_vals has shape (block_token, m * num_bins)
   # We want to count how many values in each bin are >= pivot
-  pivot = bins_topm_vals_ref[token_slice, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
+  pivot = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)].max(-1, keepdims=True)
 
   # Count contributions per bin across the m-1 top bins
   # Shape: (block_token, num_bins)
   num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
   for i in range(m - 1):
-    bin_vals = bins_topm_vals_ref[token_slice, pl.dslice(i * num_bins, num_bins)]
+    bin_vals = bins_topm_vals_ref[:, pl.dslice(i * num_bins, num_bins)]
     num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
-  # Use bitonic_sort descending to get bin indices ordered by contribution count
-  @functools.partial(pl.run_scoped,
-      sort_scratch_refs=(
-          pltpu.VMEM((block_token, num_bins), jnp.int32),
-          pltpu.VMEM((block_token, num_bins), jnp.int32)))
-  def _get_active_bins(sort_scratch_refs):
-    sort_scratch_refs[0][...] = num_gt_k
-    sort_scratch_refs[1][...] = jax.lax.broadcasted_iota(
-        jnp.int32, (block_token, num_bins), 1)
-    # Sort descending by num_gt_k
-    bitonic_sort(
-        sort_scratch_refs,
-        stage_ref=None,
-        num_keys=1,
-        dim1_offset=num_bins  # makes sort descending
-        # (and required to specify dim1_offset to avoid program_id issue)
-    )
-    # Extract top NUM_LANES (128) bin indices
-    perm = sort_scratch_refs[1][:, :NUM_LANES]
-    # Repeat first 16 values across NUM_LANES positions
-    perm = jnp.take_along_axis(perm, iota_tile(1) % num_packed_bins, axis=1)
-    packed_bins_ref[token_slice] = perm
+  # Use bitonic_topk_inner descending to get bin indices ordered by contribution count
+  bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
+  # Sort descending by num_gt_k to get top NUM_LANES bin indices
+  _, sorted_bin_indices = bitonic_topk_inner([num_gt_k, bin_indices], k=NUM_LANES, num_keys=1)
+  # Repeat first num_packed_bins values across NUM_LANES positions
+  packed_bins = jnp.take_along_axis(sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1)
 
-  # produce the (token_slice, num_bins) mask
+  # produce the (block_token, num_bins) mask
   # index[t, b] = b (the bin index in the second dimension)
   index = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   indicator = jnp.zeros((block_token, num_bins), dtype=jnp.bool_)
   for i in range(num_packed_bins):
     # Mark positions where bin index matches the i-th active bin
-    indicator |= (index == packed_bins_ref[token_slice, i:i+1])
+    indicator |= (index == packed_bins[:, i:i+1])
 
-  bins_topm_vals_ref[token_slice] = jnp.concat([
+  bins_topm_vals_ref[...] = jnp.concat([
       jnp.where(
           indicator, get_dtype_info(bins_topm_vals_ref).min,
-          bins_topm_vals_ref[token_slice, i * num_bins:(i+1) * num_bins])
+          bins_topm_vals_ref[:, i * num_bins:(i+1) * num_bins])
       for i in range(bins_topm_vals_ref.shape[1] // num_bins)], axis=1)
 
-  # Repeat first 16 values across NUM_LANES positions
-  perm = packed_bins_ref[token_slice]
+  # Use packed_bins for permutation
+  perm = packed_bins
 
   # Loop over blocks and pack data from active bins
   packed_vals = [jnp.full(
@@ -206,26 +187,18 @@ def _compute_packed_top_bins(
   n = packed_vals.shape[1]
 
   packed_idxs = (jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins) * num_bins + jnp.concat(
-    (packed_bins_ref[token_slice],)*(n//NUM_LANES), axis=1)
-  dim1_size = 2**log2(n + NUM_LANES)
-  overwrite_refs = [ref.at[token_slice, :NUM_LANES] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)]
+    (packed_bins,)*(n//NUM_LANES), axis=1)
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
-  @functools.partial(pl.run_scoped,
-      val_ref=pltpu.VMEM((block_token, dim1_size), packed_vals_ref.dtype),
-      idx_ref=pltpu.VMEM((block_token, dim1_size), jnp.int32))
-  def _merge_topk(val_ref, idx_ref):
-    val_ref[...] = pad(packed_vals, (NUM_SUBLANES, dim1_size), val='min')
-    idx_ref[:,:n] = packed_idxs
-    sort_refs = [val_ref, idx_ref]
-    for sort_ref, overwrite_ref in zip(sort_refs, overwrite_refs, strict=True):
-      sort_ref[:,n:n+NUM_LANES] = overwrite_ref[...]
-    bitonic_topk_kernel(
-        sort_refs,
-        overwrite_refs,
-        num_keys=1,
-        descending=True,
-    )
+  # Build input arrays by concatenating packed vals and the top NUM_LANES values
+  val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :NUM_LANES]], axis=1)
+  idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :NUM_LANES]], axis=1)
+
+  # Use bitonic_topk_inner directly with jax arrays
+  top_val, top_idx = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
+
+  bins_topm_vals_ref[:, :NUM_LANES] = top_val
+  bins_topm_idxs_ref[:, :NUM_LANES] = top_idx
 
 def dynamic_topk_kernel(
     logits_ref,
@@ -239,7 +212,6 @@ def dynamic_topk_kernel(
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
     termination_flag_ref,
-    packed_bins_ref,
     *,
     max_k: int,
     num_bins: int,
@@ -348,12 +320,10 @@ def dynamic_topk_kernel(
     # we haven't fully converged (m_final != max_k) and termination criterion not met.
     # Packs the most active bins to help converge.
 
-    _compute_packed_top_bins(
-        logits_ref,
-        bins_topm_vals_ref,
-        bins_topm_idxs_ref,
-        packed_bins_ref,
-        token_slice=token_slice,
+    _topk_and_merge_unconverged_bins(
+        logits_ref.at[token_slice],
+        bins_topm_vals_ref.at[token_slice],
+        bins_topm_idxs_ref.at[token_slice],
         block_token=block_token,
         num_bins=num_bins,
         m=m_final,
@@ -499,7 +469,6 @@ def top_dynamic_k(
       pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
       pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
-      pltpu.VMEM((num_tokens, NUM_LANES), jnp.int32),  # packed_bins
   ]
 
   outputs = pl.pallas_call(
