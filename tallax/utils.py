@@ -38,6 +38,10 @@ def get_dtype_info(x):
   """Get finfo or iinfo for array dtype."""
   dtype = x.dtype
   if jnp.issubdtype(dtype, jnp.floating):
+    # Handle bfloat16 specially by using float32 info
+    # This ensures compatibility in Pallas kernels where bfloat16 finfo may not be fully supported
+    if dtype == jnp.bfloat16:
+      return jnp.finfo(jnp.float32)
     return jnp.finfo(dtype)
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.iinfo(dtype)
