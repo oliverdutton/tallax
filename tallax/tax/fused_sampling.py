@@ -43,64 +43,60 @@ def _fused_sampling_kernel(
     logits = logits_ref[...].astype(jnp.float32)
     logits_global_index = logits_global_index_ref[...]
 
-    # Step 1: Greedy sampling - get argmax using bitonic_topk_inner
-    # Use bitonic_topk_inner to find the top-1 index (argmax) for each batch element
-    _, greedy_indices = bitonic_topk_inner(
+    # Step 1: Sort logits in descending order using bitonic_topk_inner
+    # This gives us sorted logits and their corresponding global indices
+    sorted_logits, sorted_indices = bitonic_topk_inner(
         [logits, logits_global_index],
-        k=1,
+        k=NUM_LANES,
         num_keys=1
     )
-    # Extract first column (top-1 indices)
-    greedy_sampled = greedy_indices[:, 0]
 
-    # Step 2: Compute softmax probabilities for top-p filtering
-    # For numerical stability, subtract max
-    logits_max = logits.max(axis=-1, keepdims=True)
-    logits_shifted = logits - logits_max
+    # Step 2: Greedy sampling - just take the first sorted index (argmax)
+    greedy_sampled = sorted_indices[:, 0]
+
+    # Step 3: Compute softmax probabilities on sorted logits for top-p filtering
+    # For numerical stability, subtract max (which is now the first element)
+    logits_max = sorted_logits[:, 0:1]
+    logits_shifted = sorted_logits - logits_max
     exp_logits = jnp.exp(logits_shifted)
-    probs = exp_logits / exp_logits.sum(axis=-1, keepdims=True)
+    sorted_probs = exp_logits / exp_logits.sum(axis=-1, keepdims=True)
 
-    # Step 3: Top-p filtering using parallel prefix sum (cumsum)
-    # Implement cumsum using Hillis-Steele parallel scan algorithm
-    # This avoids using jnp.cumsum which doesn't lower well to TPU
-    cumsum_probs = probs
-    # Number of steps needed for parallel prefix sum (computed statically)
-    num_steps = log2(vocab_size)
+    # Step 4: Top-p filtering using cumsum on sorted probabilities
+    # Implement cumsum using the same Hillis-Steele algorithm as tallax.tax.cumsum
+    cumsum_probs = sorted_probs
+    num_steps = log2(NUM_LANES)
     for step in range(num_steps):
         offset = 1 << step
         # Create indices using broadcasted_iota (TPU-friendly)
-        indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 1)
-        src_indices = lax.max(indices - offset, 0)
+        idx = lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)
+        src_idx = lax.max(idx - offset, 0)
 
         # Gather shifted values
-        shifted = jnp.take_along_axis(cumsum_probs, src_indices, axis=1)
+        shifted = jnp.take_along_axis(cumsum_probs, src_idx, axis=1)
 
         # Add shifted values where valid (index >= offset)
-        valid_mask = indices >= offset
+        valid_mask = idx >= offset
         cumsum_probs = jnp.where(valid_mask, cumsum_probs + shifted, cumsum_probs)
 
-    # Mask logits where cumulative probability > top_p
+    # Mask sorted logits where cumulative probability > top_p
     top_p_expanded = jnp.expand_dims(top_p_ref[...], axis=-1)
     mask = cumsum_probs <= top_p_expanded
-    logits_filtered = jnp.where(mask, logits, -1e12)
+    sorted_logits_filtered = jnp.where(mask, sorted_logits, -1e12)
 
-    # Step 4: Apply temperature scaling
-    temperatures = temperature_ref[...].astype(logits.dtype)
+    # Step 5: Apply temperature scaling
+    temperatures = temperature_ref[...].astype(sorted_logits.dtype)
     temperatures_expanded = jnp.expand_dims(temperatures, axis=-1)
-    logits_scaled = logits_filtered / temperatures_expanded
+    sorted_logits_scaled = sorted_logits_filtered / temperatures_expanded
 
-    # Step 5: Categorical sampling using Gumbel-max trick with sparse random uniform
-    # Generate Gumbel noise for all positions using sparse random uniform
-    # Create 2D indices for all batch and vocab positions using broadcasted_iota
-    batch_indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 0)
-    vocab_indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 1)
+    # Step 6: Categorical sampling using Gumbel-max trick
+    # Generate Gumbel noise using sparse random uniform
+    batch_indices = lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 0)
+    vocab_indices = lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)
 
-    # Generate uniform random values using sparse_random_uniform
-    # We use the batch and vocab indices to generate unique random values
     u = sparse_random_uniform(
         rng_key_ref,
         (batch_indices, vocab_indices),
-        vocab_size,
+        NUM_LANES,
         dtype=jnp.float32,
         minval=jnp.finfo(jnp.float32).tiny,
         maxval=1.0
@@ -110,16 +106,19 @@ def _fused_sampling_kernel(
     gumbel = -jnp.log(-jnp.log(u))
 
     # Add Gumbel noise to scaled logits
-    logits_with_gumbel = logits_scaled + gumbel
+    logits_with_gumbel = sorted_logits_scaled + gumbel
 
-    # Find argmax using bitonic_topk_inner to get sampled indices
-    _, sampled_indices = bitonic_topk_inner(
-        [logits_with_gumbel, logits_global_index],
-        k=1,
+    # Step 7: Find argmax using bitonic_topk_inner
+    _, sampled_local_indices = bitonic_topk_inner(
+        [logits_with_gumbel, lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)],
+        k=NUM_LANES,
         num_keys=1
     )
-    # Extract first column (top-1 indices after Gumbel noise)
-    next_tokens = sampled_indices[:, 0]
+
+    # Map local index to global index
+    # sampled_local_indices[:, 0] gives the position in sorted array
+    # We need to get the global index from sorted_indices at that position
+    next_tokens = jnp.take_along_axis(sorted_indices, sampled_local_indices[:, 0:1], axis=1).squeeze(1)
 
     # Write outputs
     next_tokens_ref[...] = next_tokens
