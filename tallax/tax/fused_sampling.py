@@ -58,7 +58,6 @@ def fused_sampling_kernel(
     sampled_tokens_ref,
     *,
     vocab_size: int,
-    batch_size: int,
 ):
     """
     Fused kernel implementing top-p filtering, temperature scaling, and sampling.
