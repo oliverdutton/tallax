@@ -24,6 +24,7 @@ def cumsum_tile(tile, axis):
       permutation>=0,
       jnp.take_along_axis(tile, permutation % tile.shape[axis], axis=axis),
       0)
+    i *= 2
   return tile
 
 def cumsum(arr, axis):
