@@ -78,11 +78,11 @@ def fused_sampling_kernel(
     cumsum_probs = cumsum(probs.T, axis=0).T
 
     # Mask sorted logits where cumulative probability > top_p
-    mask = cumsum_probs <= top_p_ref[:, None]
+    mask = cumsum_probs <= top_p_ref[...][:, None]
     topp_logits = jnp.where(mask, topk_logits, -1e12)
 
     # Step 5: Apply temperature scaling
-    topp_logits_scaled = topp_logits / temperature_ref[:, None].astype(topp_logits.dtype)
+    topp_logits_scaled = topp_logits / temperature_ref[...][:, None].astype(topp_logits.dtype)
 
     # Step 6: Categorical sampling using Gumbel-max trick
     # Generate Gumbel noise using sparse random uniform
