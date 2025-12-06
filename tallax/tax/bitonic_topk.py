@@ -37,7 +37,6 @@ from tallax.utils import (
 from tallax.tax.sort import (
     compute_subtile_substages_inner,
     compare,
-    compute_start_index,
 )
 
 def flat(xs):
@@ -105,13 +104,11 @@ def _merge_max_crosstile(
     Tuple of lists with half the tiles (max halves only), plus remainder if odd
   """
   num_tiles = len(arrs_tiles[0])
-  separation = 1
   outs_tiles = [[] for t in arrs_tiles]
-  for i in range(num_tiles // 2):
-    idx = compute_start_index(i, separation=separation)
+  for idx in range(0, num_tiles, 2):
     lefts, rights = (
         transpose_list_of_lists(arrs_tiles)[j]
-        for j in (idx, idx + separation)
+        for j in (idx, idx + 1)
     )
     # Keep only max (left) values, discard min (right)
     for j, (o_left, _) in enumerate(compare(
