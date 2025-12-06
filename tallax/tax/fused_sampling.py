@@ -12,7 +12,8 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic_topk import bitonic_topk_inner
 from tallax.tax.sparse_random import sparse_random_uniform
-from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, to_32bit_dtype
+from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, to_32bit_dtype, log2
+from jax import lax
 
 
 def _fused_sampling_kernel(
@@ -59,9 +60,24 @@ def _fused_sampling_kernel(
     exp_logits = jnp.exp(logits_shifted)
     probs = exp_logits / exp_logits.sum(axis=-1, keepdims=True)
 
-    # Step 3: Top-p filtering using cumsum
-    # Compute cumulative sum of probabilities
-    cumsum_probs = jnp.cumsum(probs, axis=-1)
+    # Step 3: Top-p filtering using parallel prefix sum (cumsum)
+    # Implement cumsum using Hillis-Steele parallel scan algorithm
+    # This avoids using jnp.cumsum which doesn't lower well to TPU
+    cumsum_probs = probs
+    # Number of steps needed for parallel prefix sum (computed statically)
+    num_steps = log2(vocab_size)
+    for step in range(num_steps):
+        offset = 1 << step
+        # Create indices using broadcasted_iota (TPU-friendly)
+        indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 1)
+        src_indices = lax.max(indices - offset, 0)
+
+        # Gather shifted values
+        shifted = jnp.take_along_axis(cumsum_probs, src_indices, axis=1)
+
+        # Add shifted values where valid (index >= offset)
+        valid_mask = indices >= offset
+        cumsum_probs = jnp.where(valid_mask, cumsum_probs + shifted, cumsum_probs)
 
     # Mask logits where cumulative probability > top_p
     top_p_expanded = jnp.expand_dims(top_p_ref[...], axis=-1)
@@ -75,11 +91,9 @@ def _fused_sampling_kernel(
 
     # Step 5: Categorical sampling using Gumbel-max trick with sparse random uniform
     # Generate Gumbel noise for all positions using sparse random uniform
-    # Create 2D indices for all batch and vocab positions
-    batch_indices = jnp.repeat(jnp.arange(batch_size, dtype=jnp.int32), vocab_size)
-    vocab_indices = jnp.tile(jnp.arange(vocab_size, dtype=jnp.int32), batch_size)
-    batch_indices = batch_indices.reshape(batch_size, vocab_size)
-    vocab_indices = vocab_indices.reshape(batch_size, vocab_size)
+    # Create 2D indices for all batch and vocab positions using broadcasted_iota
+    batch_indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 0)
+    vocab_indices = lax.broadcasted_iota(jnp.int32, (batch_size, vocab_size), 1)
 
     # Generate uniform random values using sparse_random_uniform
     # We use the batch and vocab indices to generate unique random values
