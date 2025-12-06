@@ -238,7 +238,7 @@ def dynamic_topk_kernel(
   token_slice = pl.dslice(pid * block_token, block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
-      shape, get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
+      shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
   )
 
   for i in range(block_token):
