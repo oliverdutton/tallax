@@ -108,10 +108,11 @@ def _fused_sampling_kernel(
     # Add Gumbel noise to scaled logits
     logits_with_gumbel = sorted_logits_scaled + gumbel
 
-    # Step 7: Find argmax using bitonic_topk_inner
+    # Step 7: Find argmax of Gumbel-perturbed logits
+    # Since we only need the argmax (k=1), use bitonic_topk_inner with k=1
     _, sampled_local_indices = bitonic_topk_inner(
         [logits_with_gumbel, lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)],
-        k=NUM_LANES,
+        k=1,
         num_keys=1
     )
 
