@@ -63,6 +63,7 @@ def fused_sampling_kernel(
     """
     Fused kernel implementing top-p filtering, temperature scaling, and sampling.
     """
+    shape = topk_logits_ref.shape
 
     # Convert logits to float32
     topk_logits = topk_logits_ref[...].astype(jnp.float32)
@@ -77,9 +78,19 @@ def fused_sampling_kernel(
     # do in dim0 as its faster, avoids some lane permutes
     cumsum_probs = cumsum(probs.T, axis=0).T
 
-    # Mask sorted logits where cumulative probability > top_p
-    mask = cumsum_probs <= top_p_ref[...][:, None]
-    topp_logits = jnp.where(mask, topk_logits, -1e12)
+    # Find minimal number of values to cumsum >= p
+    # count how many values cumsum don't cover top-p, then add 1 to find the threshold
+    num_topp_vals = (cumsum_probs < top_p_ref[...][:, None]).sum(1, keepdims=True) + 1
+    # vLLM current implementation uses binary search, computing a threshold. this includes ties in value at the top-p boundary for sampling. we replicate that behavior here
+    thresholds = jnp.take_along_axis(
+      topk_logits,
+      jnp.broadcast_to(num_topp_vals - 1, topk_logits.shape),
+      1)
+    # we must cover the mass
+    topp_logits = jnp.where(
+    #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < num_topp_vals,
+    topk_logits >= thresholds,
+    topk_logits, -1e12)
 
     # Step 5: Apply temperature scaling
     topp_logits_scaled = topp_logits / temperature_ref[...][:, None].astype(topp_logits.dtype)
