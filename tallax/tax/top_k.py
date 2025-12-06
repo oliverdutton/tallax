@@ -454,7 +454,7 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),
   )
 
   output_specs = (
