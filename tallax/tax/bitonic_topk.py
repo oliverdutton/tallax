@@ -164,7 +164,6 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
         arrs_tiles,
         num_substages=stage,
         stage=stage,
-        dim1_offset=0,
         dim0=dim0,
         num_keys=num_keys,
       )
@@ -185,7 +184,6 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
         num_substages=log_lanes,
         # tile i is different order to tile i+1, so they can be max merged
         stage=log2(NUM_LANES * NUM_LANES // dim0),
-        dim1_offset=0,
         dim0=dim0,
         num_keys=num_keys,
       )
@@ -208,7 +206,6 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
         arrs_tiles,
         num_substages=log_lanes,
         stage=log_lanes+i,
-        dim1_offset=0,
         dim0=dim0,
         num_keys=num_keys,
       )
