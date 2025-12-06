@@ -168,7 +168,7 @@ def _topk_and_merge_unconverged_bins(
     in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
     # Extract values from all full bins at this offset
-    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)] for start_idx in range(offset, vocab_size, num_bins)]
+    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for start_idx in range(offset, vocab_size, num_bins)]
 
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
