@@ -29,6 +29,7 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     
     topk_logits = topk_logits.T
     topk_idx = topk_idx.T
+    shape = shape[::-1]
 
     # Step 3: jax.nn.softmax
     # For numerical stability, subtract max (pre-sorted so its the first element)
@@ -45,7 +46,7 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     # so ties at the threshold are all included    
     # we replicate that behavior here
     thresholds = jnp.take_along_axis(
-      topk_logits, jnp.broadcast_to(threshold_idx, shape[::-1]), 0)
+      topk_logits, jnp.broadcast_to(threshold_idx, shape, 0)
     topp_logits = jnp.where(
     #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < threshold_idx + 1,
     topk_logits >= thresholds,
