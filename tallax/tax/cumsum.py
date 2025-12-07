@@ -52,7 +52,7 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   
   batch_axis = 1 - axis
   return jnp.concatenate(
-    [_cumsum(x, axis=axis) 
+    [_cumsum(x) 
       for x in jnp.split(
         arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis)
     ],
