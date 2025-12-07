@@ -49,7 +49,7 @@ def top1(operands, num_keys, axis):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
     operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
   assert operands[0].shape[0] == NUM_SUBLANES
-  if shape[1] % NUM_LANES != 0:
+  if operands[0].shape[1] % NUM_LANES != 0:
     raise NotImplementedError
     
   arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
