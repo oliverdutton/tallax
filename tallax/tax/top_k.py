@@ -651,7 +651,7 @@ def dynamic_topk_kernel(
           .astype(to_32bit_dtype(logits_ref.dtype))
           .sum(-1)
       )
-      termination_flag_ref[0] = (num_larger >= k_ref[...]).all().astype(jnp.int32)
+      termination_flag_ref[0] = (num_larger >= k_ref[token_slice]).all().astype(jnp.int32)
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
@@ -826,7 +826,7 @@ def top_dynamic_k(
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-          pl.BlockSpec((block_token,), lambda i: (i,)),
+          pl.BlockSpec(),
       ),
       out_shape=output_shapes,
       scratch_shapes=tuple(scratch_shapes),
