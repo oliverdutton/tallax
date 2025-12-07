@@ -82,7 +82,7 @@ def fused_sampling_kernel(
     threshold_idx = (cumsum_probs < top_p_ref[...][:, None]).sum(1, keepdims=True)
     # vLLM current implementation uses binary search, computing a threshold. this includes ties in value at the top-p boundary for sampling. we replicate that behavior here
     thresholds = jnp.take_along_axis(
-      topk_logits, threshold_idx, 1)
+      topk_logits, jnp.broadcast t_to(threshold_idx, shape), 1)
     # we must cover the mass
     topp_logits = jnp.where(
     #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < num_topp_vals,
