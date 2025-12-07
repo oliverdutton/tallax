@@ -11,7 +11,7 @@ from tallax.utils import NUM_LANES, NUM_SUBLANES, pad
 def pallas_compatible_take_along_axis(val, idx, axis):
   shape = idx.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
-  val, idx = (pad(x, tile_shape, pad_val=0) for x in (val, idx))
+  val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
   def _gather(val, idx):
     # Initialize accumulators
     accumulators = [
