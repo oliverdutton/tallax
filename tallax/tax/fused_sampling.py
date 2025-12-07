@@ -17,7 +17,7 @@ from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile
 
 _SAMPLING_EPS = 1e-5
 
-def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size):
+def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val):
     """
     Implements top-p filtering, temperature scaling, and sampling.
     """
@@ -45,7 +45,7 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     topp_logits = jnp.where(
     #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < threshold_idx + 1,
     topk_logits >= thresholds,
-    topk_logits, -1e12)
+    topk_logits, replace_val)
 
     # Step 5: Apply temperature scaling
     topp_logits_scaled = topp_logits / temperature[:, None].astype(topp_logits.dtype)
@@ -85,6 +85,7 @@ def top_p_and_sample_kernel(
     sampled_tokens_ref,
     *,
     vocab_size: int,
+    replace_val: float,
 ):
     """
     Fused kernel implementing top-p filtering, temperature scaling, and sampling.
@@ -95,11 +96,13 @@ def top_p_and_sample_kernel(
       rng_key=rng_key_ref, # SMEM, so keep as ref
       top_p=top_p_ref[...],
       temperature=temperature_ref[...],
-      vocab_size=vocab_size)
+      vocab_size=vocab_size,
+      replace_val=replace_val,
+    )
 
 @functools.partial(
     jit,
-    static_argnames=("vocab_size", "interpret",),
+    static_argnames=("vocab_size", "replace_val", "interpret",),
 )
 def top_p_and_sample(
     topk_logits: jax.Array,
@@ -109,6 +112,7 @@ def top_p_and_sample(
     temperature: jax.Array,
     *,
     vocab_size: int,
+    replace_val: float,
     interpret: bool = False,
 ) -> jax.Array:
     """
@@ -130,6 +134,7 @@ def top_p_and_sample(
         functools.partial(
           top_p_and_sample_kernel, 
           vocab_size=vocab_size,
+          replace_val=replace_val
         ),
         in_specs=(
           pl.BlockSpec(),
