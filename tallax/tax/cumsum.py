@@ -9,7 +9,8 @@ from tallax.utils import (
     iota_tile,
     NUM_LANES,
     NUM_SUBLANES,
-    log2
+    log2,
+    pad
 )
 
 def cumsum_tile(tile, axis):
