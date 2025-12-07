@@ -39,6 +39,52 @@ from tallax.tax.sort import (
     compare,
 )
 
+def top1(operands, num_keys, axis):
+  assert axis==0
+  unpadded_shape = operands[0].shape
+  assert unpadded_shape[0] == 2**log2(unpadded_shape[0])
+  assert unpadded_shape[0] >= NUM_SUBLANES
+  # Save original dtypes to preserve them through processing
+  original_dtypes = [x.dtype for x in operands]
+  operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
+  # Convert to 32-bit dtypes for processing (int stays int, float stays float)
+  operands = [x.astype(to_32bit_dtype(x.dtype)) for x in operands]
+  shape = operands[0].shape
+  for _ in range(log2(shape[0] // NUM_SUBLANES)):
+    lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
+    operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
+  assert operands[0].shape[0] == NUM_SUBLANES
+  if shape[1] % NUM_LANES != 0:
+    raise NotImplementedError
+
+  arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
+  for stage in range(log2(NUM_SUBLANES))[::-1]:
+    permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
+
+    # Apply permutation to all tiles
+    arrs_tiles_permuted = jax.tree.map(
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
+      arrs_tiles
+    )
+
+    # Compare and merge with permuted values
+    outs_tiles = [[] for _ in arrs_tiles]
+    for _, (lefts, rights) in enumerate(zip(
+          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+          strict=True
+      )):
+        for j, (o, _) in enumerate(compare(
+            lefts, rights,
+            is_descending=True,
+            num_keys=num_keys
+        )):
+          outs_tiles[j].append(o)
+    arrs_tiles = outs_tiles
+  # Convert back to original dtypes before returning
+  return [jnp.concatenate(tiles, axis=1)[:1,:unpadded_shape[1]].astype(orig_dtype)
+          for tiles, orig_dtype in zip(arrs_tiles, original_dtypes)]
+
+
 def flat(xs):
   return list(chain.from_iterable(xs))
 
