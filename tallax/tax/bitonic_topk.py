@@ -49,7 +49,7 @@ def top1(operands, num_keys, axis):
   for _ in range(log2(shape[0] // NUM_SUBLANES)):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
     operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
-  assert shape[0] == NUM_SUBLANES
+  assert operands[0].shape[0] == NUM_SUBLANES
   if shape[1] % NUM_LANES != 0:
     raise NotImplementedError
     
