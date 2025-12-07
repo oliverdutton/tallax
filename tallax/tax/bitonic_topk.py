@@ -41,15 +41,16 @@ from tallax.tax.sort import (
 
 def top1(operands, num_keys, axis):
   assert axis==0
-  shape = operands[0].shape
-  assert shape[0] == 2**log2(shape[0])
-  assert shape[0] >= NUM_SUBLANES
+  unpadded_shape = operands[0].shape
+  assert unpadded_shape[0] == 2**log2(unpadded_shape[0])
+  assert unpadded_shape[0] >= NUM_SUBLANES
   operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
+  shape = operands[0].shape
   for _ in range(log2(shape[0] // NUM_SUBLANES)):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
     operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
-  assert operands[0].shape[0] == NUM_SUBLANES
-  if operands[0].shape[1] % NUM_LANES != 0:
+  assert shape[0] == NUM_SUBLANES
+  if shape[1] % NUM_LANES != 0:
     raise NotImplementedError
     
   arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
@@ -75,7 +76,7 @@ def top1(operands, num_keys, axis):
         )):
           outs_tiles[j].append(o)
     arrs_tiles = outs_tiles
-  return [jnp.concatenate(tiles, axis=1)[:1,:shape[1]] for tiles in arrs_tiles]
+  return [jnp.concatenate(tiles, axis=1)[:1,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
 def flat(xs):
