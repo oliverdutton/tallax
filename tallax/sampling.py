@@ -19,6 +19,46 @@ from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpos
 _SAMPLING_EPS = 1e-5
 
 
+def topp_mask(*, topk_logits, p, replace_val, axis):
+    """
+    Apply top-p filtering mask to sorted logits.
+
+    Args:
+        topk_logits: Sorted logits (descending order)
+        p: Top-p threshold(s)
+        replace_val: Value to replace filtered logits with
+        axis: Axis along which to apply filtering (must be 0)
+
+    Returns:
+        Masked logits with values outside top-p set to replace_val
+    """
+    if axis != 0:
+        raise NotImplementedError("topp_mask only supports axis=0")
+
+    shape = topk_logits.shape
+
+    # Compute softmax probabilities
+    # For numerical stability, subtract max (pre-sorted so its the first element)
+    exp_logits = jnp.exp(topk_logits - topk_logits[:1,:])
+    probs = exp_logits / exp_logits.sum(axis=0, keepdims=True)
+
+    # Top-p filtering using cumsum on sorted probabilities
+    cumsum_probs = cumsum(probs, axis=0)
+
+    # Find last idx where top-p probability mass is not covered
+    threshold_idx = (cumsum_probs < p[None,:]).sum(0, keepdims=True)
+    # vLLM current implementation uses binary search, computing a threshold.
+    # so ties at the threshold are all included
+    # we replicate that behavior here
+    thresholds = take_along_axis(
+        topk_logits, jnp.broadcast_to(threshold_idx, shape), 0)
+    topp_logits = jnp.where(
+        topk_logits >= thresholds,
+        topk_logits, replace_val)
+
+    return topp_logits
+
+
 def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val):
     """
     Implements top-p filtering, temperature scaling, and sampling.
@@ -27,31 +67,18 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
 
     # Convert logits to float32
     topk_logits = topk_logits.astype(jnp.float32)
-    
+
     topk_logits = topk_logits.T
     topk_idx = topk_idx.T
     shape = shape[::-1]
 
-    # Step 3: jax.nn.softmax
-    # For numerical stability, subtract max (pre-sorted so its the first element)
-    exp_logits = jnp.exp(topk_logits - topk_logits[:1,:])
-    probs = exp_logits / exp_logits.sum(axis=0, keepdims=True)
-
-    # Step 4: Top-p filtering using cumsum on sorted probabilities
-    # do in axis 0 as its faster, avoids some lane permutes
-    cumsum_probs = cumsum(probs, axis=0)
-
-    # Find last idx where top-p probability mass is not covered
-    threshold_idx = (cumsum_probs < top_p[None,:]).sum(0, keepdims=True)
-    # vLLM current implementation uses binary search, computing a threshold.
-    # so ties at the threshold are all included    
-    # we replicate that behavior here
-    thresholds = take_along_axis(
-      topk_logits, jnp.broadcast_to(threshold_idx, shape), 0)
-    topp_logits = jnp.where(
-    #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < threshold_idx + 1,
-    topk_logits >= thresholds,
-    topk_logits, replace_val)
+    # Apply top-p masking
+    topp_logits = topp_mask(
+        topk_logits=topk_logits,
+        p=top_p,
+        replace_val=replace_val,
+        axis=0
+    )
 
     # Step 5: Apply temperature scaling
     topp_logits_scaled = topp_logits / temperature[None,:].astype(topp_logits.dtype)
