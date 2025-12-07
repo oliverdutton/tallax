@@ -69,7 +69,7 @@ def top1(operands, num_keys, axis):
           *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
           strict=True
       )):
-        for j, (o, _) in enumerate(_compare(
+        for j, (o, _) in enumerate(compare(
             lefts, rights,
             is_descending=True,
             num_keys=num_keys
