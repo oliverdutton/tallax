@@ -168,7 +168,7 @@ def _topk_and_merge_unconverged_bins(
     in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
     # Extract values from all full bins at this offset
-    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)] for start_idx in range(offset, vocab_size, num_bins)]
+    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for start_idx in range(offset, vocab_size, num_bins)]
 
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
@@ -219,6 +219,7 @@ def dynamic_topk_kernel(
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
     guarantee_convergence: bool,
+    replace_val: float | int | None,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -230,6 +231,7 @@ def dynamic_topk_kernel(
   The termination criterion checks if the top-(m-1) bins collectively contain at least
   k values larger than the largest m-th largest value across all bins.
   """
+  assert replace_val is None
   # Initialize buffers
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
@@ -238,7 +240,7 @@ def dynamic_topk_kernel(
   token_slice = pl.dslice(pid * block_token, block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
-      shape, get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
+      shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
   )
 
   for i in range(block_token):
@@ -373,6 +375,7 @@ def dynamic_topk_kernel(
         "bins_topm_unroll",
         "bins_topm_schedule",
         "guarantee_convergence",
+        "replace_val",
         "interpret"
     ),
 )
@@ -385,6 +388,7 @@ def top_dynamic_k(
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
+    replace_val: float | int | None = None,
     interpret: bool = False,
 ):
   """
@@ -454,7 +458,7 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),
   )
 
   output_specs = (
@@ -480,6 +484,7 @@ def top_dynamic_k(
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
           guarantee_convergence=guarantee_convergence,
+          replace_val=replace_val,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),

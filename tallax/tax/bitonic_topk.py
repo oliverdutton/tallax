@@ -80,8 +80,11 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
   Returns:
     Tuple of (padded_dim0, padded_dim1) compatible with sublane transpose
   """
-  if unpadded_dim0 > NUM_LANES:
-    raise NotImplementedError
+  if unpadded_dim0 >= NUM_LANES:
+    dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
+    dim1 = cei_multiple(unpadded_dim1, NUM_LANES)
+    return (dim0, dim1)
+
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
     if 2**i >= unpadded_dim0]
   shapes = [
@@ -152,6 +155,8 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
     # For dim0 < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For dim0 >= NUM_LANES: we want more tiles proportional to dim0
     dim0 = padded_shape[0]
+    if dim0 > NUM_LANES:
+      raise NotImplementedError
     log_lanes = log2(NUM_LANES)
     num_merges = log2(shape[1]) - log_lanes
     num_intra_merges = min(
@@ -316,6 +321,8 @@ def bitonic_topk(
       )
 
     operands, unpadded_shape = canonicalize_operand(operand)
+    if unpadded_shape[0] > NUM_LANES:
+      raise NotImplementedError
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape
