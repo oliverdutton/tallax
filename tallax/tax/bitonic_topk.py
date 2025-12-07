@@ -158,6 +158,8 @@ def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: 
     # For dim0 < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
     # For dim0 >= NUM_LANES: we want more tiles proportional to dim0
     dim0 = padded_shape[0]
+    if dim0 > NUM_LANES:
+      raise NotImplementedError
     log_lanes = log2(NUM_LANES)
     num_merges = log2(shape[1]) - log_lanes
     num_intra_merges = min(
@@ -325,6 +327,8 @@ def bitonic_topk(
       )
 
     operands, unpadded_shape = canonicalize_operand(operand)
+    if unpadded_shape[0] > NUM_LANES:
+      raise NotImplementedError
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape
