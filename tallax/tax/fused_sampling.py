@@ -94,7 +94,7 @@ def fused_sampling_kernel(
 
     # Step 6: Categorical sampling using Gumbel-max trick
     # Generate Gumbel noise using sparse random uniform
-    dim0_idx = lax.broadcasted_iota(jnp.int32, topk_idx.shape, 0)
+    dim0_idx = lax.broadcasted_iota(jnp.int32, shape, 0)
     u = sparse_random_uniform(
         rng_key_ref,
         (dim0_idx, topk_idx),
