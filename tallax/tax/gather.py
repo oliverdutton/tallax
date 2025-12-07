@@ -25,10 +25,10 @@ def pallas_compatible_take_along_axis(val, idx, axis):
       # Apply to all K blocks
       for idx_offset in range(0, idx.shape[axis], tile_shape[axis]):
         idx_tile = lax.slice_in_dim(idx, idx_offset, idx_offset+tile_shape[axis], axis=axis)
-        mask = (idx_tile >= idx_offset) & (idx_tile < idx_offset + tile_shape[axis])
+        mask = (idx_tile >= val_offset) & (idx_tile < val_offset + tile_shape[axis])
         gather_tile = jnp.take_along_axis(
             val_tile,
-            idx_tile % tile_shape[axis],
+            (idx_tile - val_offset) % tile_shape[axis],
             axis=axis
         )
         i = idx_offset // tile_shape[axis]      
