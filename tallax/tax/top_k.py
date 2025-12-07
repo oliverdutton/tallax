@@ -219,6 +219,7 @@ def dynamic_topk_kernel(
     bins_topm_unroll: int,
     bins_topm_schedule: tuple[int, ...],
     guarantee_convergence: bool,
+    replace_val: float | int | None,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -230,6 +231,7 @@ def dynamic_topk_kernel(
   The termination criterion checks if the top-(m-1) bins collectively contain at least
   k values larger than the largest m-th largest value across all bins.
   """
+  assert replace_val is None
   # Initialize buffers
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
@@ -373,6 +375,7 @@ def dynamic_topk_kernel(
         "bins_topm_unroll",
         "bins_topm_schedule",
         "guarantee_convergence",
+        "replace_val",
         "interpret"
     ),
 )
@@ -385,6 +388,7 @@ def top_dynamic_k(
     bins_topm_unroll: int = 32,
     bins_topm_schedule: tuple[int, ...] | None = None,
     guarantee_convergence: bool = False,
+    replace_val: float | int | None = None,
     interpret: bool = False,
 ):
   """
@@ -480,6 +484,7 @@ def top_dynamic_k(
           bins_topm_unroll=bins_topm_unroll,
           bins_topm_schedule=bins_topm_schedule,
           guarantee_convergence=guarantee_convergence,
+          replace_val=replace_val,
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
