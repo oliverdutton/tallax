@@ -39,6 +39,45 @@ from tallax.tax.sort import (
     compare,
 )
 
+def top1(operands, num_keys, axis):
+  assert axis==0
+  shape = operands[0].shape
+  assert shape[0] == 2**log2(shape[0])
+  assert shape[0] >= NUM_SUBLANES
+  operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
+  for _ in log2(shape[0] // NUM_SUBLANES):
+    lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
+    operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
+  assert operands[0].shape[0] == NUM_SUBLANES
+  if shape[1] % NUM_LANES != 0:
+    raise NotImplementedError
+    
+  arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
+  for stage in range(log2(NUM_SUBLANES)):  
+    permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
+  
+    # Apply permutation to all tiles
+    arrs_tiles_permuted = jax.tree.map(
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
+      arrs_tiles
+    )
+  
+    # Compare and merge with permuted values
+    outs_tiles = [[] for _ in arrs_tiles]
+    for _, (lefts, rights) in enumerate(zip(
+          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+          strict=True
+      )):
+        for j, (o, _) in enumerate(_compare(
+            lefts, rights,
+            is_descending=True,
+            num_keys=num_keys
+        )):
+          outs_tiles[j].append(o)
+    arrs_tiles = outs_tiles
+  return [jnp.concatenate(tiles, axis=1)[:1,:shape[1]] for tiles in arrs_tiles]
+
+
 def flat(xs):
   return list(chain.from_iterable(xs))
 
