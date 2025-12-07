@@ -54,7 +54,7 @@ def top1(operands, num_keys, axis):
     raise NotImplementedError
     
   arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
-  for stage in range(log2(NUM_SUBLANES)):  
+  for stage in range(log2(NUM_SUBLANES))[::-1]:  
     permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
   
     # Apply permutation to all tiles
