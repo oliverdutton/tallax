@@ -19,7 +19,7 @@ _SAMPLING_EPS = 1e-5
 def cumsum_tile(tile, axis):
   i=1
   while i<tile.shape[axis]:
-    permutation = jax.lax.broadcasted_iota(jnp.int32, tile.shape, axis) - 2**i
+    permutation = jax.lax.broadcasted_iota(jnp.int32, tile.shape, axis) - i
     tile += jnp.where(
       permutation>=0,
       jnp.take_along_axis(tile, permutation % tile.shape[axis], axis=axis),
