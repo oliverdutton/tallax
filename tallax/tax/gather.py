@@ -38,7 +38,7 @@ def pallas_compatible_take_along_axis(val, idx, axis):
   assert val.shape[batch_axis]==idx.shape[batch_axis]
   return jnp.concatenate(
     [_gather(v, i) 
-      for v, i in zip(map(lambda arr: jnp.split(
+      for v, i in zip(*map(lambda arr: jnp.split(
         arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis), (val, idx)))
     ],
     axis=batch_axis
