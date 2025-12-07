@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic_topk import bitonic_topk_inner as topk
 from tallax.tax.sparse_random import sparse_random_uniform
-from tallax.tax.cumsum import cumsum_jax_inner as cumsum
+from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
 from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile
 
 _SAMPLING_EPS = 1e-5
