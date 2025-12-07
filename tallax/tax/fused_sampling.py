@@ -41,7 +41,7 @@ def cumsum(arr, axis):
     for i in range(1, n): 
       outs[i] += tile_sums[i-1]
       tile_sums[i] += tile_sums[i-1]
-    return jnp.concatenate(tiles, axis=0)
+    return jnp.concatenate(outs, axis=0)
     
   return jnp.concatenate(
     [
