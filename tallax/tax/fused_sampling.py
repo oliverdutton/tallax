@@ -11,6 +11,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic_topk import bitonic_topk_inner as topk, top1
+from tallax.tax.gather import pallas_compatible_take_along_axis as take_along_axis
 from tallax.tax.sparse_random import sparse_random_uniform
 from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
 from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
@@ -45,7 +46,7 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     # vLLM current implementation uses binary search, computing a threshold.
     # so ties at the threshold are all included    
     # we replicate that behavior here
-    thresholds = jnp.take_along_axis(
+    thresholds = take_along_axis(
       topk_logits, jnp.broadcast_to(threshold_idx, shape), 0)
     topp_logits = jnp.where(
     #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < threshold_idx + 1,
