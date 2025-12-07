@@ -45,7 +45,7 @@ def top1(operands, num_keys, axis):
   assert shape[0] == 2**log2(shape[0])
   assert shape[0] >= NUM_SUBLANES
   operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
-  for _ in log2(shape[0] // NUM_SUBLANES):
+  for _ in range(log2(shape[0] // NUM_SUBLANES)):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
     operands = compare(lefts, rights, num_keys=num_keys, is_descending=True)[0]
   assert operands[0].shape[0] == NUM_SUBLANES
