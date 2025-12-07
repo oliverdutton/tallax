@@ -17,14 +17,13 @@ from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, to_32bit_dtype, log2
 _SAMPLING_EPS = 1e-5 
 
 def cumsum_tile(tile, axis):
-  i=1
-  while i<tile.shape[axis]:
-    permutation = jax.lax.broadcasted_iota(jnp.int32, tile.shape, axis) - i
+  n = tile.shape[axis]
+  for stage in range(log2(n)):
+    permutation = jax.lax.broadcasted_iota(jnp.int32, tile.shape, axis) - 2**stage
     tile += jnp.where(
       permutation>=0,
-      jnp.take_along_axis(tile, permutation % tile.shape[axis], axis=axis),
-      0)
-    i *= 2
+      jnp.take_along_axis(tile, permutation % n, axis=axis),
+      axis)
   return tile
 
 def cumsum(arr, axis):
