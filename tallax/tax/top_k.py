@@ -194,16 +194,16 @@ def _topk_and_merge_unconverged_bins(
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
   val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :NUM_LANES]], axis=1)
   idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :NUM_LANES]], axis=1)
+  (
+    bins_topm_vals_ref[:, :NUM_LANES],
+    bins_topm_idxs_ref[:, :NUM_LANES]
+  ) = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
 
-  # Use bitonic_topk_inner directly with jax arrays
-  top_val, top_idx = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
-
-  bins_topm_vals_ref[:, :NUM_LANES] = top_val
-  bins_topm_idxs_ref[:, :NUM_LANES] = top_idx
 
 def dynamic_topk_kernel(
     logits_ref,
-    k_ref,
+    k_smem_ref,
+    k_vmem_ref,
     topk_vals_ref,
     topk_idxs_ref,
     valid_ref,
@@ -231,7 +231,6 @@ def dynamic_topk_kernel(
   The termination criterion checks if the top-(m-1) bins collectively contain at least
   k values larger than the largest m-th largest value across all bins.
   """
-  assert replace_val is None
   # Initialize buffers
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
@@ -291,7 +290,29 @@ def dynamic_topk_kernel(
           .astype(to_32bit_dtype(logits_ref.dtype))
           .sum(-1)
       )
-      termination_flag_ref[0] = (num_larger >= k_ref[...]).all().astype(jnp.int32)
+
+      termination_flag_ref[0] = 0
+      for i in range(block_token):
+        token_idx = pid * block_token + i
+        # Dynamic check against k
+        contains_topk = num_larger[i] >= k_smem_ref[token_idx]
+        termination_flag_ref[0] += contains_topk
+
+        # Record depth when criterion was met
+        current_max = max_depth_ref[token_idx]
+        max_depth_ref[token_idx] = jnp.where(
+            contains_topk & (current_max == max_k),
+            m - 1,
+            current_max
+        )
+        # Record largest m-th largest value
+        # Useful for bounds checking if running sharded topk
+        cutoff_vals_ref[token_idx] = pivot.squeeze(1)[i]
+
+      # Check if all tokens converged
+      @pl.when(termination_flag_ref[0] != block_token)
+      def _():
+        termination_flag_ref[0] = 0
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
@@ -300,7 +321,6 @@ def dynamic_topk_kernel(
     # This optimization applies when guarantee_convergence is enabled but
     # we haven't fully converged (m_final != max_k) and termination criterion not met.
     # Packs the most active bins to help converge.
-
     _topk_and_merge_unconverged_bins(
         logits_ref,
         bins_topm_vals_ref.at[token_slice],
@@ -342,6 +362,11 @@ def dynamic_topk_kernel(
           num_keys=1,
           descending=True,
         )
+        if replace_val is not None:
+          idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
+          topk_vals_ref[...] = jnp.where(
+            idx < k_vmem_ref[...][:, None],
+            topk_vals_ref[...], replace_val)
 
 
 @functools.partial(
@@ -466,7 +491,9 @@ def top_dynamic_k(
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-          pl.BlockSpec((block_token,), lambda i: (i,)),
+          # for TPU Pallas lowering reasons it's convenient to have both SMEM and VMEM k
+          pl.BlockSpec(memory_space=pltpu.SMEM),
+          pl.BlockSpec(memory_space=pltpu.VMEM),
       ),
       out_shape=output_shapes,
       scratch_shapes=tuple(scratch_shapes),
@@ -476,7 +503,7 @@ def top_dynamic_k(
         vmem_limit_bytes=int(0.9 * 2**27)
       ),
       interpret=interpret,
-  )(logits, k)
+  )(logits, k, k)
   topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
   topk_vals, topk_idxs = (x[:,:max_k] for x in (topk_vals, topk_idxs))
@@ -485,7 +512,6 @@ def top_dynamic_k(
   if guarantee_convergence:
     return topk_vals, topk_idxs
   return topk_vals, topk_idxs, valid, depths, cutoff_vals
-
 
 @functools.partial(
     jit,
