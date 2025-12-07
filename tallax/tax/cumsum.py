@@ -23,15 +23,13 @@ def cumsum_tile(tile, axis):
       0)
   return tile
 
-def pallas_compatible_cumsum(arr, axis, dtype=None):
+def pallas_compatible_cumsum(arr, axis, reverse=False):
   '''
-  TPU Pallas lowerable array based implementation of jax.numpy.cumsum
+  TPU Pallas lowerable array based implementation of jax.lax.cumsum
   
   Note: most TPU versions do not allow lane sums in bfloat16, so suggest specifying dtype=jnp.float32
   '''
   assert arr.ndim==2
-  if dtype is not None:
-    arr = arr.astype(dtype)
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   arr = pad(arr, tile_shape)
@@ -43,6 +41,12 @@ def pallas_compatible_cumsum(arr, axis, dtype=None):
     for i in range(1, n): 
       outs[i] += tile_sums[i-1]
       tile_sums[i] += tile_sums[i-1]
+    if reverse:
+      # reverse tiles
+      out = outs[::-1]
+      # reverse within tiles
+      reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
+      outs = [jnp.take_along_axis(tile, reversal_perm, axis=axis) for tile in outs]
     return jnp.concatenate(outs, axis=axis)
   
   batch_axis = 1 - axis
