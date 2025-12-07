@@ -10,12 +10,13 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.bitonic_topk import bitonic_topk_inner as topk
+from tallax.tax.bitonic_topk import bitonic_topk_inner as topk, top1
 from tallax.tax.sparse_random import sparse_random_uniform
 from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
-from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile
+from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
 _SAMPLING_EPS = 1e-5
+
 
 def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val):
     """
@@ -25,34 +26,37 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
 
     # Convert logits to float32
     topk_logits = topk_logits.astype(jnp.float32)
+    
+    topk_logits = topk_logits.T
+    topk_idx = topk_idx.T
 
     # Step 3: jax.nn.softmax
     # For numerical stability, subtract max (pre-sorted so its the first element)
-    exp_logits = jnp.exp(topk_logits - topk_logits[:,:1])
-    probs = exp_logits / exp_logits.sum(axis=-1, keepdims=True)
+    exp_logits = jnp.exp(topk_logits - topk_logits[:1,:])
+    probs = exp_logits / exp_logits.sum(axis=0, keepdims=True)
 
     # Step 4: Top-p filtering using cumsum on sorted probabilities
     # do in axis 0 as its faster, avoids some lane permutes
-    cumsum_probs = cumsum(probs.T, axis=0).T
+    cumsum_probs = cumsum(probs, axis=0)
 
     # Find last idx where top-p probability mass is not covered
-    threshold_idx = (cumsum_probs < top_p[:, None]).sum(1, keepdims=True)
+    threshold_idx = (cumsum_probs < top_p[None,:]).sum(0, keepdims=True)
     # vLLM current implementation uses binary search, computing a threshold.
     # so ties at the threshold are all included    
     # we replicate that behavior here
     thresholds = jnp.take_along_axis(
-      topk_logits, jnp.broadcast_to(threshold_idx, shape), 1)
+      topk_logits, jnp.broadcast_to(threshold_idx, shape), 0)
     topp_logits = jnp.where(
     #jax.lax.broadcasted_iota(jnp.int32, shape, 1) < threshold_idx + 1,
     topk_logits >= thresholds,
     topk_logits, replace_val)
 
     # Step 5: Apply temperature scaling
-    topp_logits_scaled = topp_logits / temperature[:, None].astype(topp_logits.dtype)
+    topp_logits_scaled = topp_logits / temperature[None,:].astype(topp_logits.dtype)
 
     # Step 6: Categorical sampling using Gumbel-max trick
     # Generate Gumbel noise using sparse random uniform
-    dim0_idx = lax.broadcasted_iota(jnp.int32, shape, 0)
+    dim0_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
     u = sparse_random_uniform(
         rng_key,
         (dim0_idx, topk_idx),
@@ -67,14 +71,14 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     gumbel_logits = topp_logits_scaled + gumbel
     # Find argmax of Gumbel-perturbed logits
     # Since we only need the argmax (k=1), use bitonic_topk_inner with k=1
-    sampled_tokens = topk(
+    sampled_tokens = top1(
         [gumbel_logits, topk_idx],
-        k=1,
-        num_keys=1
-    )[1].squeeze(1)
+        num_keys=1,
+        axis=0
+    )[1].squeeze(0)
     return jnp.where(
       temperature < _SAMPLING_EPS,
-      topk_idx[:, 0], sampled_tokens)
+      topk_idx[0,:], sampled_tokens)
 
 def top_p_and_sample_kernel(
     topk_logits_ref,
