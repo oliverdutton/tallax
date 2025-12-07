@@ -81,8 +81,11 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
   Returns:
     Tuple of (padded_dim0, padded_dim1) compatible with sublane transpose
   """
-  if unpadded_dim0 > NUM_LANES:
-    raise NotImplementedError
+  if unpadded_dim0 >= NUM_LANES:
+    dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
+    dim1 = cei_multiple(unpadded_dim1, NUM_LANES)
+    return (dim0, dim1)
+
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
     if 2**i >= unpadded_dim0]
   shapes = [
