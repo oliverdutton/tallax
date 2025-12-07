@@ -512,3 +512,56 @@ def top_dynamic_k(
   if guarantee_convergence:
     return topk_vals, topk_idxs
   return topk_vals, topk_idxs, valid, depths, cutoff_vals
+
+@functools.partial(
+    jit,
+    static_argnames=(
+        "k",
+        "block_token",
+        "num_bins",
+        "bins_topm_unroll",
+        "bins_topm_schedule",
+        "interpret"
+    ),
+)
+def top_k(
+    logits,
+    k: int,
+    block_token: int = NUM_SUBLANES,
+    num_bins: int = NUM_LANES,
+    bins_topm_unroll: int = 32,
+    bins_topm_schedule: tuple[int, ...] | None = None,
+    interpret: bool = False,
+):
+  """
+  Compute top-k elements with guaranteed convergence.
+
+  Simplified interface for uniform k across all tokens. Automatically ensures
+  convergence by setting guarantee_convergence=True internally.
+
+  Args:
+      logits: Input logits of shape [num_tokens, vocab_size].
+      k: Number of top elements to find (uniform across all tokens).
+      block_token: Number of tokens processed per program block (default: 8).
+      num_bins: Number of bins for parallel operations (default: 128).
+      bins_topm_unroll: Loop unroll factor for inner loop (default: 32).
+      bins_topm_schedule: Optional custom search schedule. If None, automatically
+          computed.
+      interpret: If True, run in CPU interpret mode (default: False).
+
+  Returns:
+      Tuple of (topk_vals, topk_idxs):
+          - topk_vals: Top-k values of shape [num_tokens, k].
+          - topk_idxs: Top-k indices of shape [num_tokens, k].
+  """
+  return top_dynamic_k(
+    logits,
+    k=k,
+    max_k=k,
+    block_token=block_token,
+    num_bins=num_bins,
+    bins_topm_unroll=bins_topm_unroll,
+    bins_topm_schedule=bins_topm_schedule,
+    guarantee_convergence=True,
+    interpret=interpret,
+  )
