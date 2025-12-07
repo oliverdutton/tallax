@@ -291,29 +291,7 @@ def dynamic_topk_kernel(
           .astype(to_32bit_dtype(logits_ref.dtype))
           .sum(-1)
       )
-
-      termination_flag_ref[0] = 0
-      for i in range(block_token):
-        token_idx = pid * block_token + i
-        # Dynamic check against k
-        contains_topk = num_larger[i] >= k_ref[token_idx]
-        termination_flag_ref[0] += contains_topk
-
-        # Record depth when criterion was met
-        current_max = max_depth_ref[token_idx]
-        max_depth_ref[token_idx] = jnp.where(
-            contains_topk & (current_max == max_k),
-            m - 1,
-            current_max
-        )
-        # Record largest m-th largest value
-        # Useful for bounds checking if running sharded topk
-        cutoff_vals_ref[token_idx] = pivot.squeeze(1)[i]
-
-      # Check if all tokens converged
-      @pl.when(termination_flag_ref[0] != block_token)
-      def _():
-        termination_flag_ref[0] = 0
+      termination_flag_ref[0] = (num_larger >= k_ref[...]).all().astype(jnp.int32)
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
@@ -488,7 +466,7 @@ def top_dynamic_k(
       ),
       in_specs=(
           pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-          pl.BlockSpec(memory_space=pltpu.SMEM),
+          pl.BlockSpec((block_token,), lambda i: (i,)),
       ),
       out_shape=output_shapes,
       scratch_shapes=tuple(scratch_shapes),
