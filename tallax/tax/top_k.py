@@ -194,12 +194,11 @@ def _topk_and_merge_unconverged_bins(
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
   val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :NUM_LANES]], axis=1)
   idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :NUM_LANES]], axis=1)
+  (
+    bins_topm_vals_ref[:, :NUM_LANES],
+    bins_topm_idxs_ref[:, :NUM_LANES]
+  ) = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
 
-  # Use bitonic_topk_inner directly with jax arrays
-  top_val, top_idx = bitonic_topk_inner([val_input, idx_input], k=NUM_LANES, num_keys=1)
-
-  bins_topm_vals_ref[:, :NUM_LANES] = top_val
-  bins_topm_idxs_ref[:, :NUM_LANES] = top_idx
 
 def dynamic_topk_kernel(
     logits_ref,
