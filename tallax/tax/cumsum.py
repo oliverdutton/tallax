@@ -27,7 +27,7 @@ def cumsum_tile(tile, axis):
 def pallas_compatible_cumsum(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
-  
+
   Note: most TPU versions do not allow lane sums in bfloat16, so suggest specifying dtype=jnp.float32
   '''
   assert arr.ndim==2
@@ -39,7 +39,7 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
     tiles = jnp.split(arr, n, axis=axis)
     outs = [cumsum_tile(tile, axis) for tile in tiles]
     tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
-    for i in range(1, n): 
+    for i in range(1, n):
       outs[i] += tile_sums[i-1]
       tile_sums[i] += tile_sums[i-1]
     if reverse:
@@ -49,12 +49,50 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
       reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
       outs = [jnp.take_along_axis(tile, reversal_perm, axis=axis) for tile in outs]
     return jnp.concatenate(outs, axis=axis)
-  
+
   batch_axis = 1 - axis
   return jnp.concatenate(
-    [_cumsum(x) 
+    [_cumsum(x)
       for x in jnp.split(
         arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis)
     ],
     axis=batch_axis
   )[:shape[0], :shape[1]]
+
+
+def cumsum_kernel(input_ref, output_ref, *, axis: int, reverse: bool):
+  """Cumulative sum kernel.
+
+  Computes the cumulative sum of the input array along the specified axis.
+  """
+  output_ref[...] = pallas_compatible_cumsum(input_ref[...], axis=axis, reverse=reverse)
+
+
+@functools.partial(jax.jit, static_argnames=("axis", "reverse", "interpret"))
+def cumsum(
+    arr,
+    axis,
+    reverse: bool = False,
+    interpret: bool = False,
+):
+  """
+  Cumulative sum using Pallas.
+
+  Args:
+      arr: Input array.
+      axis: Axis along which to compute cumsum.
+      reverse: If True, compute cumsum in reverse order.
+      interpret: Run in interpreter mode (CPU compatible).
+
+  Returns:
+      Cumulative sum array.
+  """
+  return pl.pallas_call(
+      functools.partial(
+        cumsum_kernel,
+        axis=axis,
+        reverse=reverse,
+      ),
+      out_shape=jax.ShapeDtypeStruct(arr.shape, arr.dtype),
+      interpret=interpret
+  )(arr)

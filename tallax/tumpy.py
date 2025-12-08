@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 from tallax.tax.sort import sort as lax_sort_pallas
+from tallax.tax.gather import take_along_axis as _take_along_axis
 from tallax.utils import is_cpu_platform
 
 def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, interpret=False):
@@ -94,3 +95,18 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
     )
 
     return indices.reshape(target_shape)
+
+def take_along_axis(arr, indices, axis, interpret=False):
+    """
+    Take values from the input array by matching 1d index and data slices.
+
+    Args:
+        arr: Input array.
+        indices: Indices to take along each 1d slice of arr.
+        axis: The axis along which to select values.
+        interpret: Whether to use interpreter mode (for testing).
+
+    Returns:
+        Array with selected values.
+    """
+    return _take_along_axis(arr, indices, axis, interpret=interpret)
