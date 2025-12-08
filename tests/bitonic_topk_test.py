@@ -9,6 +9,10 @@ from tallax.utils import is_cpu_platform
 from tallax.test_utils import verify_topk_output
 
 
+@pytest.mark.skipif(
+    is_cpu_platform(),
+    reason="Bitonic top-k tests require TPU/GPU - CPU interpret mode causes segfaults"
+)
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 def test_bitonic_topk_axis1(shape, dtype):

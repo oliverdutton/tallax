@@ -15,19 +15,11 @@ def test_cumsum_correctness():
     # Reference
     expected = jnp.cumsum(x, axis=1)
 
-    # Test with different m values
-    # m=0: all steps use mask/roll
-    # m=128: all steps use permute
-    # m=4: steps 1,2 permute; 4,8,16,32,64 mask
-    # m=64: steps 1..32 permute; 64 mask
-    ms = [0, 1, 4, 32, 64, 128]
-
     interpret = is_cpu_platform()
 
-    for m in ms:
-        actual = tax.cumsum(x, m=m, interpret=interpret)
+    actual = tax.cumsum(x, axis=1, interpret=interpret)
 
-        np.testing.assert_array_equal(actual, expected, err_msg=f"Failed for m={m}")
+    np.testing.assert_array_equal(actual, expected)
 
 if __name__ == "__main__":
     test_cumsum_correctness()
