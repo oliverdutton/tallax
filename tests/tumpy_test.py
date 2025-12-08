@@ -148,7 +148,5 @@ def test_take_along_axis(shape, dtype, axis):
     # Run Pallas take_along_axis
     result = tnp.take_along_axis(values, indices, axis=axis, interpret=interpret)
 
-    if dtype == jnp.float32:
-        np.testing.assert_allclose(result, expected)
-    else:
-        np.testing.assert_array_equal(result, expected)
+    # Exact comparison for both f32 and i32 - no operations that alter values
+    np.testing.assert_array_equal(result, expected)
