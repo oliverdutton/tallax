@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic_topk import bitonic_topk_inner as topk, top1
 from tallax.tax.gather import pallas_compatible_take_along_axis as take_along_axis
-from tallax.tax.sparse_random import sparse_random_uniform
+from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
 from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
