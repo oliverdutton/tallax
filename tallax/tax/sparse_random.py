@@ -78,9 +78,9 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     # Add Gumbel noise to scaled logits
     gumbel_logits = logits + gumbel
     # Find argmax of Gumbel-perturbed logits
-    sampled_tokens = top1(
-        [gumbel_logits, indices[axis]],
+    sampled_token_indices = top1(
+        [gumbel_logits, *indices],
         num_keys=1,
-        axis=axis
-    )[1].squeeze(axis)
-    return sampled_tokens
+        axis=axis,
+    )[1:]
+    return sampled_token_indices
