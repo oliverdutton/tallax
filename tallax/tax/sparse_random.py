@@ -2,6 +2,8 @@ import jax
 import jax.numpy as jnp
 from jax.extend.random import threefry2x32_p
 
+from tallax.tax.bitonic_topk import top1
+
 def _bits_to_uniform(bits, dtype):
     """
     Convert random uint32 bits to uniform float in [0, 1).
