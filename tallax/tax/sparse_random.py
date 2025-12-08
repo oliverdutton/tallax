@@ -60,10 +60,10 @@ def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval
 
 
 def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtype=jnp.float32):
-  if dtype != jnp.float32:
-    raise NotImplementedError
+    if dtype != jnp.float32:
+        raise NotImplementedError
     
-   u = sparse_random_uniform(
+    u = sparse_random_uniform(
         rng_key,
         indices,
         dim1_size=dim1_size,
@@ -76,7 +76,6 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     # Add Gumbel noise to scaled logits
     gumbel_logits = logits + gumbel
     # Find argmax of Gumbel-perturbed logits
-    # Since we only need the argmax (k=1), use bitonic_topk_inner with k=1
     sampled_tokens = top1(
         [gumbel_logits, indices[axis]],
         num_keys=1,
