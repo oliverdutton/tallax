@@ -2,24 +2,35 @@
 import pytest
 import jax
 import jax.numpy as jnp
+import jax.lax as lax
 import numpy as np
 from tallax import tax
 from tallax.utils import is_cpu_platform
 
-def test_cumsum_correctness():
-    shape = (8, 128)
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
+@pytest.mark.parametrize("axis", [0, 1])
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_cumsum_correctness(shape, axis, dtype, reverse):
+    """Test cumsum for various shapes, axes, dtypes, and reverse parameter."""
     key = jax.random.key(42)
-    # Use float to check for precision/logic, but int is good for exactness
-    x = jax.random.randint(key, shape, 0, 100, dtype=jnp.int32)
 
-    # Reference
-    expected = jnp.cumsum(x, axis=1)
+    if dtype == jnp.float32:
+        x = jax.random.normal(key, shape, dtype=dtype)
+    else:
+        x = jax.random.randint(key, shape, 0, 100, dtype=dtype)
+
+    # Reference using lax.cumsum
+    expected = lax.cumsum(x, axis=axis, reverse=reverse)
 
     interpret = is_cpu_platform()
+    actual = tax.cumsum(x, axis=axis, reverse=reverse, interpret=interpret)
 
-    actual = tax.cumsum(x, axis=1, interpret=interpret)
-
-    np.testing.assert_array_equal(actual, expected)
+    # Use close match for float32, exact for int32
+    if dtype == jnp.float32:
+        np.testing.assert_allclose(actual, expected, rtol=1e-4)
+    else:
+        np.testing.assert_array_equal(actual, expected)
 
 if __name__ == "__main__":
     test_cumsum_correctness()

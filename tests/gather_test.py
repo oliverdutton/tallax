@@ -24,7 +24,7 @@ def test_gather_correctness(num_tokens, vocab_size, k):
     # Run Pallas gather
     result = tax.take_along_axis(values, indices, axis=1, interpret=is_cpu_platform())
 
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_array_equal(result, expected)
 
 def test_gather_large_k_explicit():
     # Explicitly test (8, 1024) as requested in review
@@ -39,4 +39,4 @@ def test_gather_large_k_explicit():
     expected = jax.vmap(lambda v, i: v[i])(values, indices)
     result = tax.take_along_axis(values, indices, axis=1, interpret=is_cpu_platform())
 
-    np.testing.assert_allclose(result, expected)
+    np.testing.assert_array_equal(result, expected)

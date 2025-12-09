@@ -37,17 +37,23 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   def _cumsum(arr):
     n = arr.shape[axis] // tile_shape[axis]
     tiles = jnp.split(arr, n, axis=axis)
+
+    if reverse:
+      # Reverse input tiles and reverse within each tile
+      reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
+      tiles = [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
+
     outs = [cumsum_tile(tile, axis) for tile in tiles]
     tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
     for i in range(1, n):
       outs[i] += tile_sums[i-1]
       tile_sums[i] += tile_sums[i-1]
+
     if reverse:
-      # reverse tiles
-      out = outs[::-1]
-      # reverse within tiles
+      # Reverse output tiles and reverse within each tile
       reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
-      outs = [jnp.take_along_axis(tile, reversal_perm, axis=axis) for tile in outs]
+      outs = [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in outs[::-1]]
+
     return jnp.concatenate(outs, axis=axis)
 
   batch_axis = 1 - axis

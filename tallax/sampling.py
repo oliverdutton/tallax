@@ -10,7 +10,7 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.bitonic_topk import bitonic_topk_inner as topk, top1
+from tallax.tax.bitonic_topk import pallas_compatible_bitonic_topk as topk, top1
 from tallax.tax.gather import pallas_compatible_take_along_axis as take_along_axis
 from tallax.tax.sparse_random import sparse_random_uniform
 from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
