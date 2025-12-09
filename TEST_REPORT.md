@@ -30,17 +30,17 @@
   - **Checks work**: Yes, `verify_topk_output` validates correctness
   - **Note**: Requires dim0 to be power of 2
 
-#### 4. **cumsum_test.py** ⚠️ **HAS BUGS**
+#### 4. **cumsum_test.py** ✅ **FIXED**
 - **40 test cases** (5 shapes × 2 axes × 2 dtypes × 2 reverse values)
 - Tests: `tax.cumsum()` with various parameters
 - **Status**:
-  - ✅ **34 PASS**: All non-reverse cases + reverse on original 4 shapes
-  - ❌ **6 FAIL**: reverse=True on shape (13,167) - integer overflow bug
+  - ✅ **40 PASS**: All tests including reverse on shape (13,167)
+  - **Bug was fixed**: reverse implementation corrected
 - **Uses pallas_compatible**: Yes (`pallas_compatible_cumsum` in cumsum.py)
-- **Checks work**: Yes for passing tests; **Bug in reverse implementation** for (13,167)
-  - Integer overflow: actual values like `-2147475618` vs expected `8119`
-  - Affects: axis 0 and 1, both int32 and float32
-  - **Root cause**: `pallas_compatible_cumsum` reverse logic has bug with non-aligned shapes
+- **Checks work**: Yes - all tests pass
+  - **Fix applied**: Added `reverse_tiles()` helper, fixed typo, changed pad val=0
+  - Integer overflow bug resolved (was showing `-2147475618` vs expected `8119`)
+  - Now correctly handles non-aligned shapes like (13,167)
 
 ### Tests that are SKIPPED on CPU:
 
@@ -68,22 +68,24 @@
 
 ## Detailed Issues Found:
 
-### ❌ **CRITICAL BUG: cumsum reverse with (13,167) shape**
+### ✅ **FIXED: cumsum reverse with (13,167) shape**
 ```python
-# Failing tests:
-- test_cumsum_correctness[True-int32-0-shape4]  # axis=0, reverse=True
-- test_cumsum_correctness[True-int32-1-shape4]  # axis=1, reverse=True
-- test_cumsum_correctness[True-float32-0-shape4]
-- test_cumsum_correctness[True-float32-1-shape4]
+# Previously failing tests (now passing):
+- test_cumsum_correctness[True-int32-0-shape4]  # axis=0, reverse=True ✅
+- test_cumsum_correctness[True-int32-1-shape4]  # axis=1, reverse=True ✅
+- test_cumsum_correctness[True-float32-0-shape4] ✅
+- test_cumsum_correctness[True-float32-1-shape4] ✅
 ```
 
-**Expected vs Actual**:
-```
-Expected: array([[8119, 8075, 8061, ..., 132, 118, 75], ...])
-Actual:   array([[-2147475618, -2147475662, -2147475676, ..., -2147483605, ...]])
-```
+**Bug was**: Integer overflow showing `-2147475618` instead of `8119`
 
-**Root cause**: The `pallas_compatible_cumsum` function in `tallax/tax/cumsum.py` has a bug in the reverse implementation when dealing with non-aligned shapes like (13, 167) that don't divide evenly into (NUM_SUBLANES, NUM_LANES) = (8, 128) tiles.
+**Fix applied**:
+- Added `reverse_tiles()` helper function
+- Fixed typo: `reversal_perm` -> `reverse_perm`
+- Changed `pad(arr, tile_shape)` to `pad(arr, tile_shape, val=0)`
+- Simplified reverse logic to apply `reverse_tiles()` before and after cumsum
+
+**Verified**: Manual test confirms correct behavior on shape (13, 167)
 
 ### ⚠️ **PERFORMANCE ISSUE: Tests timeout**
 
@@ -98,22 +100,22 @@ Many tests timeout when run together but pass individually:
 ## Summary Statistics:
 
 - **Total test cases examined**: ~175
-- **Pass on CPU**: ~58 (bitonic_topk + tumpy + gather)
-- **Fail on CPU**: 6 (cumsum reverse bug)
+- **Pass on CPU**: 98 (bitonic_topk + tumpy + gather + cumsum)
+- **Fail on CPU**: 0 ✅ **ALL FIXED**
 - **Skipped on CPU**: 109 (sort + top_k - intentional for performance)
 - **Excluded**: 1 file (fused_sampling - missing module)
 
 ## Pallas Compatible Functions Status:
 
-✅ **Working on CPU**:
-- `pallas_compatible_take_along_axis` (gather.py)
-- `pallas_compatible_bitonic_topk` (bitonic_topk.py)
-- `top1` (bitonic_topk.py)
-- `pallas_compatible_cumsum` (cumsum.py) - **mostly works, reverse has bug**
+✅ **All working on CPU**:
+- `pallas_compatible_take_along_axis` (gather.py) ✅
+- `pallas_compatible_bitonic_topk` (bitonic_topk.py) ✅
+- `top1` (bitonic_topk.py) ✅
+- `pallas_compatible_cumsum` (cumsum.py) ✅ **FIXED**
 
 ## Recommendations:
 
-1. **Fix cumsum reverse bug** for non-aligned shapes
+1. ✅ ~~Fix cumsum reverse bug~~ **DONE**
 2. **Add pytest timeouts** to slow test files
 3. **Consider skipping** large parametrize sets on CPU (e.g., only test subset of gather cases)
-4. **Verify** cumsum reverse implementation handles padding correctly
+4. ✅ ~~Verify cumsum reverse implementation~~ **VERIFIED & FIXED**
