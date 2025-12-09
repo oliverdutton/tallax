@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax.extend.random import threefry2x32_p
 
-from tallax.tax.bitonic_topk import top1
+from tallax._src.bitonic_topk import top1
 
 def _bits_to_uniform(bits, dtype):
     """
@@ -66,7 +66,7 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
         raise NotImplementedError
     
     u = sparse_random_uniform(
-        rng_key,
+        key_ref,
         indices,
         dim1_size=dim1_size,
         dtype=jnp.float32,

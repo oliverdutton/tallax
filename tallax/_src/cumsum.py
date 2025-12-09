@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.utils import (
+from tallax._src.utils import (
     iota_tile,
     NUM_LANES,
     NUM_SUBLANES,
