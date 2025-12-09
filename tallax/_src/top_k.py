@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.custom_partitioning import custom_partitioning, SdyShardingRule, ArrayMapping
 
 from tallax._src.bitonic_topk import bitonic_topk_kernel, pallas_compatible_bitonic_topk
 from tallax._src.topk_theory import calculate_depth_thresholds
@@ -382,7 +383,7 @@ def dynamic_topk_kernel(
         "interpret"
     ),
 )
-def top_dynamic_k(
+def _top_dynamic_k(
     logits,
     k,
     max_k: int,
@@ -512,6 +513,27 @@ def top_dynamic_k(
   if guarantee_convergence:
     return topk_vals, topk_idxs
   return topk_vals, topk_idxs, valid, depths, cutoff_vals
+
+@custom_partitioning
+@functools.wraps(_top_dynamic_k)
+def top_dynamic_k(logits, k, max_k, *args, **kwargs):
+  return _top_dynamic_k(logits, k, max_k, *args, **kwargs)
+
+def _top_dynamic_k_rule(logits, k, max_k, *args, **kwargs):
+  gc = kwargs.get("guarantee_convergence", False)
+  if len(args) > 4: gc = args[4]
+  ops = (
+      ArrayMapping("b", "v"),
+      ArrayMapping("b") if k.ndim == 1 else ArrayMapping()
+  )
+  res = [ArrayMapping("b", "k"), ArrayMapping("b", "k")]
+  if not gc:
+    res.extend([ArrayMapping(), ArrayMapping("b"), ArrayMapping("b")])
+  return SdyShardingRule(
+      tuple(ops), tuple(res), need_replication_factors=("v",), k=max_k
+  )
+
+top_dynamic_k.def_partition(_top_dynamic_k_rule)
 
 @functools.partial(
     jit,
