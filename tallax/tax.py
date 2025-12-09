@@ -1,6 +1,12 @@
 """Tallax TAX (TPU Acceleration eXtensions) module.
 
 Public API for TPU-optimized operations.
+
+This module provides JAX.lax-compatible operations optimized for TPU:
+- sort: jax.lax.sort counterpart
+- top_k: jax.lax.top_k counterpart
+- cumsum: jax.lax.cumsum counterpart
+- take_along_axis: jax.numpy.take_along_axis counterpart
 """
 
 # Import from _src modules using JAX's pattern
@@ -11,18 +17,12 @@ from tallax._src.sort import sort_xla_equivalent as sort_xla_equivalent
 from tallax._src.top_k import top_k as top_k
 from tallax._src.top_k import top_dynamic_k as top_dynamic_k
 from tallax._src.cumsum import cumsum as cumsum
-from tallax._src.bitonic_topk import bitonic_topk as bitonic_topk
-from tallax._src.bitonic_topk import pallas_compatible_bitonic_topk as pallas_compatible_bitonic_topk
-from tallax._src.bitonic_topk import top1 as top1
 
 __all__ = [
     "take_along_axis",
     "sort",
+    "sort_xla_equivalent",
     "top_k",
     "top_dynamic_k",
-    "sort_xla_equivalent",
     "cumsum",
-    "bitonic_topk",
-    "pallas_compatible_bitonic_topk",
-    "top1",
 ]
