@@ -6,9 +6,9 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.bitonic_topk import bitonic_topk_kernel, pallas_compatible_bitonic_topk
-from tallax.tax.topk_theory import calculate_depth_thresholds
-from tallax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
+from tallax._src.bitonic_topk import bitonic_topk_kernel, pallas_compatible_bitonic_topk
+from tallax._src.topk_theory import calculate_depth_thresholds
+from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
 def binned_topk(
     logits,

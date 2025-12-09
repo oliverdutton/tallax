@@ -6,7 +6,7 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.utils import NUM_LANES, NUM_SUBLANES, pad
+from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad
 
 def pallas_compatible_take_along_axis(val, idx, axis):
   shape = idx.shape

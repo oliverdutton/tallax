@@ -22,7 +22,7 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.utils import (
+from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
@@ -34,7 +34,7 @@ from tallax.utils import (
     convert_from_sublane_sort_format,
     to_32bit_dtype,
 )
-from tallax.tax.sort import (
+from tallax._src.sort import (
     compute_subtile_substages_inner,
     compare,
 )
