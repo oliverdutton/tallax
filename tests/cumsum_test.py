@@ -7,7 +7,7 @@ import numpy as np
 from tallax import tax
 from tallax.utils import is_cpu_platform
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (13, 167)])
 @pytest.mark.parametrize("axis", [0, 1])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("reverse", [False, True])

@@ -9,7 +9,7 @@ from tallax.utils import is_cpu_platform
 from tallax.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 def test_bitonic_topk_axis1(shape, dtype):
     """Test bitonic_topk for axis=1 (last axis)."""
@@ -25,7 +25,7 @@ def test_bitonic_topk_axis1(shape, dtype):
     # For shape (8, 128), we want [[0, 1, 2, ..., 127], [0, 1, 2, ..., 127], ...]
     indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
 
-    k = 128  # NUM_LANES
+    k = min(128, shape[1])  # NUM_LANES or dimension size, whichever is smaller
     # On CPU, call pallas_compatible_bitonic_topk directly (Pallas causes segfaults)
     # On TPU/GPU, use the full bitonic_topk with Pallas
     if interpret:
@@ -41,7 +41,7 @@ def test_bitonic_topk_axis1(shape, dtype):
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 def test_top1_axis0_pallas(shape, dtype):
-    """Test top1 for axis=0 wrapped in pallas kernel."""
+    """Test top1 for axis=0 wrapped in pallas kernel. Note: top1 requires dim0 to be a power of 2."""
     interpret = is_cpu_platform()
     key = jax.random.PRNGKey(1)
 
