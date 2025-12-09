@@ -42,6 +42,10 @@ def _bits_to_uniform(bits, dtype):
 
 def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval=0., maxval=1.):
   assert len(indices)==2
+  # Handle JAX key format - if scalar key, extract data; if already (1,2), use as-is
+  if key_ref.ndim == 0:
+    # Scalar JAX key - extract data and reshape
+    key_ref = jnp.reshape(jax.random.key_data(key_ref), (1, 2))
   counts_lo = indices[0] * dim1_size + indices[1]
   counts_lo = counts_lo.astype(jnp.uint32)
   counts_hi = jnp.zeros_like(counts_lo)
@@ -64,7 +68,17 @@ def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval
 def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtype=jnp.float32):
     if dtype != jnp.float32:
         raise NotImplementedError
-    
+
+    # Canonicalize axis to positive
+    axis = axis if axis >= 0 else logits.ndim + axis
+
+    # top1 only supports axis=0, so transpose if axis=1
+    needs_transpose = (axis == 1)
+    if needs_transpose:
+        logits = logits.T
+        indices = [indices[1].T, indices[0].T]
+        dim1_size_for_uniform = dim1_size  # This stays the same for random generation
+
     u = sparse_random_uniform(
         key_ref,
         indices,
@@ -77,10 +91,15 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     gumbel = -jnp.log(-jnp.log(u))
     # Add Gumbel noise to scaled logits
     gumbel_logits = logits + gumbel
-    # Find argmax of Gumbel-perturbed logits
+    # Find argmax of Gumbel-perturbed logits (always along axis 0)
     sampled_token_indices = top1(
         [gumbel_logits, *indices],
         num_keys=1,
-        axis=axis,
+        axis=0,
     )[1:]
+
+    # Transpose results back if needed
+    if needs_transpose:
+        sampled_token_indices = [sampled_token_indices[1].T, sampled_token_indices[0].T]
+
     return sampled_token_indices
