@@ -13,6 +13,11 @@ from tallax.utils import (
     pad
 )
 
+def reverse_tiles(tiles, axis):
+  tile_shape = tiles[0].shape
+  reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
+  return [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
+
 def cumsum_tile(tile, axis):
   n = tile.shape[axis]
   idx = iota_tile(axis)
@@ -33,27 +38,19 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   assert arr.ndim==2
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
-  arr = pad(arr, tile_shape)
+  arr = pad(arr, tile_shape, val=0)
   def _cumsum(arr):
     n = arr.shape[axis] // tile_shape[axis]
     tiles = jnp.split(arr, n, axis=axis)
-
     if reverse:
-      # Reverse input tiles and reverse within each tile
-      reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
-      tiles = [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
-
+      tiles = reverse_tiles(tiles, axis=axis)
     outs = [cumsum_tile(tile, axis) for tile in tiles]
     tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
     for i in range(1, n):
       outs[i] += tile_sums[i-1]
       tile_sums[i] += tile_sums[i-1]
-
     if reverse:
-      # Reverse output tiles and reverse within each tile
-      reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
-      outs = [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in outs[::-1]]
-
+      outs = reverse_tiles(outs, axis=axis)
     return jnp.concatenate(outs, axis=axis)
 
   batch_axis = 1 - axis
