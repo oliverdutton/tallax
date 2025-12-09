@@ -16,7 +16,7 @@ from tallax.utils import (
 def reverse_tiles(tiles, axis):
   tile_shape = tiles[0].shape
   reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
-  return [jnp.take_along_axis(tile, reversal_perm, axis=axis) for tile in tiles[::-1]]
+  return [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
 
 def cumsum_tile(tile, axis):
   n = tile.shape[axis]

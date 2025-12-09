@@ -161,7 +161,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def bitonic_topk_inner(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
+def pallas_compatible_bitonic_topk(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -311,7 +311,7 @@ def bitonic_topk_kernel(
     """
     if not descending:
       raise NotImplementedError
-    outs = bitonic_topk_inner(
+    outs = pallas_compatible_bitonic_topk(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
       num_keys=num_keys)
     for out, out_ref in zip(outs, out_refs, strict=True):
