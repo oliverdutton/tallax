@@ -38,7 +38,7 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   assert arr.ndim==2
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
-  arr = pad(arr, tile_shape)
+  arr = pad(arr, tile_shape, val=0)
   def _cumsum(arr):
     n = arr.shape[axis] // tile_shape[axis]
     tiles = jnp.split(arr, n, axis=axis)
