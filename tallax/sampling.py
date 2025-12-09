@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic_topk import pallas_compatible_bitonic_topk as topk, top1
 from tallax.tax.gather import pallas_compatible_take_along_axis as take_along_axis
-from tallax.tax.sparse_random import sparse_random_uniform
+from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.cumsum import pallas_compatible_cumsum as cumsum
 from tallax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
@@ -63,14 +63,14 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     """
     Implements top-p filtering, temperature scaling, and sampling.
     """
-    shape = topk_logits.shape
-
     # Convert logits to float32
     topk_logits = topk_logits.astype(jnp.float32)
 
+    # To do reductions and broadcast across sublanes rather than lanes (which are slow)
+    # we shift sampling to dim 0
     topk_logits = topk_logits.T
     topk_idx = topk_idx.T
-    shape = shape[::-1]
+    shape = topk_logits.shape
 
     # Apply top-p masking
     topp_logits = topp_mask(
@@ -85,29 +85,25 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
 
     # Step 6: Categorical sampling using Gumbel-max trick
     # Generate Gumbel noise using sparse random uniform
-    dim0_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
-    u = sparse_random_uniform(
+    # random key splitting is based on idx in  ravelled array
+    # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
+    batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
+    next_tokens = sparse_random_categorical(
         rng_key,
-        (dim0_idx, topk_idx),
+        topp_logits_scaled,
+        # these are both transposed, (token, batch) shape
+        (batch_idx, topk_idx),
         dim1_size=vocab_size,
-        dtype=jnp.float32,
-        minval=jnp.finfo(jnp.float32).tiny,
-        maxval=1.0
-    )
-    # Compute Gumbel noise: -log(-log(u))
-    gumbel = -jnp.log(-jnp.log(u))
-    # Add Gumbel noise to scaled logits
-    gumbel_logits = topp_logits_scaled + gumbel
-    # Find argmax of Gumbel-perturbed logits
-    # Since we only need the argmax (k=1), use bitonic_topk_inner with k=1
-    sampled_tokens = top1(
-        [gumbel_logits, topk_idx],
-        num_keys=1,
-        axis=0
+        axis=0,
+        dtype=jnp.float32
+        # take token_idx
     )[1].squeeze(0)
+
+    greedy_sampled = topk_idx[0,:]
     return jnp.where(
       temperature < _SAMPLING_EPS,
-      topk_idx[0,:], sampled_tokens)
+      greedy_sampled, next_tokens)
+
 
 def top_p_and_sample_kernel(
     topk_logits_ref,
