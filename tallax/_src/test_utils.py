@@ -111,65 +111,47 @@ def verify_topk_output(x, outs, axis=1):
 
     Args:
         x: Input array (must be 2D)
-        outs: Tuple of (values, indices) from top-k
+        outs: Tuple of (values, indices) from top-k (both must be 2D)
         axis: Axis along which top-k was computed (0 or 1, default 1)
 
     Returns:
         Boolean array indicating if the top-k output is valid for each batch element
 
     Raises:
-        ValueError: If x is not 2D
+        ValueError: If x or outputs are not 2D
     """
     if x.ndim != 2:
         raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
 
     out_vals, out_indexs = outs
 
+    if out_vals.ndim != 2 or out_indexs.ndim != 2:
+        raise ValueError(f"verify_topk_output requires 2D outputs, got values.ndim={out_vals.ndim}, indices.ndim={out_indexs.ndim}")
+
     # The batch axis is opposite to the sampling axis:
     # - axis=1 (sampling along columns): batch is axis 0, so in_axes=(0, 0, 0)
     # - axis=0 (sampling along rows): batch is axis 1, so in_axes=(1, 1, 1)
     batch_axis = 1 - axis
 
-    # Handle both 1D (k=1) and 2D (k>1) outputs
-    if out_vals.ndim == 1:
-        # k=1 case: outputs are 1D scalars per batch element
-        @functools.partial(jax.vmap, in_axes=(batch_axis, 0, 0))
-        def verify_slice(x_slice, val_scalar, idx_scalar):
-            """Verify a single slice for k=1."""
-            x_sorted = jnp.sort(x_slice, descending=True)
-            n = len(x_slice)
-            valid = True
+    @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
+    def verify_slice(x_slice, vals_slice, idxs_slice):
+        """Verify a single slice."""
+        x_sorted = jnp.sort(x_slice, descending=True)
 
-            # actual value must match top value
-            valid &= (val_scalar == x_sorted[0])
+        k = len(vals_slice)
+        n = len(x_slice)
+        valid = True
 
-            # index maps to value correctly
-            valid &= (x_slice[idx_scalar] == val_scalar)
+        # actual values must match
+        valid &= (vals_slice == x_sorted[:k]).all()
 
-            # index is in bounds
-            valid &= (idx_scalar >= 0) & (idx_scalar < n)
-            return valid
-    else:
-        # k>1 case: outputs are 2D with k values per batch element
-        @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
-        def verify_slice(x_slice, vals_slice, idxs_slice):
-            """Verify a single slice for k>1."""
-            x_sorted = jnp.sort(x_slice, descending=True)
+        # indices map to values correctly
+        valid &= (x_slice[idxs_slice] == vals_slice).all()
 
-            k = len(vals_slice)
-            n = len(x_slice)
-            valid = True
-
-            # actual values must match
-            valid &= (vals_slice == x_sorted[:k]).all()
-
-            # indices map to values correctly
-            valid &= (x_slice[idxs_slice] == vals_slice).all()
-
-            # indices are all in bounds and unique
-            i = jnp.unique(idxs_slice, size=k, fill_value=-1)
-            valid &= ((i >= 0) & (i < n)).all()
-            return valid
+        # indices are all in bounds and unique
+        i = jnp.unique(idxs_slice, size=k, fill_value=-1)
+        valid &= ((i >= 0) & (i < n)).all()
+        return valid
 
     return verify_slice(x, out_vals, out_indexs)
 
