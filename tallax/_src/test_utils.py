@@ -123,37 +123,35 @@ def verify_topk_output(x, outs, axis=1):
     if x.ndim != 2:
         raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
 
-    # If axis == 0, transpose so we always work with axis=1
-    if axis == 0:
-        x = x.T
-        out_vals, out_indexs = outs
-        out_vals = out_vals.T
-        out_indexs = out_indexs.T
-    else:
-        out_vals, out_indexs = outs
+    out_vals, out_indexs = outs
 
-    # Now verify along axis=1 for each row
-    @jax.vmap
-    def verify_row(x_row, vals_row, idxs_row):
-        """Verify a single row."""
-        x_sorted = jnp.sort(x_row, descending=True)
+    # Verify along the specified axis using vmap with appropriate in_axes
+    # The batch axis is opposite to the sampling axis:
+    # - axis=1 (sampling along columns): batch is axis 0, so in_axes=(0, 0, 0)
+    # - axis=0 (sampling along rows): batch is axis 1, so in_axes=(1, 1, 1)
+    batch_axis = 1 - axis
 
-        k = len(vals_row)
-        n = len(x_row)
+    @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
+    def verify_slice(x_slice, vals_slice, idxs_slice):
+        """Verify a single slice along the batch dimension."""
+        x_sorted = jnp.sort(x_slice, descending=True)
+
+        k = len(vals_slice)
+        n = len(x_slice)
         valid = True
 
         # actual values must match
-        valid &= (vals_row == x_sorted[:k]).all()
+        valid &= (vals_slice == x_sorted[:k]).all()
 
         # indices map to values correctly
-        valid &= (x_row[idxs_row] == vals_row).all()
+        valid &= (x_slice[idxs_slice] == vals_slice).all()
 
         # indices are all in bounds and unique
-        i = jnp.unique(idxs_row, size=k, fill_value=-1)
+        i = jnp.unique(idxs_slice, size=k, fill_value=-1)
         valid &= ((i >= 0) & (i < n)).all()
         return valid
 
-    return verify_row(x, out_vals, out_indexs)
+    return verify_slice(x, out_vals, out_indexs)
 
 
 def benchmark(_run):

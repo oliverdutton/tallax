@@ -40,27 +40,37 @@ def test_bitonic_topk_axis1(shape, dtype):
 
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
-def test_top1_axis0_pallas(shape, dtype):
-    """Test top1 for axis=0 wrapped in pallas kernel. Note: top1 requires dim0 to be a power of 2."""
+@pytest.mark.parametrize("axis", [0, 1])
+def test_top1_pallas(shape, dtype, axis):
+    """Test top1 wrapped in pallas kernel for both axes. Note: top1 requires dim0 to be a power of 2."""
     interpret = is_cpu_platform()
-    key = jax.random.PRNGKey(1)
+    key = jax.random.PRNGKey(1 + axis)  # Different seed per axis
 
     if dtype == jnp.float32:
         arr = jax.random.normal(key, shape).astype(dtype)
     else:
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
-    # Create indices array with row indices (for axis=0 operation)
-    # For shape (8, 128), we want [[0, 0, ..., 0], [1, 1, ..., 1], ..., [7, 7, ..., 7]]
-    indices = jnp.broadcast_to(jnp.arange(shape[0])[:, None], shape).astype(jnp.int32)
+    # Create indices array
+    # axis=0: row indices [[0,0,...], [1,1,...], ...]
+    # axis=1: column indices [[0,1,2,...], [0,1,2,...], ...]
+    if axis == 0:
+        indices = jnp.broadcast_to(jnp.arange(shape[0])[:, None], shape).astype(jnp.int32)
+        # top1 returns 1D output with shape (batch_size,) where batch_size = shape[1] for axis=0
+        out_shape_1d = (shape[1],)
+    else:  # axis == 1
+        indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
+        # top1 returns 1D output with shape (batch_size,) where batch_size = shape[0] for axis=1
+        out_shape_1d = (shape[0],)
 
     def top1_kernel(values_ref, indices_ref, out_values_ref, out_indices_ref):
-        """Top1 kernel for axis=0."""
+        """Top1 kernel."""
         result_values, result_indices = top1(
             [values_ref[...], indices_ref[...]],
             num_keys=1,
-            axis=0
+            axis=axis
         )
+        # top1 now returns 1D outputs directly
         out_values_ref[...] = result_values
         out_indices_ref[...] = result_indices
 
@@ -69,57 +79,22 @@ def test_top1_axis0_pallas(shape, dtype):
         return pl.pallas_call(
             top1_kernel,
             out_shape=[
-                jax.ShapeDtypeStruct((1, shape[1]), values.dtype),
-                jax.ShapeDtypeStruct((1, shape[1]), jnp.int32),
+                jax.ShapeDtypeStruct(out_shape_1d, values.dtype),
+                jax.ShapeDtypeStruct(out_shape_1d, jnp.int32),
             ],
             interpret=interpret
         )(values, indices)
 
     result_values, result_indices = top1_pallas(arr, indices, interpret=interpret)
 
-    # Use axis=0 parameter in verify_topk_output (it will handle transpose internally)
-    valid = verify_topk_output(arr, (result_values, result_indices), axis=0)
-    assert valid.all(), f"Top1 axis=0 validation failed for shape {shape}, dtype {dtype}"
+    # Reshape 1D outputs to 2D for verify_topk_output: (batch,) -> (batch, 1) or (1, batch)
+    if axis == 0:
+        result_values = result_values[None, :]  # (1, batch)
+        result_indices = result_indices[None, :]
+    else:  # axis == 1
+        result_values = result_values[:, None]  # (batch, 1)
+        result_indices = result_indices[:, None]
 
-
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
-def test_top1_axis1_pallas(shape, dtype):
-    """Test top1 for axis=1 wrapped in pallas kernel."""
-    interpret = is_cpu_platform()
-    key = jax.random.PRNGKey(2)
-
-    if dtype == jnp.float32:
-        arr = jax.random.normal(key, shape).astype(dtype)
-    else:
-        arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
-
-    # Create indices array with column indices (for axis=1 operation)
-    indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
-
-    def top1_kernel(values_ref, indices_ref, out_values_ref, out_indices_ref):
-        """Top1 kernel for axis=1."""
-        result_values, result_indices = top1(
-            [values_ref[...], indices_ref[...]],
-            num_keys=1,
-            axis=1
-        )
-        out_values_ref[...] = result_values[:, None]
-        out_indices_ref[...] = result_indices[:, None]
-
-    @functools.partial(jax.jit, static_argnames=("interpret",))
-    def top1_pallas(values, indices, interpret=False):
-        return pl.pallas_call(
-            top1_kernel,
-            out_shape=[
-                jax.ShapeDtypeStruct((shape[0], 1), values.dtype),
-                jax.ShapeDtypeStruct((shape[0], 1), jnp.int32),
-            ],
-            interpret=interpret
-        )(values, indices)
-
-    result_values, result_indices = top1_pallas(arr, indices, interpret=interpret)
-
-    # Use axis=1 parameter in verify_topk_output
-    valid = verify_topk_output(arr, (result_values, result_indices), axis=1)
-    assert valid.all(), f"Top1 axis=1 validation failed for shape {shape}, dtype {dtype}"
+    # Verify using axis parameter
+    valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
+    assert valid.all(), f"Top1 validation failed for shape {shape}, dtype {dtype}, axis={axis}"
