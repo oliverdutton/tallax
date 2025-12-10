@@ -7,7 +7,7 @@ import jax.numpy as jnp
 from tallax.test_utils import benchmark
 
 from tallax import tax
-from tallax.utils import is_cpu_platform
+from tallax._src.utils import is_cpu_platform
 
 k = 64
 num_queries = 32

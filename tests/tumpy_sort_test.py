@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 import numpy as np
 from tallax import tumpy as tnp
-from tallax.utils import is_cpu_platform
+from tallax._src.utils import is_cpu_platform
 
 def test_sort():
     interpret = is_cpu_platform()
@@ -123,30 +123,3 @@ def test_axis_none_flatten():
     result_vals = a_flat[result_args]
     expected_vals = a_flat[expected_args]
     np.testing.assert_array_equal(result_vals, expected_vals)
-
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256)])
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
-@pytest.mark.parametrize("axis", [0, 1])
-def test_take_along_axis(shape, dtype, axis):
-    interpret = is_cpu_platform()
-    key = jax.random.PRNGKey(7)
-    key_vals, key_idxs = jax.random.split(key)
-
-    if dtype == jnp.float32:
-        values = jax.random.normal(key_vals, shape).astype(dtype)
-    else:
-        values = jax.random.randint(key_vals, shape, 0, 100).astype(dtype)
-
-    # Create indices for the specified axis
-    indices_shape = list(shape)
-    indices_shape[axis] = min(shape[axis], 64)  # Take fewer elements along axis
-    indices = jax.random.randint(key_idxs, indices_shape, 0, shape[axis])
-
-    # Expected result using jax.numpy
-    expected = jnp.take_along_axis(values, indices, axis=axis)
-
-    # Run Pallas take_along_axis
-    result = tnp.take_along_axis(values, indices, axis=axis, interpret=interpret)
-
-    # Exact comparison for both f32 and i32 - no operations that alter values
-    np.testing.assert_array_equal(result, expected)

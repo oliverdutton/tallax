@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import pytest
 
 from tallax import tax
-from tallax.utils import is_cpu_platform
-from tallax.test_utils import verify_topk_output
+from tallax._src.utils import is_cpu_platform
+from tallax._src.test_utils import verify_topk_output
 
 
 @pytest.mark.skipif(
@@ -26,8 +26,8 @@ def test_top_k():
     # Run Pallas implementation
     result = tax.top_k(logits, k=k, block_size=8, interpret=False)
 
-    # Validate results using verify_topk_output
-    validation = verify_topk_output(logits, result)
+    # Validate results using verify_topk_output (axis=1 is default)
+    validation = verify_topk_output(logits, result, axis=1)
 
     assert bool(validation.all()), (
         f"Top-k validation failed: {int(validation.sum())}/{num_queries} rows passed"

@@ -73,20 +73,12 @@ def test_sparse_random_categorical(seed, axis):
     if axis == 1:
         dense_shape = (batch_dim, dense_dim)
         sparse_shape = (batch_dim, sparse_dim)
-        batch_axis = 0  # batch is axis 0
-        dense_axis = 1  # sampling from axis 1
     else:  # axis == 0
         dense_shape = (dense_dim, batch_dim)
         sparse_shape = (sparse_dim, batch_dim)
-        batch_axis = 1  # batch is axis 1
-        dense_axis = 0  # sampling from axis 0
 
     # Generate sparse logits
     sparse_logits = jax.random.normal(logits_key, sparse_shape)
-
-    # Create indices: one broadcasted iota for batch, one random choice for dense
-    # Broadcasted iota for batch dimension
-    batch_indices = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, batch_axis)
 
     # Random choice without replacement for dense dimension (one choice per batch element)
     dense_iota = jax.lax.broadcasted_iota(jnp.int32, (batch_dim, dense_dim), 1)
@@ -94,15 +86,16 @@ def test_sparse_random_categorical(seed, axis):
         jax.random.split(indices_key, batch_dim),
         dense_iota
     )
-    # Reshape appropriately for the axis
+
+    # Create indices mapping sparse to dense positions
     if axis == 1:
-        dense_indices = dense_choices
-        indices_0 = batch_indices
-        indices_1 = dense_indices
+        # Sampling along axis 1: batch dimension maps to itself, dense dimension is random
+        indices_0 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 0)
+        indices_1 = dense_choices
     else:  # axis == 0
-        dense_indices = dense_choices.T
-        indices_0 = dense_indices
-        indices_1 = batch_indices
+        # Sampling along axis 0: dense dimension is random, batch dimension maps to itself
+        indices_0 = dense_choices.T
+        indices_1 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 1)
 
     # Create dense masked array: all -1e12 except at sparse indices
     dense_masked = jnp.full(dense_shape, -1e12)
@@ -120,14 +113,14 @@ def test_sparse_random_categorical(seed, axis):
         axis=axis
     )
 
-    # Extract results: sparse_result contains VALUES from indices arrays
-    # The axis being sampled (dense_axis) gives us the selected indices
+    # Extract results: sparse_result contains selected indices from the sampled axis
+    # Result is already 1D with shape (batch_dim,), no squeeze needed
     if axis == 0:
-        mapped_result = sparse_result[0].squeeze()
+        mapped_result = sparse_result[0]
     else:  # axis == 1
-        mapped_result = sparse_result[1].squeeze()
+        mapped_result = sparse_result[1]
 
-    # Compare with dense result (first batch_dim elements)
+    # Compare with dense result
     expected_result = dense_result[:batch_dim] if axis == 0 else dense_result
 
     # Should match exactly (categorical returns int indices)

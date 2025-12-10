@@ -9,7 +9,8 @@ import pandas as pd
 import pytest
 
 from tallax import tax
-from tallax.utils import is_cpu_platform
+from tallax._src.utils import is_cpu_platform
+from tallax._src.sort import sort_xla_equivalent
 
 
 @jax.jit
@@ -47,7 +48,7 @@ def verify_sort_output(
   if is_stable:
     # Exact match required for stable sort
     kwargs_for_xla = kwargs.copy()
-    out_xla = tax.sort_xla_equivalent(operand, **kwargs_for_xla)
+    out_xla = sort_xla_equivalent(operand, **kwargs_for_xla)
     valid = bool(exact_match(out_pallas, out_xla))
 
     if not valid:
@@ -66,7 +67,7 @@ def verify_sort_output(
 
   else:
     # Check output is valid permutation with correct relative order
-    out_pallas_stable_sorted = tax.sort_xla_equivalent(
+    out_pallas_stable_sorted = sort_xla_equivalent(
         out_pallas,
         num_keys=num_keys,
         is_stable=True,
@@ -90,10 +91,10 @@ def verify_sort_output(
 
     narrs = len(out_pallas)
     kwargs_for_xla = kwargs.copy()
-    operands_fully_sorted = tax.sort_xla_equivalent(
+    operands_fully_sorted = sort_xla_equivalent(
         operand, **{**kwargs_for_xla, 'num_keys': narrs}
     )
-    out_pallas_fully_sorted = tax.sort_xla_equivalent(
+    out_pallas_fully_sorted = sort_xla_equivalent(
         out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
     )
     valid_permute = bool(exact_match(operands_fully_sorted, out_pallas_fully_sorted))
@@ -101,39 +102,58 @@ def verify_sort_output(
     valid &= valid_permute
 
   if print_outputs:
-    o_pallas, o_xla = tax.sort_xla_equivalent(operand, **kwargs)
+    o_pallas, o_xla = sort_xla_equivalent(operand, **kwargs)
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 
-@jax.vmap
-def verify_topk_output(x, outs):
+def verify_topk_output(x, outs, axis=1):
     """Validate top-k outputs for correctness.
 
     Args:
-        x: Input array (1D per vmap)
-        outs: Tuple of (values, indices) from top-k
+        x: Input array (must be 2D)
+        outs: Tuple of (values, indices) from top-k (both must be 2D)
+        axis: Axis along which top-k was computed (0 or 1, default 1)
 
     Returns:
-        Boolean indicating if the top-k output is valid
+        Boolean array indicating if the top-k output is valid for each batch element
+
+    Raises:
+        ValueError: If x or outputs are not 2D
     """
-    assert x.ndim == 1
+    if x.ndim != 2:
+        raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
+
     out_vals, out_indexs = outs
-    x_sorted = jnp.sort(x, descending=True)
 
-    k = len(out_vals)
-    n = len(x)
-    valid = True
+    if out_vals.ndim != 2 or out_indexs.ndim != 2:
+        raise ValueError(f"verify_topk_output requires 2D outputs, got values.ndim={out_vals.ndim}, indices.ndim={out_indexs.ndim}")
 
-    # actual values must match
-    valid &= (out_vals == x_sorted[:k]).all()
+    # The batch axis is opposite to the sampling axis:
+    # - axis=1 (sampling along columns): batch is axis 0, so in_axes=(0, 0, 0)
+    # - axis=0 (sampling along rows): batch is axis 1, so in_axes=(1, 1, 1)
+    batch_axis = 1 - axis
 
-    # indices map to values correctly
-    valid &= (x[out_indexs] == out_vals).all()
+    @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
+    def verify_slice(x_slice, vals_slice, idxs_slice):
+        """Verify a single slice."""
+        x_sorted = jnp.sort(x_slice, descending=True)
 
-    # indices are all in bounds and unique
-    i = jnp.unique(out_indexs, size=k, fill_value=-1)
-    valid &= ((i >= 0) & (i < n)).all()
-    return valid
+        k = len(vals_slice)
+        n = len(x_slice)
+        valid = True
+
+        # actual values must match
+        valid &= (vals_slice == x_sorted[:k]).all()
+
+        # indices map to values correctly
+        valid &= (x_slice[idxs_slice] == vals_slice).all()
+
+        # indices are all in bounds and unique
+        i = jnp.unique(idxs_slice, size=k, fill_value=-1)
+        valid &= ((i >= 0) & (i < n)).all()
+        return valid
+
+    return verify_slice(x, out_vals, out_indexs)
 
 
 def benchmark(_run):
