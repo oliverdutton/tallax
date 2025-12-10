@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import jax.lax as lax
 import numpy as np
 from tallax import tax
-from tallax.utils import is_cpu_platform
+from tallax._src.utils import is_cpu_platform
 
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (13, 167)])
 @pytest.mark.parametrize("axis", [0, 1])

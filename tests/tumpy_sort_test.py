@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import pytest
 import numpy as np
 from tallax import tumpy as tnp
-from tallax.utils import is_cpu_platform
+from tallax._src.utils import is_cpu_platform
 
 def test_sort():
     interpret = is_cpu_platform()

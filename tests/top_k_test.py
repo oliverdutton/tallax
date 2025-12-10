@@ -3,8 +3,8 @@ import jax.numpy as jnp
 import pytest
 
 from tallax import tax
-from tallax.utils import is_cpu_platform
-from tallax.test_utils import verify_topk_output
+from tallax._src.utils import is_cpu_platform
+from tallax._src.test_utils import verify_topk_output
 
 
 @pytest.mark.skipif(

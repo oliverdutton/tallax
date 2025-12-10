@@ -3,8 +3,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax import tax
-from tallax.utils import is_cpu_platform
+from tallax._src.gather import take_along_axis
+from tallax._src.utils import is_cpu_platform
 
 @pytest.mark.parametrize("num_tokens", [8, 16, 13])
 @pytest.mark.parametrize("vocab_size", [128, 256, 300])
@@ -27,7 +27,7 @@ def test_take_along_axis(num_tokens, vocab_size, k, axis):
     expected = jnp.take_along_axis(values, indices, axis=axis)
 
     # Run Pallas take_along_axis
-    result = tax.take_along_axis(values, indices, axis=axis, interpret=is_cpu_platform())
+    result = take_along_axis(values, indices, axis=axis, interpret=is_cpu_platform())
 
     np.testing.assert_array_equal(result, expected)
 
@@ -42,6 +42,6 @@ def test_take_along_axis_large_k():
     indices = jax.random.randint(key, (num_tokens, k), 0, vocab_size)
 
     expected = jnp.take_along_axis(values, indices, axis=1)
-    result = tax.take_along_axis(values, indices, axis=1, interpret=is_cpu_platform())
+    result = take_along_axis(values, indices, axis=1, interpret=is_cpu_platform())
 
     np.testing.assert_array_equal(result, expected)
