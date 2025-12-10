@@ -12,10 +12,11 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_topk import pallas_compatible_bitonic_topk as topk, top1
+from tallax._src.bitonic_topk import pallas_compatible_bitonic_topk as topk, bitonic_topk, top1
 from tallax._src.gather import pallas_compatible_take_along_axis as take_along_axis
 from tallax._src.sparse_random import sparse_random_categorical
 from tallax._src.cumsum import pallas_compatible_cumsum as cumsum
+from tallax._src.top_k import top_dynamic_k
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
 _SAMPLING_EPS = 1e-5
@@ -61,7 +62,7 @@ def topp_mask(*, topk_logits, p, replace_val, axis):
     return topp_logits
 
 
-def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val):
+def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val, batch_axis_name: str | None):
     """
     Implements top-p filtering, temperature scaling, and sampling.
     """
@@ -90,6 +91,10 @@ def top_p_and_sample_jax_inner(*, topk_logits, topk_idx, rng_key, top_p, tempera
     # random key splitting is based on idx in  ravelled array
     # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
     batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
+    if batch_axis_name is not None:
+      # if sharded, shift to global indices
+      i = jax.lax.axis_index(batch_axis_name)
+      batch_idx += i * batch_idx.shape[1]
     next_tokens = sparse_random_categorical(
         rng_key,
         topp_logits_scaled,
@@ -117,11 +122,12 @@ def top_p_and_sample_kernel(
     *,
     vocab_size: int,
     replace_val: float,
+    batch_axis_name: str | None = None,
 ):
     """
     Fused kernel implementing top-p filtering, temperature scaling, and sampling.
     """
-    sampled_tokens_ref[...] = top_p_and_sample_jax_inner(
+    sampled_tokens_ref[...] = pallas_compatible_top_p_and_sample(
       topk_logits=topk_logits_ref[...],
       topk_idx=topk_idx_ref[...],
       rng_key=rng_key_ref, # SMEM, so keep as ref
@@ -129,13 +135,10 @@ def top_p_and_sample_kernel(
       temperature=temperature_ref[...],
       vocab_size=vocab_size,
       replace_val=replace_val,
+      batch_axis_name=batch_axis_name,
     )
 
-@functools.partial(
-    jit,
-    static_argnames=("vocab_size", "replace_val", "interpret",),
-)
-def top_p_and_sample(
+def _top_p_and_sample(
     topk_logits: jax.Array,
     topk_idx: jax.Array,
     rng_key: jax.Array, # threefry2x32 key
@@ -145,10 +148,10 @@ def top_p_and_sample(
     vocab_size: int,
     replace_val: float,
     interpret: bool = False,
+    batch_axis_name: str | None = None,
 ) -> jax.Array:
     """
     Fused TPU kernel for sampling with top-p filtering and temperature scaling.
-    Padding logic has been removed.
 
     Args:
         topk_logits: Sorted logits of shape (batch_size, k)
@@ -156,23 +159,27 @@ def top_p_and_sample(
         rng_key: RNG key for sampling, shape (2,)
         top_p: Top-p threshold values, scalar or shape (batch_size,)
         temperature: Temperature values, scalar or shape (batch_size,)
+        vocab_size: Vocabulary size for sampling
+        replace_val: Value to replace filtered logits with
         interpret: If True, run in CPU interpret mode (default: False)
+        batch_axis_name: Axis name for sharding (None if not sharded)
 
     Returns:
         next_tokens: Sampled tokens of shape (batch_size,)
     """
     return pl.pallas_call(
         functools.partial(
-          top_p_and_sample_kernel, 
+          top_p_and_sample_kernel,
           vocab_size=vocab_size,
-          replace_val=replace_val
+          replace_val=replace_val,
+          batch_axis_name=batch_axis_name,
         ),
         in_specs=(
           pl.BlockSpec(),
           pl.BlockSpec(),
           pl.BlockSpec(memory_space=pltpu.SMEM),
           pl.BlockSpec(),
-          pl.BlockSpec(),      
+          pl.BlockSpec(),
         ),
         out_shape=jax.ShapeDtypeStruct(topk_logits.shape[:1], jnp.int32),
         interpret=interpret,
@@ -183,6 +190,63 @@ def top_p_and_sample(
         top_p,
         temperature,
     )
+
+@functools.partial(
+    jit,
+    static_argnames=("vocab_size", "replace_val", "interpret",),
+)
+def top_p_and_sample(
+    topk_logits: jax.Array,
+    topk_idx: jax.Array,
+    rng_key: jax.Array,
+    top_p: jax.Array,
+    temperature: jax.Array,
+    *,
+    vocab_size: int,
+    replace_val: float,
+    interpret: bool = False,
+) -> jax.Array:
+    """
+    Sharded wrapper for top-p sampling with custom partitioning.
+
+    Requires all axes except batch dim to be replicated. Batch dim can be sharded.
+    """
+    @custom_partitioning
+    @functools.wraps(_top_p_and_sample)
+    def sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature):
+        return _top_p_and_sample(
+            topk_logits, topk_idx, rng_key, top_p, temperature,
+            vocab_size=vocab_size, replace_val=replace_val, interpret=interpret
+        )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+        # Output follows batch dimension of first input (replicated on other dims)
+        batch_spec = arg_shapes[0].sharding.spec[0]
+        return NamedSharding(mesh, P(batch_spec))
+
+    def partition(mesh, arg_shapes, out_shapes):
+        arg_shardings, out_shardings = jax.tree.map(
+            lambda s: s.sharding, (arg_shapes, out_shapes))
+        # Extract batch axis name from first input
+        batch_axis_name = arg_shardings[0].spec[0]
+
+        def shmap_fn(topk_logits, topk_idx, rng_key, top_p, temperature):
+            return _top_p_and_sample(
+                topk_logits, topk_idx, rng_key, top_p, temperature,
+                vocab_size=vocab_size,
+                replace_val=replace_val,
+                interpret=interpret,
+                batch_axis_name=batch_axis_name,
+            )
+
+        return mesh, shmap_fn, out_shardings, arg_shardings
+
+    sharded_top_p_and_sample.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    return sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature)
 
 def top_k(logits: jax.Array, k: jax.Array, replace_val):
     def _top_k(logits: jax.Array, k: jax.Array):
