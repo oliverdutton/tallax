@@ -42,6 +42,10 @@ def _bits_to_uniform(bits, dtype):
 
 def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval=0., maxval=1.):
   assert len(indices)==2
+  # Handle JAX key format - if scalar key, extract data; if already (1,2), use as-is
+  if key_ref.ndim == 0:
+    # Scalar JAX key - extract data and reshape
+    key_ref = jnp.reshape(jax.random.key_data(key_ref), (1, 2))
   counts_lo = indices[0] * dim1_size + indices[1]
   counts_lo = counts_lo.astype(jnp.uint32)
   counts_hi = jnp.zeros_like(counts_lo)
@@ -64,7 +68,10 @@ def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval
 def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtype=jnp.float32):
     if dtype != jnp.float32:
         raise NotImplementedError
-    
+
+    # Canonicalize axis to positive
+    axis = axis if axis >= 0 else logits.ndim + axis
+
     u = sparse_random_uniform(
         key_ref,
         indices,
@@ -83,4 +90,5 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
         num_keys=1,
         axis=axis,
     )[1:]
+
     return sampled_token_indices
