@@ -53,110 +53,94 @@ def test_sparse_random_uniform(seed, minval, maxval):
 
 
 @pytest.mark.parametrize("seed", [789, 321, 654])
-def test_sparse_random_categorical_axis1(seed):
-    """Test sparse_random_categorical axis=1 by comparing against masked dense array."""
+@pytest.mark.parametrize("axis", [0, 1])
+def test_sparse_random_categorical(seed, axis):
+    """Test sparse_random_categorical by comparing against masked dense array."""
     key = jax.random.key(seed)
 
-    # Generate dense logits (16, 256)
+    # Dense shape and sparse shape
     dense_shape = (16, 256)
-    logits = jax.random.normal(jax.random.key(seed + 100), dense_shape)
+    sparse_shape = (8, 128)
 
-    # For each row, randomly select 128 columns to keep
-    mask_key = jax.random.key(seed + 200)
-    # Generate 128 column indices for each row
-    all_cols = jnp.tile(jnp.arange(dense_shape[1]), (dense_shape[0], 1))  # (16, 256)
-    perm_cols = jax.vmap(lambda k, cols: jax.random.permutation(k, cols))(
-        jax.random.split(mask_key, dense_shape[0]),
-        all_cols
+    # Generate SPARSE logits (not extracted from dense)
+    logits_key = jax.random.key(seed + 100)
+    sparse_logits = jax.random.normal(logits_key, sparse_shape)
+
+    # Create sparse indices
+    if axis == 1:
+        # Sample along axis=1: for each of 8 rows, select 128 columns
+        # indices_0: broadcasted iota for rows
+        indices_0 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 0)
+        # indices_1: random permutation of columns for each row
+        mask_key = jax.random.key(seed + 200)
+        all_cols = jnp.tile(jnp.arange(dense_shape[1]), (sparse_shape[0], 1))
+        perm_cols = jax.vmap(lambda k, cols: jax.random.permutation(k, cols))(
+            jax.random.split(mask_key, sparse_shape[0]),
+            all_cols
+        )
+        indices_1 = perm_cols[:, :sparse_shape[1]]
+    else:  # axis == 0
+        # Sample along axis=0: for each of 128 columns, select 8 rows
+        # indices_1: broadcasted iota for columns
+        indices_1 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 1)
+        # indices_0: random permutation of rows for each column
+        mask_key = jax.random.key(seed + 200)
+        all_rows = jnp.tile(jnp.arange(dense_shape[0]), (sparse_shape[1], 1))
+        perm_rows = jax.vmap(lambda k, rows: jax.random.permutation(k, rows))(
+            jax.random.split(mask_key, sparse_shape[1]),
+            all_rows
+        )
+        indices_0 = perm_rows[:, :sparse_shape[0]].T
+
+    # Create dense masked array: all -1e12 except at sparse indices
+    dense_masked = jnp.full(dense_shape, -1e12)
+    dense_masked = dense_masked.at[indices_0, indices_1].set(sparse_logits)
+
+    # Generate Gumbel noise for dense array using position-based generation
+    # to match sparse_random_categorical's approach
+    dense_indices_0 = jax.lax.broadcasted_iota(jnp.int32, dense_shape, 0)
+    dense_indices_1 = jax.lax.broadcasted_iota(jnp.int32, dense_shape, 1)
+    dense_uniform = sparse_random_uniform(
+        key,
+        [dense_indices_0, dense_indices_1],
+        dim1_size=dense_shape[1],
+        dtype=jnp.float32,
+        minval=jnp.finfo(jnp.float32).tiny,
+        maxval=1.0
     )
-    selected_cols = perm_cols[:, :128]  # (16, 128) - column indices to keep for each row
+    dense_gumbel = -jnp.log(-jnp.log(dense_uniform))
+    gumbel_logits = dense_masked + dense_gumbel
 
-    # Create indices for sparse array
-    indices_0 = jnp.tile(jnp.arange(dense_shape[0])[:, None], (1, 128))  # (16, 128)
-    indices_1 = selected_cols  # (16, 128)
-
-    # Create masked logits (set non-selected to -inf)
-    masked_logits = jnp.full(dense_shape, -1e12)
-    # For each row, set the selected column positions
-    for row in range(dense_shape[0]):
-        masked_logits = masked_logits.at[row, selected_cols[row]].set(logits[row, selected_cols[row]])
-
-    # Sample from dense masked array
-    dense_result = jax.random.categorical(key, masked_logits, axis=1)
+    # Sample by taking argmax along the specified axis
+    dense_result = jnp.argmax(gumbel_logits, axis=axis)
 
     # Sample from sparse array
-    sparse_logits = logits[indices_0, indices_1]  # (16, 128)
     sparse_result = sparse_random_categorical(
         key,
         sparse_logits,
         [indices_0, indices_1],
         dim1_size=dense_shape[1],
-        axis=1
+        axis=axis
     )
 
-    # sparse_result[1] contains the sparse column indices (0-127) for each row
-    # Map these back to dense column indices (0-255)
-    sparse_col_indices = sparse_result[1].squeeze()  # (16,)
-    row_indices = jnp.arange(dense_shape[0])
-    mapped_result = indices_1[row_indices, sparse_col_indices]
+    # Map sparse indices back to dense indices and compare
+    # sparse_result contains the VALUES of indices at argmax positions (not positions themselves)
+    if axis == 0:
+        # Sampling along axis 0: for each column, select a row
+        # sparse_result[0] contains the DENSE row indices (from indices_0 array)
+        # indices_1 is broadcasted iota, so we compare for first 128 columns
+        mapped_result = sparse_result[0].squeeze()
+        expected_result = dense_result[:128]
+    else:  # axis == 1
+        # Sampling along axis 1: for each row, select a column
+        # sparse_result[1] contains the DENSE column indices (from indices_1 array)
+        # indices_0 is broadcasted iota, so we compare for first 8 rows
+        mapped_result = sparse_result[1].squeeze()
+        expected_result = dense_result[:8]
 
-    # Should match exactly
-    np.testing.assert_array_equal(mapped_result, dense_result,
-        err_msg="sparse_random_categorical should match dense categorical for axis=1")
-
-
-@pytest.mark.parametrize("seed", [111, 222, 333])
-def test_sparse_random_categorical_axis0(seed):
-    """Test sparse_random_categorical axis=0 by comparing against masked dense array."""
-    key = jax.random.key(seed)
-
-    # Generate dense logits (16, 256) - but we'll use power-of-2 for axis=0
-    # Since axis=0 sampling requires dim0 to be power of 2, use (128, 256)
-    dense_shape = (128, 256)
-    logits = jax.random.normal(jax.random.key(seed + 100), dense_shape)
-
-    # For each column, randomly select 128 rows to keep
-    mask_key = jax.random.key(seed + 200)
-    # Generate 128 row indices for each column
-    all_rows = jnp.tile(jnp.arange(dense_shape[0]), (dense_shape[1], 1))  # (256, 128)
-    perm_rows = jax.vmap(lambda k, rows: jax.random.permutation(k, rows))(
-        jax.random.split(mask_key, dense_shape[1]),
-        all_rows
-    )
-    selected_rows = perm_rows[:, :128].T  # (128, 256) - row indices to keep for each column
-
-    # Create indices for sparse array
-    indices_0 = selected_rows  # (128, 256)
-    indices_1 = jnp.tile(jnp.arange(dense_shape[1]), (128, 1))  # (128, 256)
-
-    # Create masked logits (set non-selected to -inf)
-    masked_logits = jnp.full(dense_shape, -1e12)
-    # For each column, set the selected row positions
-    for col in range(dense_shape[1]):
-        masked_logits = masked_logits.at[selected_rows[:, col], col].set(logits[selected_rows[:, col], col])
-
-    # Sample from dense masked array
-    dense_result = jax.random.categorical(key, masked_logits, axis=0)
-
-    # Sample from sparse array
-    sparse_logits = logits[indices_0, indices_1]  # (128, 256)
-    sparse_result = sparse_random_categorical(
-        key,
-        sparse_logits,
-        [indices_0, indices_1],
-        dim1_size=dense_shape[1],
-        axis=0
-    )
-
-    # sparse_result[0] contains the sparse row indices (0-127) for each column
-    # Map these back to dense row indices (0-127)
-    sparse_row_indices = sparse_result[0].squeeze()  # (256,)
-    col_indices = jnp.arange(dense_shape[1])
-    mapped_result = indices_0[sparse_row_indices, col_indices]
-
-    # Should match exactly
-    np.testing.assert_array_equal(mapped_result, dense_result,
-        err_msg="sparse_random_categorical should match dense categorical for axis=0")
+    # Should match exactly (categorical returns int indices)
+    np.testing.assert_array_equal(mapped_result, expected_result,
+        err_msg=f"sparse_random_categorical should match dense categorical for axis={axis}")
 
 
 if __name__ == "__main__":
@@ -166,8 +150,8 @@ if __name__ == "__main__":
     print("sparse_random_uniform tests passed!")
 
     print("\nRunning sparse_random_categorical tests...")
-    test_sparse_random_categorical_axis1(789)
-    test_sparse_random_categorical_axis0(111)
+    test_sparse_random_categorical(789, 0)
+    test_sparse_random_categorical(321, 1)
     print("sparse_random_categorical tests passed!")
 
     print("\nAll tests passed!")

@@ -72,13 +72,6 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     # Canonicalize axis to positive
     axis = axis if axis >= 0 else logits.ndim + axis
 
-    # top1 only supports axis=0, so transpose if axis=1
-    needs_transpose = (axis == 1)
-    if needs_transpose:
-        logits = logits.T
-        indices = [indices[1].T, indices[0].T]
-        dim1_size_for_uniform = dim1_size  # This stays the same for random generation
-
     u = sparse_random_uniform(
         key_ref,
         indices,
@@ -91,15 +84,11 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     gumbel = -jnp.log(-jnp.log(u))
     # Add Gumbel noise to scaled logits
     gumbel_logits = logits + gumbel
-    # Find argmax of Gumbel-perturbed logits (always along axis 0)
+    # Find argmax of Gumbel-perturbed logits
     sampled_token_indices = top1(
         [gumbel_logits, *indices],
         num_keys=1,
-        axis=0,
+        axis=axis,
     )[1:]
-
-    # Transpose results back if needed
-    if needs_transpose:
-        sampled_token_indices = [sampled_token_indices[1].T, sampled_token_indices[0].T]
 
     return sampled_token_indices
