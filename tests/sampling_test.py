@@ -7,7 +7,7 @@ from tallax.tax.fused_sampling import fused_tpu_sampling
 from tallax.utils import NUM_LANES, NUM_SUBLANES
 
 
-def test_fused_sampling_basic():
+def test_sampling_basic():
     """Test basic functionality of fused_tpu_sampling."""
     batch_size = NUM_SUBLANES
     vocab_size = NUM_LANES
@@ -43,7 +43,7 @@ def test_fused_sampling_basic():
             f"Greedy sample mismatch at index {i}: expected {expected_greedy}, got {greedy_sampled[i]}"
 
 
-def test_fused_sampling_temperature():
+def test_sampling_temperature():
     """Test that temperature affects sampling."""
     batch_size = NUM_SUBLANES
     vocab_size = NUM_LANES
@@ -79,7 +79,7 @@ def test_fused_sampling_temperature():
         f"Low temperature should be more deterministic: {low_temp_zeros} vs {high_temp_zeros}"
 
 
-def test_fused_sampling_different_shapes():
+def test_sampling_different_shapes():
     """Test with different input shapes."""
     for batch_size in [NUM_SUBLANES, NUM_SUBLANES * 2]:
         for vocab_size in [NUM_LANES, NUM_LANES * 2]:
@@ -101,7 +101,7 @@ def test_fused_sampling_different_shapes():
             assert greedy_sampled.shape == (batch_size,)
 
 
-def test_fused_sampling_scalar_params():
+def test_sampling_scalar_params():
     """Test with scalar top_p and temperature."""
     batch_size = NUM_SUBLANES
     vocab_size = NUM_LANES
@@ -125,8 +125,8 @@ def test_fused_sampling_scalar_params():
 
 
 if __name__ == "__main__":
-    test_fused_sampling_basic()
-    test_fused_sampling_temperature()
-    test_fused_sampling_different_shapes()
-    test_fused_sampling_scalar_params()
+    test_sampling_basic()
+    test_sampling_temperature()
+    test_sampling_different_shapes()
+    test_sampling_scalar_params()
     print("All tests passed!")

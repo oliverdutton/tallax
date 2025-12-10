@@ -105,35 +105,54 @@ def verify_sort_output(
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 
-@jax.vmap
-def verify_topk_output(x, outs):
+def verify_topk_output(x, outs, axis=1):
     """Validate top-k outputs for correctness.
 
     Args:
-        x: Input array (1D per vmap)
+        x: Input array (must be 2D)
         outs: Tuple of (values, indices) from top-k
+        axis: Axis along which top-k was computed (0 or 1, default 1)
 
     Returns:
-        Boolean indicating if the top-k output is valid
+        Boolean array indicating if the top-k output is valid for each batch element
+
+    Raises:
+        ValueError: If x is not 2D
     """
-    assert x.ndim == 1
-    out_vals, out_indexs = outs
-    x_sorted = jnp.sort(x, descending=True)
+    if x.ndim != 2:
+        raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
 
-    k = len(out_vals)
-    n = len(x)
-    valid = True
+    # If axis == 0, transpose so we always work with axis=1
+    if axis == 0:
+        x = x.T
+        out_vals, out_indexs = outs
+        out_vals = out_vals.T
+        out_indexs = out_indexs.T
+    else:
+        out_vals, out_indexs = outs
 
-    # actual values must match
-    valid &= (out_vals == x_sorted[:k]).all()
+    # Now verify along axis=1 for each row
+    @jax.vmap
+    def verify_row(x_row, vals_row, idxs_row):
+        """Verify a single row."""
+        x_sorted = jnp.sort(x_row, descending=True)
 
-    # indices map to values correctly
-    valid &= (x[out_indexs] == out_vals).all()
+        k = len(vals_row)
+        n = len(x_row)
+        valid = True
 
-    # indices are all in bounds and unique
-    i = jnp.unique(out_indexs, size=k, fill_value=-1)
-    valid &= ((i >= 0) & (i < n)).all()
-    return valid
+        # actual values must match
+        valid &= (vals_row == x_sorted[:k]).all()
+
+        # indices map to values correctly
+        valid &= (x_row[idxs_row] == vals_row).all()
+
+        # indices are all in bounds and unique
+        i = jnp.unique(idxs_row, size=k, fill_value=-1)
+        valid &= ((i >= 0) & (i < n)).all()
+        return valid
+
+    return verify_row(x, out_vals, out_indexs)
 
 
 def benchmark(_run):
