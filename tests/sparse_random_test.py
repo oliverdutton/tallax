@@ -11,6 +11,7 @@ from tallax._src.sparse_random import sparse_random_uniform, sparse_random_categ
 def test_sparse_random_uniform(seed, minval, maxval):
     """Test sparse_random_uniform by comparing against indexed dense array."""
     key = jax.random.key(seed)
+    key, subkey1, subkey2 = jax.random.split(key, 3)
 
     # Generate dense random array
     dense_shape = (16, 256)
@@ -24,9 +25,8 @@ def test_sparse_random_uniform(seed, minval, maxval):
 
     # Generate random sparse indices
     sparse_shape = (8, 128)
-    idx_key = jax.random.key(seed + 1000)
-    indices_0 = jax.random.randint(idx_key, sparse_shape, 0, dense_shape[0])
-    indices_1 = jax.random.randint(jax.random.key(seed + 2000), sparse_shape, 0, dense_shape[1])
+    indices_0 = jax.random.randint(subkey1, sparse_shape, 0, dense_shape[0])
+    indices_1 = jax.random.randint(subkey2, sparse_shape, 0, dense_shape[1])
 
     # Generate sparse random values
     sparse_uniform = sparse_random_uniform(
@@ -62,6 +62,7 @@ def test_sparse_random_categorical(seed, axis):
     - axis=0: sample along rows, shape (dense, batch) = (256, 16)
     """
     key = jax.random.key(seed)
+    key, logits_key, indices_key = jax.random.split(key, 3)
 
     # Parameterized dimensions
     batch_dim = 16      # Number of independent samples
@@ -81,28 +82,25 @@ def test_sparse_random_categorical(seed, axis):
         dense_axis = 0  # sampling from axis 0
 
     # Generate sparse logits
-    logits_key = jax.random.key(seed + 100)
     sparse_logits = jax.random.normal(logits_key, sparse_shape)
 
-    # Create indices: one broadcasted iota for batch, one random permutation for dense
-    mask_key = jax.random.key(seed + 200)
-
+    # Create indices: one broadcasted iota for batch, one random choice for dense
     # Broadcasted iota for batch dimension
     batch_indices = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, batch_axis)
 
-    # Random permutation for dense dimension (one permutation per batch element)
-    all_dense = jnp.tile(jnp.arange(dense_dim), (batch_dim, 1))
-    perm_dense = jax.vmap(lambda k, d: jax.random.permutation(k, d))(
-        jax.random.split(mask_key, batch_dim),
-        all_dense
+    # Random choice without replacement for dense dimension (one choice per batch element)
+    dense_iota = jax.lax.broadcasted_iota(jnp.int32, (batch_dim, dense_dim), 1)
+    dense_choices = jax.vmap(lambda k, iota: jax.random.choice(k, iota, shape=(sparse_dim,), replace=False))(
+        jax.random.split(indices_key, batch_dim),
+        dense_iota
     )
-    # Select first sparse_dim elements and reshape appropriately
+    # Reshape appropriately for the axis
     if axis == 1:
-        dense_indices = perm_dense[:, :sparse_dim]
+        dense_indices = dense_choices
         indices_0 = batch_indices
         indices_1 = dense_indices
     else:  # axis == 0
-        dense_indices = perm_dense[:, :sparse_dim].T
+        dense_indices = dense_choices.T
         indices_0 = dense_indices
         indices_1 = batch_indices
 
