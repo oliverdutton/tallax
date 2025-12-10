@@ -103,9 +103,8 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
         dim1_size=vocab_size,
         axis=0,
         dtype=jnp.float32
-        # take token_idx
-    )[1].squeeze(0)
-
+        # take sampled_indices[1], the token idx
+    )[1]
     greedy_sampled = topk_idx[0,:]
     return jnp.where(
       temperature < _SAMPLING_EPS,
