@@ -87,14 +87,6 @@ def test_top1_pallas(shape, dtype, axis):
 
     result_values, result_indices = top1_pallas(arr, indices, interpret=interpret)
 
-    # Reshape 1D outputs to 2D for verify_topk_output: (batch,) -> (batch, 1) or (1, batch)
-    if axis == 0:
-        result_values = result_values[None, :]  # (1, batch)
-        result_indices = result_indices[None, :]
-    else:  # axis == 1
-        result_values = result_values[:, None]  # (batch, 1)
-        result_indices = result_indices[:, None]
-
-    # Verify using axis parameter
+    # Verify using axis parameter - verify_topk_output handles 1D outputs directly
     valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
     assert valid.all(), f"Top1 validation failed for shape {shape}, dtype {dtype}, axis={axis}"

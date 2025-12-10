@@ -125,31 +125,51 @@ def verify_topk_output(x, outs, axis=1):
 
     out_vals, out_indexs = outs
 
-    # Verify along the specified axis using vmap with appropriate in_axes
     # The batch axis is opposite to the sampling axis:
     # - axis=1 (sampling along columns): batch is axis 0, so in_axes=(0, 0, 0)
     # - axis=0 (sampling along rows): batch is axis 1, so in_axes=(1, 1, 1)
     batch_axis = 1 - axis
 
-    @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
-    def verify_slice(x_slice, vals_slice, idxs_slice):
-        """Verify a single slice along the batch dimension."""
-        x_sorted = jnp.sort(x_slice, descending=True)
+    # Handle both 1D (k=1) and 2D (k>1) outputs
+    if out_vals.ndim == 1:
+        # k=1 case: outputs are 1D scalars per batch element
+        @functools.partial(jax.vmap, in_axes=(batch_axis, 0, 0))
+        def verify_slice(x_slice, val_scalar, idx_scalar):
+            """Verify a single slice for k=1."""
+            x_sorted = jnp.sort(x_slice, descending=True)
+            n = len(x_slice)
+            valid = True
 
-        k = len(vals_slice)
-        n = len(x_slice)
-        valid = True
+            # actual value must match top value
+            valid &= (val_scalar == x_sorted[0])
 
-        # actual values must match
-        valid &= (vals_slice == x_sorted[:k]).all()
+            # index maps to value correctly
+            valid &= (x_slice[idx_scalar] == val_scalar)
 
-        # indices map to values correctly
-        valid &= (x_slice[idxs_slice] == vals_slice).all()
+            # index is in bounds
+            valid &= (idx_scalar >= 0) & (idx_scalar < n)
+            return valid
+    else:
+        # k>1 case: outputs are 2D with k values per batch element
+        @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
+        def verify_slice(x_slice, vals_slice, idxs_slice):
+            """Verify a single slice for k>1."""
+            x_sorted = jnp.sort(x_slice, descending=True)
 
-        # indices are all in bounds and unique
-        i = jnp.unique(idxs_slice, size=k, fill_value=-1)
-        valid &= ((i >= 0) & (i < n)).all()
-        return valid
+            k = len(vals_slice)
+            n = len(x_slice)
+            valid = True
+
+            # actual values must match
+            valid &= (vals_slice == x_sorted[:k]).all()
+
+            # indices map to values correctly
+            valid &= (x_slice[idxs_slice] == vals_slice).all()
+
+            # indices are all in bounds and unique
+            i = jnp.unique(idxs_slice, size=k, fill_value=-1)
+            valid &= ((i >= 0) & (i < n)).all()
+            return valid
 
     return verify_slice(x, out_vals, out_indexs)
 
