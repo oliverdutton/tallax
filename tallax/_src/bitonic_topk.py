@@ -40,7 +40,11 @@ from tallax._src.sort import (
 )
 
 def top1(operands, num_keys, axis):
-  assert axis==0
+  if axis == 1:
+    # transpose and run on axis 0
+    operands = jax.tree.map(lambda x: x.T, operands)
+    axis = 0
+  assert axis == 0
   unpadded_shape = operands[0].shape
   assert unpadded_shape[0] == 2**log2(unpadded_shape[0])
   assert unpadded_shape[0] >= NUM_SUBLANES
@@ -76,11 +80,12 @@ def top1(operands, num_keys, axis):
         )):
           outs_tiles[j].append(o)
     arrs_tiles = outs_tiles
-  return [jnp.concatenate(tiles, axis=1)[:1,:unpadded_shape[1]] for tiles in arrs_tiles]
+  return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
 def flat(xs):
   return list(chain.from_iterable(xs))
+
 
 def split_rows(tiles):
   num_rows = NUM_LANES // NUM_SUBLANES
