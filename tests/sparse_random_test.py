@@ -55,51 +55,65 @@ def test_sparse_random_uniform(seed, minval, maxval):
 @pytest.mark.parametrize("seed", [789, 321, 654])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_sparse_random_categorical(seed, axis):
-    """Test sparse_random_categorical by comparing against masked dense array."""
+    """Test sparse_random_categorical by comparing against masked dense array.
+
+    Uses batch=16, dense=256, sparse=128 for both axes.
+    - axis=1: sample along columns, shape (batch, dense) = (16, 256)
+    - axis=0: sample along rows, shape (dense, batch) = (256, 16)
+    """
     key = jax.random.key(seed)
 
-    # Dense shape and sparse shape
-    dense_shape = (16, 256)
-    sparse_shape = (8, 128)
+    # Parameterized dimensions
+    batch_dim = 16      # Number of independent samples
+    dense_dim = 256     # Size of dimension we're sampling from
+    sparse_dim = 128    # Number of logits we provide (< dense_dim)
 
-    # Generate SPARSE logits (not extracted from dense)
+    # Shape depends on axis
+    if axis == 1:
+        dense_shape = (batch_dim, dense_dim)
+        sparse_shape = (batch_dim, sparse_dim)
+        batch_axis = 0  # batch is axis 0
+        dense_axis = 1  # sampling from axis 1
+    else:  # axis == 0
+        dense_shape = (dense_dim, batch_dim)
+        sparse_shape = (sparse_dim, batch_dim)
+        batch_axis = 1  # batch is axis 1
+        dense_axis = 0  # sampling from axis 0
+
+    # Generate sparse logits
     logits_key = jax.random.key(seed + 100)
     sparse_logits = jax.random.normal(logits_key, sparse_shape)
 
-    # Create sparse indices
+    # Create indices: one broadcasted iota for batch, one random permutation for dense
+    mask_key = jax.random.key(seed + 200)
+
+    # Broadcasted iota for batch dimension
+    batch_indices = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, batch_axis)
+
+    # Random permutation for dense dimension (one permutation per batch element)
+    all_dense = jnp.tile(jnp.arange(dense_dim), (batch_dim, 1))
+    perm_dense = jax.vmap(lambda k, d: jax.random.permutation(k, d))(
+        jax.random.split(mask_key, batch_dim),
+        all_dense
+    )
+    # Select first sparse_dim elements and reshape appropriately
     if axis == 1:
-        # Sample along axis=1: for each of 8 rows, select 128 columns
-        # indices_0: broadcasted iota for rows
-        indices_0 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 0)
-        # indices_1: random permutation of columns for each row
-        mask_key = jax.random.key(seed + 200)
-        all_cols = jnp.tile(jnp.arange(dense_shape[1]), (sparse_shape[0], 1))
-        perm_cols = jax.vmap(lambda k, cols: jax.random.permutation(k, cols))(
-            jax.random.split(mask_key, sparse_shape[0]),
-            all_cols
-        )
-        indices_1 = perm_cols[:, :sparse_shape[1]]
+        dense_indices = perm_dense[:, :sparse_dim]
+        indices_0 = batch_indices
+        indices_1 = dense_indices
     else:  # axis == 0
-        # Sample along axis=0: for each of 128 columns, select 8 rows
-        # indices_1: broadcasted iota for columns
-        indices_1 = jax.lax.broadcasted_iota(jnp.int32, sparse_shape, 1)
-        # indices_0: random permutation of rows for each column
-        mask_key = jax.random.key(seed + 200)
-        all_rows = jnp.tile(jnp.arange(dense_shape[0]), (sparse_shape[1], 1))
-        perm_rows = jax.vmap(lambda k, rows: jax.random.permutation(k, rows))(
-            jax.random.split(mask_key, sparse_shape[1]),
-            all_rows
-        )
-        indices_0 = perm_rows[:, :sparse_shape[0]].T
+        dense_indices = perm_dense[:, :sparse_dim].T
+        indices_0 = dense_indices
+        indices_1 = batch_indices
 
     # Create dense masked array: all -1e12 except at sparse indices
     dense_masked = jnp.full(dense_shape, -1e12)
     dense_masked = dense_masked.at[indices_0, indices_1].set(sparse_logits)
 
-    # Sample from dense masked array using jax.random.categorical
+    # Sample from dense using jax.random.categorical
     dense_result = jax.random.categorical(key, dense_masked, axis=axis)
 
-    # Sample from sparse array
+    # Sample from sparse using sparse_random_categorical
     sparse_result = sparse_random_categorical(
         key,
         sparse_logits,
@@ -108,20 +122,15 @@ def test_sparse_random_categorical(seed, axis):
         axis=axis
     )
 
-    # Map sparse indices back to dense indices and compare
-    # sparse_result contains the VALUES of indices at argmax positions (not positions themselves)
+    # Extract results: sparse_result contains VALUES from indices arrays
+    # The axis being sampled (dense_axis) gives us the selected indices
     if axis == 0:
-        # Sampling along axis 0: for each column, select a row
-        # sparse_result[0] contains the DENSE row indices (from indices_0 array)
-        # indices_1 is broadcasted iota, so we compare for first 128 columns
         mapped_result = sparse_result[0].squeeze()
-        expected_result = dense_result[:128]
     else:  # axis == 1
-        # Sampling along axis 1: for each row, select a column
-        # sparse_result[1] contains the DENSE column indices (from indices_1 array)
-        # indices_0 is broadcasted iota, so we compare for first 8 rows
         mapped_result = sparse_result[1].squeeze()
-        expected_result = dense_result[:8]
+
+    # Compare with dense result (first batch_dim elements)
+    expected_result = dense_result[:batch_dim] if axis == 0 else dense_result
 
     # Should match exactly (categorical returns int indices)
     np.testing.assert_array_equal(mapped_result, expected_result,
