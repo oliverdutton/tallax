@@ -96,23 +96,8 @@ def test_sparse_random_categorical(seed, axis):
     dense_masked = jnp.full(dense_shape, -1e12)
     dense_masked = dense_masked.at[indices_0, indices_1].set(sparse_logits)
 
-    # Generate Gumbel noise for dense array using position-based generation
-    # to match sparse_random_categorical's approach
-    dense_indices_0 = jax.lax.broadcasted_iota(jnp.int32, dense_shape, 0)
-    dense_indices_1 = jax.lax.broadcasted_iota(jnp.int32, dense_shape, 1)
-    dense_uniform = sparse_random_uniform(
-        key,
-        [dense_indices_0, dense_indices_1],
-        dim1_size=dense_shape[1],
-        dtype=jnp.float32,
-        minval=jnp.finfo(jnp.float32).tiny,
-        maxval=1.0
-    )
-    dense_gumbel = -jnp.log(-jnp.log(dense_uniform))
-    gumbel_logits = dense_masked + dense_gumbel
-
-    # Sample by taking argmax along the specified axis
-    dense_result = jnp.argmax(gumbel_logits, axis=axis)
+    # Sample from dense masked array using jax.random.categorical
+    dense_result = jax.random.categorical(key, dense_masked, axis=axis)
 
     # Sample from sparse array
     sparse_result = sparse_random_categorical(
