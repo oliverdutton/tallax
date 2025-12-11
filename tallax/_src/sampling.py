@@ -251,7 +251,7 @@ def top_p_and_sample(
 
 def top_k(logits: jax.Array, k: jax.Array, replace_val):
     def _top_k(logits: jax.Array, k: jax.Array):
-      if logits.shape[-1] < 8192:
+      if logits.shape[-1] <= 4096:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
         topk_logits, topk_idxs = bitonic_topk([logits, idxs], NUM_LANES)
