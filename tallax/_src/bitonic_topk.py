@@ -41,13 +41,27 @@ from tallax._src.sort import (
 
 def top1(operands, num_keys, axis):
   if axis == 1:
-    # transpose and run on axis 0
     operands = jax.tree.map(lambda x: x.T, operands)
     axis = 0
   assert axis == 0
+  shape = operands[0].shape
+
+  # Handle dim0 > NUM_LANES by splitting along axis 0
+  if shape[0] > NUM_LANES:
+    padded = [pad(op, (NUM_LANES, shape[1])) for op in operands]
+    num_chunks = pl.cdiv(shape[0], NUM_LANES)
+    chunks = [jnp.split(op, num_chunks, axis=0) for op in padded]
+    results = [[_top1_single_chunk([chunks[j][i] for j in range(len(operands))], num_keys)[j]
+                for i in range(num_chunks)] for j in range(len(operands))]
+    return [jnp.concatenate(r, axis=0)[:shape[0], :shape[1]] for r in results]
+
+  return _top1_single_chunk(operands, num_keys)
+
+
+def _top1_single_chunk(operands, num_keys):
+  """Process a single chunk where dim0 <= NUM_LANES."""
   unpadded_shape = operands[0].shape
-  assert unpadded_shape[0] == 2**log2(unpadded_shape[0])
-  assert unpadded_shape[0] >= NUM_SUBLANES
+  assert unpadded_shape[0] == 2**log2(unpadded_shape[0]) and unpadded_shape[0] >= NUM_SUBLANES
   operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
   shape = operands[0].shape
   for _ in range(log2(shape[0] // NUM_SUBLANES)):
@@ -56,28 +70,16 @@ def top1(operands, num_keys, axis):
   assert operands[0].shape[0] == NUM_SUBLANES
   if shape[1] % NUM_LANES != 0:
     raise NotImplementedError
-    
+
   arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
-  for stage in range(log2(NUM_SUBLANES))[::-1]:  
+  for stage in range(log2(NUM_SUBLANES))[::-1]:
     permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
-  
-    # Apply permutation to all tiles
     arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
-      arrs_tiles
-    )
-  
-    # Compare and merge with permuted values
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles)
     outs_tiles = [[] for _ in arrs_tiles]
     for _, (lefts, rights) in enumerate(zip(
-          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-          strict=True
-      )):
-        for j, (o, _) in enumerate(compare(
-            lefts, rights,
-            is_descending=True,
-            num_keys=num_keys
-        )):
+          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True)):
+        for j, (o, _) in enumerate(compare(lefts, rights, is_descending=True, num_keys=num_keys)):
           outs_tiles[j].append(o)
     arrs_tiles = outs_tiles
   return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
@@ -186,22 +188,31 @@ def pallas_compatible_bitonic_topk(operands: list[jax.Array], k: int = NUM_LANES
     """
     if k > NUM_LANES:
       raise NotImplementedError
-    # Compute padded shape that satisfies alignment requirements
+
+    shape = operands[0].shape
+
+    # Handle dim0 > NUM_LANES by splitting along axis 0
+    if shape[0] > NUM_LANES:
+      operands_padded = [pad(op, (NUM_LANES, shape[1]), val='min') for op in operands]
+      num_chunks = pl.cdiv(shape[0], NUM_LANES)
+      chunks = [jnp.split(op, num_chunks, axis=0) for op in operands_padded]
+      results = [[_pallas_compatible_bitonic_topk_single_chunk(
+        [chunks[j][i] for j in range(len(operands))], k, num_keys)[j]
+        for i in range(num_chunks)] for j in range(len(operands))]
+      return [jnp.concatenate(r, axis=0)[:shape[0], :k] for r in results]
+
+    # Original logic for dim0 <= NUM_LANES
+    return _pallas_compatible_bitonic_topk_single_chunk(operands, k, num_keys)
+
+
+def _pallas_compatible_bitonic_topk_single_chunk(operands: list[jax.Array], k: int, num_keys: int):
+    """Process a single chunk where dim0 <= NUM_LANES."""
     shape = operands[0].shape
     padded_shape = _compute_padded_shape(*shape)
-    # Pad both dimensions if needed
-    arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
-    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
-
-    # Convert to sublane transposed format
+    arrs = [pad(op, block_shape=padded_shape, val='min').astype(to_32bit_dtype(op.dtype)) for op in operands]
     arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
-    
-    # Target number of tiles after cross-tile merging
-    # For dim0 < NUM_LANES: we want (NUM_LANES // NUM_SUBLANES) tiles = 16 tiles
-    # For dim0 >= NUM_LANES: we want more tiles proportional to dim0
     dim0 = padded_shape[0]
-    if dim0 > NUM_LANES:
-      raise NotImplementedError
+    assert dim0 <= NUM_LANES, f"Expected dim0 <= NUM_LANES, got {dim0}"
     log_lanes = log2(NUM_LANES)
     num_merges = log2(shape[1]) - log_lanes
     num_intra_merges = min(
@@ -366,9 +377,10 @@ def bitonic_topk(
       )
 
     operands, unpadded_shape = canonicalize_operand(operand)
-    if unpadded_shape[0] > NUM_LANES:
-      raise NotImplementedError
-    operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
+    # Pad to minimum requirements: NUM_SUBLANES for dim0, NUM_LANES for dim1
+    # For dim0 > NUM_LANES, just ensure it's a multiple of NUM_SUBLANES
+    pad_dim0 = NUM_LANES if unpadded_shape[0] <= NUM_LANES else NUM_SUBLANES
+    operands = [pad(x, (pad_dim0, NUM_LANES),
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape
     # Define output shapes
