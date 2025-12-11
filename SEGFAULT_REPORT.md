@@ -185,20 +185,26 @@ python test_pallas_view.py
 - **JAX Version**: 0.8.0
 - **Platform**: Linux CPU
 
-## Conclusion
+## Conclusion & Fix Status
 
-The segfault is caused by **an actual bug in tallax's `_sort_kernel` function** at lines 548-551:
+### Fixed Issue
+The original bug at lines 548-551 (stale loop variable + unsupported `.bitcast()`) has been **FIXED** by removing the redundant code block entirely.
 
-1. **Stale loop variable `i`**: Uses leftover value from previous loop instead of iterating
-2. **Unsupported `.bitcast()` operation**: Not supported on refs in Pallas interpret mode, raises `NotImplementedError`
+**Fix applied**: Removed lines 548-551 since float-to-int conversion already happens before kernel entry.
 
-This bug only manifests with float32+return_argsort on CPU because:
-- The bfloat16 case uses a packing optimization that avoids this code path
-- TPU compilation handles `.bitcast()` differently than CPU interpret mode
-- CPU interpret mode strictly enforces supported operations and crashes on `NotImplementedError`
+### Test Results After Fix:
+- ✓ **Size (16, 16)**: Works in 20s
+- ✓ **Size (16, 32)**: Works in 36s
+- ✗ **Size (16, 64)**: Still segfaults
+- ✗ **Size (16, 128)**: Still segfaults
 
-**This is NOT a Pallas or JAX limitation** - it's a fixable bug in tallax code. The recommended fix is to either:
-1. Remove lines 548-551 entirely (conversion already happens before kernel entry), OR
-2. Fix the stale variable and replace `.bitcast()` with a compatible operation
+### Remaining Issue
+There is a **SEPARATE** issue affecting sizes >= 64 that causes segfaults. This appears to be in the deeper bitonic sort algorithm implementation (`_compute_subtile_substages` or related functions), not the original `.bitcast()` bug.
 
-After the fix, CPU interpret mode tests should work correctly for all dtype and return_argsort combinations.
+The size threshold corresponds to stage boundaries:
+- Sizes <= 32: Use stages 1-5, work correctly ✓
+- Sizes >= 64: Use stages 1-7 (up to log2(NUM_LANES)=7), segfault ✗
+
+This suggests the issue is in how stages 6-7 are executed in CPU interpret mode, possibly in the tile manipulation or permutation code.
+
+**Recommendation**: The original bug is fixed. The remaining size >= 64 issue requires deeper investigation of the bitonic sort tile operations and may be a fundamental limitation of CPU interpret mode for complex bit-level operations at larger scales.
