@@ -141,6 +141,9 @@ def top_p_and_sample_kernel(
         vocab_size: Vocabulary size
         replace_val: Value to replace filtered logits with
     """
+    # Calculate dim0 offset: base offset + program_id * block_size
+    dim0_offset = dim0_offset_ref[0] + pl.program_id(0) * topk_logits_ref.shape[0]
+
     sampled_tokens_ref[...] = pallas_compatible_top_p_and_sample(
       topk_logits=topk_logits_ref[...],
       topk_idx=topk_idx_ref[...],
@@ -149,7 +152,7 @@ def top_p_and_sample_kernel(
       temperature=temperature_ref[...],
       vocab_size=vocab_size,
       replace_val=replace_val,
-      dim0_offset=dim0_offset_ref[0], # Extract scalar from SMEM array
+      dim0_offset=dim0_offset,
     )
 
 def _top_p_and_sample(
@@ -182,21 +185,30 @@ def _top_p_and_sample(
     Returns:
         next_tokens: Sampled tokens of shape (batch_size,)
     """
-    return pl.pallas_call(
+    unpadded_shape = topk_logits.shape
+    padded_dim0 = pl.cdiv(unpadded_shape[0], NUM_LANES) * NUM_LANES
+    topk_logits, topk_idx, top_p, temperature = (
+        pad(x, (padded_dim0, unpadded_shape[1])[:x.ndim], val=replace_val)
+        for x in (topk_logits, topk_idx, top_p, temperature)
+    )
+
+    result = pl.pallas_call(
         functools.partial(
           top_p_and_sample_kernel,
           vocab_size=vocab_size,
           replace_val=replace_val,
         ),
         in_specs=(
-          pl.BlockSpec(),
-          pl.BlockSpec(),
-          pl.BlockSpec(memory_space=pltpu.SMEM),
-          pl.BlockSpec(),
-          pl.BlockSpec(),
-          pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec((NUM_LANES, unpadded_shape[1]), lambda i: (i * NUM_LANES, 0)),
+            pl.BlockSpec((NUM_LANES, unpadded_shape[1]), lambda i: (i * NUM_LANES, 0)),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec((NUM_LANES,), lambda i: (i * NUM_LANES,)),
+            pl.BlockSpec((NUM_LANES,), lambda i: (i * NUM_LANES,)),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
-        out_shape=jax.ShapeDtypeStruct(topk_logits.shape[:1], jnp.int32),
+        out_specs=pl.BlockSpec((NUM_LANES,), lambda i: (i * NUM_LANES,)),
+        out_shape=jax.ShapeDtypeStruct((padded_dim0,), jnp.int32),
+        grid=padded_dim0 // NUM_LANES,
         interpret=interpret,
     )(
         topk_logits,
@@ -206,6 +218,8 @@ def _top_p_and_sample(
         temperature,
         jnp.array(dim0_offset, jnp.int32)[None],
     )
+
+    return result[:unpadded_shape[0]]
 
 @functools.partial(
     jit,
