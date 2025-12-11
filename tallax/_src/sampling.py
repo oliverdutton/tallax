@@ -98,9 +98,7 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
 
     # random key splitting is based on idx in ravelled array
     # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
-    batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
-    # shift to global indices using dim0_offset (computed outside pallas_call from axis_index)
-    batch_idx += dim0_offset
+    batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1) + dim0_offset
     next_tokens = sparse_random_categorical(
         rng_key,
         topp_logits_scaled,
