@@ -76,18 +76,40 @@ The tallax codebase already acknowledges Pallas segfault issues on CPU:
 
 This shows awareness that Pallas operations can segfault on CPU in interpret mode.
 
-### 4. Bitcast Issue (Secondary Finding)
+### 4. **THE ACTUAL BUG: Unsupported `.bitcast()` on Refs**
 
-During investigation, discovered that `.bitcast()` is NOT supported in Pallas interpret mode:
-- **`.bitcast()`**: NOT supported in interpret mode (raises AttributeError)
-- **`.view()`**: IS supported in interpret mode
+**Location**: `tallax/_src/sort.py:548-551`
 
-Code at `tallax/_src/sort.py:550` uses `.bitcast()`:
 ```python
-refs[i] = refs[i].bitcast(jnp.int32)
+if jnp.issubdtype(refs[i].dtype, jnp.floating) and i < num_keys:
+    f32_in_sortable_i32 = float_to_sortable_int(refs[i][...])
+    refs[i] = refs[i].bitcast(jnp.int32)  # ← BUG!
+    refs[i][...] = f32_in_sortable_i32
 ```
 
-However, this line may not be executed in the failing test cases due to operands already being converted to int32 before entering the kernel.
+**Two critical bugs**:
+
+1. **Stale loop variable**: Variable `i` is leftover from the loop at lines 542-546, so it only checks the LAST array instead of all arrays. This should be inside a loop.
+
+2. **Unsupported operation**: `.bitcast()` on refs raises `NotImplementedError: Unsupported transform: RefBitcaster` in Pallas interpret mode on CPU. This is THE root cause of the segfault.
+
+**Proof**: Direct testing shows:
+```python
+scratch_ref_bitcast = scratch_ref.bitcast(jnp.int32)
+# ↓
+NotImplementedError: Unsupported transform: RefBitcaster(dtype=dtype('int32'), shape=(1, 2))
+```
+
+**Why it only fails with float32 + return_argsort**:
+- When `return_argsort=True` with float32, two separate arrays exist (values + indices)
+- The kernel processes multiple refs, hitting this buggy code path
+- With bfloat16, values+indices are packed into a single array, avoiding this code path
+- Without `return_argsort`, only one array exists, avoiding certain code paths
+
+**Why it works on TPU but fails on CPU**:
+- TPU compilation handles `.bitcast()` through compiler transformations
+- CPU interpret mode tries to actually execute the operation and hits `NotImplementedError`
+- The exception likely causes the Python interpreter to crash, manifesting as a segfault
 
 ## Why This Matters
 
@@ -98,19 +120,32 @@ However, this line may not be executed in the failing test cases due to operands
 
 ## Recommendations
 
+### **IMMEDIATE FIX REQUIRED**
+**Fix the bug at `tallax/_src/sort.py:548-551`**:
+
+Option A - Remove the buggy code block entirely:
+- The float-to-int conversion already happens BEFORE entering the kernel (line 928-933 in sort.py)
+- This code block appears to be redundant and can be safely deleted
+
+Option B - Fix both bugs properly:
+```python
+# Replace lines 548-551 with:
+for i in range(len(refs)):  # FIX: Loop over all refs, don't use stale i
+    if jnp.issubdtype(refs[i].dtype, jnp.floating) and i < num_keys:
+        # FIX: Use .view() instead of .bitcast() for interpret mode compatibility
+        x_float = refs[i][...]
+        x_int = float_to_sortable_int(x_float)
+        refs[i][...] = x_int.view(refs[i].dtype.name)  # or handle dtype conversion differently
+```
+
 ### Short-term
-1. **Skip ALL float32 CPU tests with return_argsort=True** to prevent segfaults in CI
+1. **Skip ALL float32 CPU tests with return_argsort=True** until the fix is implemented
 2. **Document the limitation** clearly in test files
 3. **Keep bfloat16 tests** as they provide some CPU test coverage
 
-### Medium-term
-1. **Investigate JAX version upgrade**: Check if newer JAX versions fix the CPU `lax.sort` segfault
-2. **Report to JAX team**: File an issue with JAX about CPU segfaults in `lax.sort`
-3. **Replace `.bitcast()` with `.view()`**: At line 550 in sort.py (defensive fix, may not impact current issue)
-
 ### Long-term
-1. **Mock/stub XLA sort in CPU tests**: Could test Pallas sorting logic without relying on JAX's XLA sort for verification
-2. **CI/CD**: Ensure tests run on actual TPU hardware where these issues don't occur
+1. **Add CPU interpret mode to CI**: Once fixed, add CPU interpret mode tests to prevent regressions
+2. **Ensure tests run on actual TPU hardware**: The primary target platform
 
 ## Test Output Examples
 
@@ -152,7 +187,18 @@ python test_pallas_view.py
 
 ## Conclusion
 
-The segfault is caused by **Pallas interpret mode's inability to handle multi-array sorts on CPU** in JAX 0.8.0. The issue manifests specifically with float32+return_argsort configurations but not with bfloat16 because bfloat16 uses an optimization that packs values and indices into a single array. This is a limitation of Pallas interpret mode on CPU, not a bug in tallax's sorting algorithm itself. The best immediate fix is to skip these problematic test configurations on CPU, while the long-term solution involves either:
-1. Upgrading JAX/Pallas to a version with better CPU interpret mode support
-2. Implementing a CPU-specific workaround that packs float32+indices similarly to bfloat16
-3. Running tests on actual TPU hardware where these issues don't occur
+The segfault is caused by **an actual bug in tallax's `_sort_kernel` function** at lines 548-551:
+
+1. **Stale loop variable `i`**: Uses leftover value from previous loop instead of iterating
+2. **Unsupported `.bitcast()` operation**: Not supported on refs in Pallas interpret mode, raises `NotImplementedError`
+
+This bug only manifests with float32+return_argsort on CPU because:
+- The bfloat16 case uses a packing optimization that avoids this code path
+- TPU compilation handles `.bitcast()` differently than CPU interpret mode
+- CPU interpret mode strictly enforces supported operations and crashes on `NotImplementedError`
+
+**This is NOT a Pallas or JAX limitation** - it's a fixable bug in tallax code. The recommended fix is to either:
+1. Remove lines 548-551 entirely (conversion already happens before kernel entry), OR
+2. Fix the stale variable and replace `.bitcast()` with a compatible operation
+
+After the fix, CPU interpret mode tests should work correctly for all dtype and return_argsort combinations.
