@@ -239,7 +239,7 @@ def top_p_and_sample(
         infer_sharding_from_operands=infer_sharding_from_operands,
         partition=partition,
         sharding_rule='b k, b k, r, b, b -> b',
-        needs_replication=('k', 'r'),
+        needs_replication_factors=('k', 'r'),
     )
 
     return sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature)
