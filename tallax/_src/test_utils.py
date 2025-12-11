@@ -195,7 +195,7 @@ def benchmark(_run):
   df['name'] = df.name.apply(lambda s: s.split('(')[0])
 
   # Look for JIT compiled functions
-  mask = df.name.str.contains("jit_")
+  mask = df.name.str.startswith("jit_")
   res = df[mask][['name', 'dur']]
 
   if not res.empty:
