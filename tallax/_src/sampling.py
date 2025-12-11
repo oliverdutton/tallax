@@ -206,7 +206,7 @@ def _top_p_and_sample(
         rng_key.reshape(1,2),
         top_p,
         temperature,
-        jnp.array([dim0_offset], dtype=jnp.int32),
+        dim0_offset[None],
     )
 
 @functools.partial(
@@ -251,7 +251,7 @@ def top_p_and_sample(
             # Compute axis index outside pallas_call (required for Pallas compatibility)
             dim0_offset = 0
             if batch_axis_name is not None:
-                dim0_offset = jax.lax.axis_index(batch_axis_name)
+                dim0_offset = jax.lax.axis_index(batch_axis_name) * topk_logits.shape[0]
             return _top_p_and_sample(
                 topk_logits, topk_idx, rng_key, top_p, temperature,
                 vocab_size=vocab_size,
