@@ -204,7 +204,7 @@ def _top_p_and_sample(
         rng_key.reshape(1,2),
         top_p,
         temperature,
-        dim0_offset[None],
+        jnp.array(dim0_offset, jnp.int32)[None],
     )
 
 @functools.partial(
@@ -242,11 +242,10 @@ def top_p_and_sample(
     def partition(mesh, arg_shapes, out_shapes):
         arg_shardings, out_shardings = jax.tree.map(
             lambda s: s.sharding, (arg_shapes, out_shapes))
-        # Extract batch axis name from first input
         batch_axis_name = arg_shardings[0].spec[0]
 
         def shmap_fn(topk_logits, topk_idx, rng_key, top_p, temperature):
-            # Compute axis index outside pallas_call (required for Pallas compatibility)
+            # Pass global sharded axis offset to maintain jax.random.categorical sampled values
             dim0_offset = 0
             if batch_axis_name is not None:
                 dim0_offset = jax.lax.axis_index(batch_axis_name) * topk_logits.shape[0]
