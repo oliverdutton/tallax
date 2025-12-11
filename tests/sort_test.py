@@ -40,10 +40,7 @@ def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
     keys = jax.random.split(key, num_arrays)
     operands = []
     for i in range(num_arrays):
-        if dtype == jnp.bfloat16:
-            arr = jax.random.normal(keys[i], shape, dtype=jnp.float32).astype(jnp.bfloat16)
-        else:
-            arr = jax.random.normal(keys[i], shape, dtype=dtype)
+        arr = jax.random.normal(keys[i], shape, dtype=jnp.float32).astype(dtype)
         operands.append(arr)
 
     # Parse variant
