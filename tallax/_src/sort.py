@@ -545,11 +545,6 @@ def _sort_kernel(
     else:
       refs[i][...] = in_refs[i][...].astype(refs[i].dtype)
 
-  if jnp.issubdtype(refs[i].dtype, jnp.floating) and i < num_keys:
-    f32_in_sortable_i32 = float_to_sortable_int(refs[i][...])
-    refs[i] = refs[i].bitcast(jnp.int32)
-    refs[i][...] = f32_in_sortable_i32
-
   if use_indices:
     if same_shape_dtype(indices_ref, out_refs[-1]):
       indices_ref = out_refs[-1]
