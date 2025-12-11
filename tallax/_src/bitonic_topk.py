@@ -46,17 +46,16 @@ def top1(operands, num_keys, axis):
     axis = 0
   assert axis == 0
   unpadded_shape = operands[0].shape
-  assert unpadded_shape[0] == 2**log2(unpadded_shape[0])
-  assert unpadded_shape[0] >= NUM_SUBLANES
-  operands = [pad(x, (NUM_SUBLANES, NUM_LANES)) for x in operands]
+  padded_dim0 = max(2**log2(unpadded_shape[0]), NUM_SUBLANES)
+  operands = [pad(x, (padded_dim0, NUM_LANES), val='min') for x in operands]
+  
   shape = operands[0].shape
   for _ in range(log2(shape[0] // NUM_SUBLANES)):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
     operands = transpose_list_of_lists(compare(lefts, rights, num_keys=num_keys, is_descending=True))[0]
   assert operands[0].shape[0] == NUM_SUBLANES
-  if shape[1] % NUM_LANES != 0:
-    raise NotImplementedError
-    
+  assert shape[1] % NUM_LANES == 0
+
   arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
   for stage in range(log2(NUM_SUBLANES))[::-1]:  
     permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
