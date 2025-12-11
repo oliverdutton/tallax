@@ -62,9 +62,22 @@ def topp_mask(*, topk_logits, p, replace_val, axis):
     return topp_logits
 
 
-def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val, batch_axis_name: str | None):
+def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val, dim0_offset: int = 0):
     """
     Implements top-p filtering, temperature scaling, and sampling.
+
+    Args:
+        topk_logits: Sorted logits of shape (batch_size, k)
+        topk_idx: Indices corresponding to sorted logits of shape (batch_size, k)
+        rng_key: RNG key for sampling, shape (1, 2)
+        top_p: Top-p threshold values, shape (batch_size,)
+        temperature: Temperature values, shape (batch_size,)
+        vocab_size: Vocabulary size for sampling
+        replace_val: Value to replace filtered logits with
+        dim0_offset: Offset for dim0 (batch) axis, used for sharding (default: 0)
+
+    Returns:
+        Sampled tokens of shape (batch_size,)
     """
     topk_logits = topk_logits.astype(jnp.float32)
 
@@ -83,13 +96,9 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
 
     topp_logits_scaled = topp_logits / temperature[None,:].astype(topp_logits.dtype)
 
-    # random key splitting is based on idx in  ravelled array
+    # random key splitting is based on idx in ravelled array
     # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
-    batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
-    if batch_axis_name is not None:
-      # if sharded, shift to global indices
-      i = jax.lax.axis_index(batch_axis_name)
-      batch_idx += i * batch_idx.shape[1]
+    batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1) + dim0_offset
     next_tokens = sparse_random_categorical(
         rng_key,
         topp_logits_scaled,
@@ -112,14 +121,25 @@ def top_p_and_sample_kernel(
     rng_key_ref,
     top_p_ref,
     temperature_ref,
+    dim0_offset_ref,
     sampled_tokens_ref,
     *,
     vocab_size: int,
     replace_val: float,
-    batch_axis_name: str | None = None,
 ):
     """
     Fused kernel implementing top-p filtering, temperature scaling, and sampling.
+
+    Args:
+        topk_logits_ref: Reference to sorted logits
+        topk_idx_ref: Reference to sorted indices
+        rng_key_ref: Reference to RNG key (SMEM)
+        top_p_ref: Reference to top-p values
+        temperature_ref: Reference to temperature values
+        dim0_offset_ref: Reference to dim0 offset for sharding (SMEM, shape (1,))
+        sampled_tokens_ref: Reference to output sampled tokens
+        vocab_size: Vocabulary size
+        replace_val: Value to replace filtered logits with
     """
     sampled_tokens_ref[...] = pallas_compatible_top_p_and_sample(
       topk_logits=topk_logits_ref[...],
@@ -129,7 +149,7 @@ def top_p_and_sample_kernel(
       temperature=temperature_ref[...],
       vocab_size=vocab_size,
       replace_val=replace_val,
-      batch_axis_name=batch_axis_name,
+      dim0_offset=dim0_offset_ref[0], # Extract scalar from SMEM array
     )
 
 def _top_p_and_sample(
@@ -142,7 +162,7 @@ def _top_p_and_sample(
     vocab_size: int,
     replace_val: float,
     interpret: bool = False,
-    batch_axis_name: str | None = None,
+    dim0_offset: int = 0,
 ) -> jax.Array:
     """
     Fused TPU kernel for sampling with top-p filtering and temperature scaling.
@@ -156,7 +176,8 @@ def _top_p_and_sample(
         vocab_size: Vocabulary size for sampling
         replace_val: Value to replace filtered logits with
         interpret: If True, run in CPU interpret mode (default: False)
-        batch_axis_name: Axis name for sharding (None if not sharded)
+        dim0_offset: Offset for dim0 (batch) axis, used for sharding (default: 0)
+                     Must be computed outside pallas_call using lax.axis_index
 
     Returns:
         next_tokens: Sampled tokens of shape (batch_size,)
@@ -166,7 +187,6 @@ def _top_p_and_sample(
           top_p_and_sample_kernel,
           vocab_size=vocab_size,
           replace_val=replace_val,
-          batch_axis_name=batch_axis_name,
         ),
         in_specs=(
           pl.BlockSpec(),
@@ -174,6 +194,7 @@ def _top_p_and_sample(
           pl.BlockSpec(memory_space=pltpu.SMEM),
           pl.BlockSpec(),
           pl.BlockSpec(),
+          pl.BlockSpec(memory_space=pltpu.SMEM),
         ),
         out_shape=jax.ShapeDtypeStruct(topk_logits.shape[:1], jnp.int32),
         interpret=interpret,
@@ -183,6 +204,7 @@ def _top_p_and_sample(
         rng_key.reshape(1,2),
         top_p,
         temperature,
+        jnp.array(dim0_offset, jnp.int32)[None],
     )
 
 @functools.partial(
@@ -220,16 +242,19 @@ def top_p_and_sample(
     def partition(mesh, arg_shapes, out_shapes):
         arg_shardings, out_shardings = jax.tree.map(
             lambda s: s.sharding, (arg_shapes, out_shapes))
-        # Extract batch axis name from first input
         batch_axis_name = arg_shardings[0].spec[0]
 
         def shmap_fn(topk_logits, topk_idx, rng_key, top_p, temperature):
+            # Pass global sharded axis offset to maintain jax.random.categorical sampled values
+            dim0_offset = 0
+            if batch_axis_name is not None:
+                dim0_offset = jax.lax.axis_index(batch_axis_name) * topk_logits.shape[0]
             return _top_p_and_sample(
                 topk_logits, topk_idx, rng_key, top_p, temperature,
                 vocab_size=vocab_size,
                 replace_val=replace_val,
                 interpret=interpret,
-                batch_axis_name=batch_axis_name,
+                dim0_offset=dim0_offset,
             )
 
         return mesh, shmap_fn, out_shardings, arg_shardings
