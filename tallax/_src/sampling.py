@@ -206,7 +206,6 @@ def top_p_and_sample(
     Requires all axes except batch dim to be replicated. Batch dim can be sharded.
     """
     @custom_partitioning
-    @functools.wraps(_top_p_and_sample)
     def sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature):
         return _top_p_and_sample(
             topk_logits, topk_idx, rng_key, top_p, temperature,
@@ -266,7 +265,6 @@ def top_k(logits: jax.Array, k: jax.Array, replace_val):
         replace_val=replace_val)
     
     @custom_partitioning
-    @functools.wraps(_top_k)        
     def sharded_top_k(logits, k):
       return _top_k(logits, k)
     
