@@ -66,7 +66,6 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
     """
     Implements top-p filtering, temperature scaling, and sampling.
     """
-    # Convert logits to float32
     topk_logits = topk_logits.astype(jnp.float32)
 
     # To do reductions and broadcast across sublanes rather than lanes (which are slow)
@@ -75,7 +74,6 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
     topk_idx = topk_idx.T
     shape = topk_logits.shape
 
-    # Apply top-p masking
     topp_logits = topp_mask(
         topk_logits=topk_logits,
         p=top_p,
@@ -83,11 +81,8 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
         axis=0
     )
 
-    # Step 5: Apply temperature scaling
     topp_logits_scaled = topp_logits / temperature[None,:].astype(topp_logits.dtype)
 
-    # Step 6: Categorical sampling using Gumbel-max trick
-    # Generate Gumbel noise using sparse random uniform
     # random key splitting is based on idx in  ravelled array
     # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
     batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1)
