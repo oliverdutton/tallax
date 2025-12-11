@@ -193,18 +193,30 @@ The original bug at lines 548-551 (stale loop variable + unsupported `.bitcast()
 **Fix applied**: Removed lines 548-551 since float-to-int conversion already happens before kernel entry.
 
 ### Test Results After Fix:
+
+**float32 arrays**:
 - ✓ **Size (16, 16)**: Works in 20s
 - ✓ **Size (16, 32)**: Works in 36s
-- ✗ **Size (16, 64)**: Still segfaults
-- ✗ **Size (16, 128)**: Still segfaults
+- ✗ **Size (16, 64)**: Segfaults (exit code 139)
+- ✗ **Size (16, 128)**: Segfaults
 
-### Remaining Issue
-There is a **SEPARATE** issue affecting sizes >= 64 that causes segfaults. This appears to be in the deeper bitonic sort algorithm implementation (`_compute_subtile_substages` or related functions), not the original `.bitcast()` bug.
+**int32 arrays**:
+- ✓ **Size (16, 16)**: Works in 16.5s
+- ✓ **Size (16, 32)**: Works in 32s
+- ✗ **Size (16, 64)**: Segfaults (exit code 139)
+- ✗ **Size (16, 128)**: Segfaults
+
+**bfloat16 arrays**:
+- ✓ All sizes work (uses packing optimization)
+
+### Remaining Issue - **NOT dtype-specific**
+
+The size >= 64 segfault affects **ALL dtypes** (float32, int32, etc.), proving this is NOT a dtype-specific issue but a fundamental problem in the bitonic sort algorithm implementation.
 
 The size threshold corresponds to stage boundaries:
-- Sizes <= 32: Use stages 1-5, work correctly ✓
-- Sizes >= 64: Use stages 1-7 (up to log2(NUM_LANES)=7), segfault ✗
+- Sizes <= 32: log2 <= 5, uses stages 1-5, works correctly ✓
+- Sizes >= 64: log2 >= 6, uses stages 1-6/7 (up to log2(NUM_LANES)=7), **segfaults** ✗
 
-This suggests the issue is in how stages 6-7 are executed in CPU interpret mode, possibly in the tile manipulation or permutation code.
+This suggests the issue is in how stages 6-7 are executed in CPU interpret mode, specifically in the tile manipulation, permutation, or loop operations in `_compute_subtile_substages` and related functions.
 
-**Recommendation**: The original bug is fixed. The remaining size >= 64 issue requires deeper investigation of the bitonic sort tile operations and may be a fundamental limitation of CPU interpret mode for complex bit-level operations at larger scales.
+**Recommendation**: The original `.bitcast()` bug is fixed. The remaining size >= 64 issue is a deeper problem in the bitonic sort algorithm that affects all dtypes and requires investigation of the stage 6-7 tile operations. This may be a fundamental limitation of Pallas CPU interpret mode for complex operations at larger scales.
