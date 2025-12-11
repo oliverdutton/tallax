@@ -314,4 +314,5 @@ def sample(rng_key, logits, tpu_sampling_metadata):
     rng_key,
     top_p=tpu_sampling_metadata.top_p,
     temperature=tpu_sampling_metadata.temperature,
-    vocab_size=vocab_size, replace_val=-1e12)
+    vocab_size=vocab_size,
+    replace_val=-1e12)
