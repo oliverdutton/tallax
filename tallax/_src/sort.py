@@ -104,7 +104,7 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
 
 ### Cross-Tile Substage
 
-def _sort_crosstile_substage(
+def _crosstile_substage_refs(
     refs,
     substage: int,
     stage: int,
@@ -112,7 +112,7 @@ def _sort_crosstile_substage(
     unroll: int = 16,
     dim1_offset: int = 0,
 ):
-  """Perform substage of sort with comparisons between tiles.
+  """Pallas kernel for cross-tile substage (large stages).
 
   Args:
     refs: References to arrays being sorted
@@ -172,27 +172,20 @@ def _compute_pair_slice_start_index(i, separation, slice_length=1):
   return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _sort_substage_by_permutation(substage, arrs_tiles, *, stage, permute_dim,
-                                dim1_offset, num_keys: int, dim0: int):
-  """Perform substage using sublane or lane permutations."""
-  if permute_dim == 0: # sublane
-    assert dim0 is not None
-    index = iota_tile(0)
-    global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
-    tile_rows = NUM_LANES // NUM_SUBLANES
-    tile_cols = len(arrs_tiles[0]) // tile_rows
-  elif permute_dim == 1: # lane
-    index = global_base_index = iota_tile(1)
-    tile_rows = dim0 // NUM_SUBLANES
-    tile_cols = len(arrs_tiles[0]) // tile_rows
-  else:
-    raise ValueError('dim must be 0 or 1, (sublane or lane)')
+def _packed_subtile_substage(substage, arrs_tiles, *, stage, dim1_offset,
+                              num_keys: int, dim0: int):
+  """Single substage using sublane permutation (packed, within tiles)."""
+  assert dim0 is not None
+  index = iota_tile(0)
+  global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
+  tile_rows = NUM_LANES // NUM_SUBLANES
+  tile_cols = len(arrs_tiles[0]) // tile_rows
 
   is_right_half = create_bit_indicator(substage, index)
   permutation = jnp.bitwise_xor(index, 1 << substage)
 
   arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=permute_dim),
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
       arrs_tiles
   )
 
@@ -202,13 +195,10 @@ def _sort_substage_by_permutation(substage, arrs_tiles, *, stage, permute_dim,
       *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
       strict=True
   )):
-    if permute_dim == 0:
-      tile_row = tile_idx // tile_cols
-      tile_col = tile_idx % tile_cols
-      tile_offset = (tile_row * NUM_SUBLANES +
-                     tile_col * (NUM_LANES * (NUM_LANES // dim0)))
-    else: # lane
-      tile_offset = (tile_idx % tile_cols) * NUM_LANES
+    tile_row = tile_idx // tile_cols
+    tile_col = tile_idx % tile_cols
+    tile_offset = (tile_row * NUM_SUBLANES +
+                   tile_col * (NUM_LANES * (NUM_LANES // dim0)))
 
     is_descending = create_bit_indicator(
         stage, dim1_offset + tile_offset + global_base_index
@@ -230,10 +220,52 @@ def _sort_substage_by_permutation(substage, arrs_tiles, *, stage, permute_dim,
   return outs_tiles
 
 
-def _sort_substage_by_crosstile_comparison(
-    arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None
-):
-  """Perform substage by comparing explicit tile pairs."""
+def _packed_crosstile_substage(substage, arrs_tiles, *, stage, dim1_offset,
+                                num_keys: int, dim0: int):
+  """Single substage using lane permutation (packed, between tiles)."""
+  index = global_base_index = iota_tile(1)
+  tile_rows = dim0 // NUM_SUBLANES
+  tile_cols = len(arrs_tiles[0]) // tile_rows
+
+  is_right_half = create_bit_indicator(substage, index)
+  permutation = jnp.bitwise_xor(index, 1 << substage)
+
+  arrs_tiles_permuted = jax.tree.map(
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
+      arrs_tiles
+  )
+
+  outs_tiles = [[] for _ in arrs_tiles]
+
+  for tile_idx, (lefts, rights) in enumerate(zip(
+      *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+      strict=True
+  )):
+    tile_offset = (tile_idx % tile_cols) * NUM_LANES
+
+    is_descending = create_bit_indicator(
+        stage, dim1_offset + tile_offset + global_base_index
+    )
+
+    if type(stage) == int:
+      # Performance optimizations for early, statically compiled stages
+      if stage < log2(NUM_SUBLANES):
+        is_descending = create_bit_indicator(stage, global_base_index)
+      elif stage < log2(NUM_LANES):
+        is_descending = create_bit_indicator(stage, tile_offset)
+
+    for i, o in enumerate(compare_and_swap(lefts, rights,
+                                   is_descending=is_descending,
+                                   is_right_half=is_right_half,
+                                   num_keys=num_keys)):
+      outs_tiles[i].append(o)
+
+  return outs_tiles
+
+
+def _crosstile_substage(arrs_tiles, substage, dim0, num_keys: int,
+                        dim1_offset=0, stage=None):
+  """Single substage using explicit tile pair comparison."""
   global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
   num_tiles = len(arrs_tiles[0])
   tile_rows = NUM_LANES // NUM_SUBLANES
@@ -274,40 +306,39 @@ def _sort_substage_by_crosstile_comparison(
   return outs_tiles
 
 
-def _sort_subtile_substages(
+def _packed_substages_arrays(
     arrs_tiles,
     num_substages: int,
     stage: int,
     dim0: int,
     num_keys: int,
-    use_lane_permute: bool = False,
     dim1_offset: int = 0,
 ):
-  """Execute multiple substages within tiles."""
+  """Execute multiple substages using packed methods.
+
+  Dispatches to:
+  - _packed_subtile_substage for substage < log2(NUM_SUBLANES)
+  - _packed_crosstile_substage for substage >= log2(NUM_SUBLANES)
+  """
   assert num_substages <= log2(NUM_LANES)
 
   for substage in range(num_substages)[::-1]:
-    if use_lane_permute:
-      arrs_tiles = _sort_substage_by_permutation(
-          substage, arrs_tiles, stage=stage, permute_dim=1,
+    if substage >= log2(NUM_SUBLANES):
+      # Inter-tile comparisons using lane permute
+      arrs_tiles = _packed_crosstile_substage(
+          substage, arrs_tiles, stage=stage,
           dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
-      )
-    elif substage >= log2(NUM_SUBLANES):
-      # Inter-tile comparisons
-      arrs_tiles = _sort_substage_by_crosstile_comparison(
-          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
-          stage=stage, num_keys=num_keys
       )
     else:
       # Intra-tile comparisons using sublane permute
-      arrs_tiles = _sort_substage_by_permutation(
-          substage, arrs_tiles, stage=stage, permute_dim=0,
+      arrs_tiles = _packed_subtile_substage(
+          substage, arrs_tiles, stage=stage,
           dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
   return arrs_tiles
 
 
-def _sort_subtile_substages_refs(
+def _packed_substages_refs(
     refs,
     *,
     num_substages: int,
@@ -316,10 +347,8 @@ def _sort_subtile_substages_refs(
     unroll: int = 256,
     dim1_offset: int = 0,
     slice_dim1: int = None,
-    # Benchmarking showed transpose then sublane permutes always faster
-    use_lane_permute: bool = False,
 ):
-  """Orchestrate subtile sorting with proper blocking."""
+  """Pallas kernel wrapper for _packed_substages_arrays."""
   shape = refs[0].shape
   if slice_dim1 is None:
     slice_dim1 = min(unroll * NUM_LANES, shape[1])
@@ -348,46 +377,36 @@ def _sort_subtile_substages_refs(
     
     # pad in dim0 (if needed)
     arrs = [pad(ref_slice[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]) if not use_lane_permute else 1, slice_shape[1])) for ref_slice in ref_slices]
+        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1]))
+        for ref_slice in ref_slices]
     dim0 = arrs[0].shape[0]
-    arrs_tiles = jax.tree.map(
-        (split_array_to_tiles if use_lane_permute
-         else convert_to_sublane_sort_format),
-        arrs
-    )
+    arrs_tiles = jax.tree.map(convert_to_sublane_sort_format, arrs)
 
     if stage is not None:
       # Run single stage
-      arrs_tiles = _sort_subtile_substages(
+      arrs_tiles = _packed_substages_arrays(
           arrs_tiles,
           num_substages=num_substages,
           stage=stage,
           dim1_offset=dim1_offset + (block_col * slice_dim1),
           dim0=dim0,
           num_keys=num_keys,
-          use_lane_permute=use_lane_permute,
       )
     else:
       # Run all stages 1 to num_substages (allows compiler fusion)
       num_stages = num_substages
       for stage_ in range(1, num_stages + 1):
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = _packed_substages_arrays(
             arrs_tiles,
             num_substages=stage_,
             stage=stage_,
             dim1_offset=dim1_offset + (block_col * slice_dim1),
             dim0=dim0,
             num_keys=num_keys,
-            use_lane_permute=use_lane_permute,
         )
 
     outs = [
-        (join_tiles_to_array(
-        slice_shape, tiles) if use_lane_permute
-         else convert_from_sublane_sort_format(
-        tiles,
-        dim0=dim0
-        ))[:slice_shape[0]]
+        convert_from_sublane_sort_format(tiles, dim0=dim0)[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
 
@@ -397,7 +416,7 @@ def _sort_subtile_substages_refs(
 
 ### Stage Execution
 
-def _sort_stages(
+def _stages(
     start_stage: int,
     end_stage: int,
     refs,
@@ -415,7 +434,7 @@ def _sort_stages(
 
   # Run stages 1 to 7 (if large enough), compiler fused
   if start_stage_static_lower_bound == 1:
-    _sort_subtile_substages_refs(
+    _packed_substages_refs(
         refs,
         num_substages=min(log2(NUM_LANES), end_stage),
         stage=None,
@@ -425,7 +444,7 @@ def _sort_stages(
     )
   elif (all_concrete_ints(start_stage, end_stage)
         and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
-    _sort_subtile_substages_refs(
+    _packed_substages_refs(
         refs,
         num_substages=start_stage,
         stage=start_stage,
@@ -445,7 +464,7 @@ def _sort_stages(
       # Run substages 7 and up
       @pl.when(stage > substage)
       def _():
-        _sort_crosstile_substage(
+        _crosstile_substage_refs(
             refs,
             substage=substage,
             stage=stage,
@@ -455,7 +474,7 @@ def _sort_stages(
         )
 
     # Run substages 0-6 inclusive
-    _sort_subtile_substages_refs(
+    _packed_substages_refs(
         refs,
         num_substages=log2(NUM_LANES),
         stage=stage,
@@ -488,7 +507,7 @@ def bitonic_sort(
 
   if stage_ref is None:
     # Execute full bitonic sort
-    _sort_stages(
+    _stages(
         1, log_n + 1, refs,
         num_keys=num_keys,
         dim1_offset=dim1_offset,
@@ -496,7 +515,7 @@ def bitonic_sort(
   else:
     # Run single stage (for large arrays that don't fit in VMEM)
     stage = stage_ref[0]
-    _sort_stages(
+    _stages(
         stage, stage + 1,
         refs,
         num_keys=num_keys,
@@ -679,7 +698,7 @@ class _AsyncCopyGroup:
       descriptor.wait()
 
 
-def _sort_substage_in_hbm_refs(
+def _substage_in_hbm_refs(
     input_hbm_refs,
     substage_ref,
     stage_ref,
@@ -799,7 +818,7 @@ def _sort_substage_in_hbm_refs(
     jax.jit,
     static_argnames=('block_shape', 'num_keys', 'descending', 'interpret')
 )
-def _sort_substage_in_hbm(
+def _substage_in_hbm(
     operand,
     substage,
     stage,
@@ -832,7 +851,7 @@ def _sort_substage_in_hbm(
   )
 
   return pl.pallas_call(
-      functools.partial(_sort_substage_in_hbm_refs, num_keys=num_keys,
+      functools.partial(_substage_in_hbm_refs, num_keys=num_keys,
                         descending=descending),
       grid=(operands[0].shape[0] // block_shape[0],),
       out_shape=(output_shape,),
@@ -956,7 +975,7 @@ def sort(
       """Execute complete sorting stage (HBM + VMEM)."""
       def _compute_substages_hbm_body(i, operands):
         substage = stage - 1 - i
-        return _sort_substage_in_hbm(
+        return _substage_in_hbm(
             operands, substage, stage, num_keys=num_keys, descending=descending,
             interpret=interpret
         )

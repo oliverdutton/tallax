@@ -36,7 +36,7 @@ from tallax._src.utils import (
     to_32bit_dtype,
 )
 from tallax._src.sort import (
-    _sort_subtile_substages,
+    _packed_substages_arrays,
     compare_and_swap,
 )
 
@@ -215,7 +215,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
   
       # Build bitonic sequences up to length 64 (stage 6)
       for stage in range(1, log_lanes):  # stages 1-6 inclusive
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = _packed_substages_arrays(
           arrs_tiles,
           num_substages=stage,
           stage=stage,
@@ -234,7 +234,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
           _split_actives(x)[1] for x in arrs_tiles]
           arrs_tiles = [
           _split_actives(x)[0] for x in arrs_tiles]
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = _packed_substages_arrays(
           arrs_tiles,
           num_substages=log_lanes,
           # tile i is different order to tile i+1, so they can be max merged
@@ -257,7 +257,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
         distance = dim0 * (2**i)
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * dim0 / NUM_LANES * NUM_LANES) = log2(2 * distance)
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = _packed_substages_arrays(
           arrs_tiles,
           num_substages=log_lanes,
           stage=log_lanes+i,
@@ -290,7 +290,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
   
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=2**7 to ensure descending direction
-      arrs_tiles = _sort_subtile_substages(
+      arrs_tiles = _packed_substages_arrays(
         arrs_tiles,
         num_substages=log_lanes,
         stage=log_lanes,
