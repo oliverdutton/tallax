@@ -235,11 +235,31 @@ def _sort_subtile_substages(
   """Execute multiple substages within tiles."""
   assert num_substages <= log2(NUM_LANES)
 
-  for substage in range(num_substages)[::-1]:
-    arrs_tiles = _sort_substage(
-        arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
-        stage=stage, num_keys=num_keys
+  def _sort_tile_stage(arrs_tiles, stage, num_substages):
+    for substage in range(num_substages)[::-1]:
+      arrs_tiles = _sort_substage(
+          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
+          stage=stage, num_keys=num_keys
+      )
+    return arrs_tiles
+
+  if stage is not None:
+    # Run single stage
+    arrs_tiles = _sort_tile_stage(
+        arrs_tiles,
+        num_substages=num_substages,
+        stage=stage,
     )
+  else:
+    # Run all stages 1 to num_substages (allows compiler fusion)
+    num_stages = num_substages
+    for stage_ in range(1, num_stages + 1):
+      arrs_tiles = _sort_tile_stage(
+          arrs_tiles,
+          num_substages=stage_,
+          stage=stage_,
+      )
+
   return arrs_tiles
 
 
@@ -286,28 +306,14 @@ def _sort_subtile_substages_refs(
     dim0 = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(convert_to_sublane_sort_format, arrs)
 
-    if stage is not None:
-      # Run single stage
-      arrs_tiles = _sort_subtile_substages(
-          arrs_tiles,
-          num_substages=num_substages,
-          stage=stage,
-          dim1_offset=dim1_offset + (block_col * slice_dim1),
-          dim0=dim0,
-          num_keys=num_keys,
-      )
-    else:
-      # Run all stages 1 to num_substages (allows compiler fusion)
-      num_stages = num_substages
-      for stage_ in range(1, num_stages + 1):
-        arrs_tiles = _sort_subtile_substages(
-            arrs_tiles,
-            num_substages=stage_,
-            stage=stage_,
-            dim1_offset=dim1_offset + (block_col * slice_dim1),
-            dim0=dim0,
-            num_keys=num_keys,
-        )
+    arrs_tiles = _sort_subtile_substages(
+        arrs_tiles,
+        stage=stage,
+        num_substages=num_substages,
+        dim1_offset=dim1_offset + (block_col * slice_dim1),
+        dim0=dim0,
+        num_keys=num_keys,
+    )
 
     outs = [
         convert_from_sublane_sort_format(tiles, dim0=dim0)[:slice_shape[0]]
