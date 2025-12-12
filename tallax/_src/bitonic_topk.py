@@ -13,7 +13,6 @@ Algorithm:
 """
 
 import functools
-from itertools import chain 
 from collections.abc import Sequence
 
 import jax
@@ -26,6 +25,8 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
+    flat,
+    ceil_multiple,
     iota_tile,
     pad,
     canonicalize_operand,
@@ -96,10 +97,6 @@ def max_arrays(operands, num_keys, axis):
   return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
-def flat(xs):
-  return list(chain.from_iterable(xs))
-
-
 def _split_rows(tiles):
   num_rows = NUM_LANES // NUM_SUBLANES
   num_cols = len(tiles) // num_rows
@@ -121,8 +118,6 @@ def _split_actives(tiles):
 def _merge_remainder(merged, remainder):
   return flat(map(flat, zip(*map(_split_rows, (merged, remainder)))))
 
-def ceil_multiple(i, n):
-  return pl.cdiv(i, n) * n
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
   """Compute padded shape compatible with sublane format transpose requirements.
