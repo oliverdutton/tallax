@@ -4,12 +4,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, top_1_arrays
+from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, max_arrays
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 def test_bitonic_topk_axis1(shape, dtype):
     """Test bitonic_topk for axis=1 (last axis)."""
@@ -38,11 +38,11 @@ def test_bitonic_topk_axis1(shape, dtype):
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}"
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_top1_pallas(shape, dtype, axis):
-    """Test top1 wrapped in pallas kernel for both axes. Note: top1 requires dim0 to be a power of 2."""
+    """Test top1 wrapped in pallas kernel for both axes."""
     interpret = is_cpu_platform()
     key = jax.random.PRNGKey(1 + axis)  # Different seed per axis
 
@@ -65,12 +65,12 @@ def test_top1_pallas(shape, dtype, axis):
 
     def top1_refs(values_ref, indices_ref, out_values_ref, out_indices_ref):
         """Top1 refs kernel."""
-        result_values, result_indices = top_1_arrays(
+        result_values, result_indices = max_arrays(
             [values_ref[...], indices_ref[...]],
             num_keys=1,
             axis=axis
         )
-        # top_1_arrays now returns 1D outputs directly
+        # max_arrays now returns 1D outputs directly
         out_values_ref[...] = result_values
         out_indices_ref[...] = result_indices
 

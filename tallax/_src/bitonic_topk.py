@@ -39,7 +39,21 @@ from tallax._src.sort import (
     compare,
 )
 
-def top_1_arrays(operands, num_keys, axis):
+def max_arrays(operands, num_keys, axis):
+  """Compute max over several operands, sorting using num_keys.
+
+  This function computes the maximum element along the specified axis for multiple
+  operands (e.g., values and indices). When comparing elements, it uses the first
+  num_keys operands as sort keys to determine which element is "larger".
+
+  Args:
+    operands: List of JAX arrays of the same shape
+    num_keys: Number of operands to use as sort keys for comparison
+    axis: Axis along which to find the maximum (0 or 1)
+
+  Returns:
+    List of 1D arrays containing the maximum element for each operand
+  """
   if axis == 1:
     # transpose and run on axis 0
     operands = jax.tree.map(lambda x: x.T, operands)
