@@ -42,7 +42,7 @@ def test_bitonic_topk_axis1(shape, dtype):
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_top1_pallas(shape, dtype, axis):
-    """Test top1 wrapped in pallas kernel for both axes. Note: top1 requires dim0 to be a power of 2."""
+    """Test top1 wrapped in pallas kernel for both axes."""
     interpret = is_cpu_platform()
     key = jax.random.PRNGKey(1 + axis)  # Different seed per axis
 
