@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax.extend.random import threefry2x32_p
 
-from tallax._src.bitonic_topk import max_arrays
+from tallax._src.bitonic_top_k import max_arrays
 
 def _bits_to_uniform(bits, dtype):
     """
