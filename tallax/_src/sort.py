@@ -190,6 +190,8 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
         return create_bit_indicator(stage, tile_offset)
     return is_desc
 
+  outs_tiles = [[None for _ in t] for t in arrs_tiles]
+
   if substage < log2(NUM_SUBLANES):
     # Sublane permutation
     permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
@@ -197,7 +199,6 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
         lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
     )
     is_right_half = create_bit_indicator(substage, iota_tile(0))
-    outs_tiles = [[] for _ in arrs_tiles]
     for idx, (lefts, rights) in enumerate(zip(
         *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
     )):
@@ -205,11 +206,10 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
           lefts, rights, is_descending=compute_is_descending(idx),
           is_right_half=is_right_half, num_keys=num_keys
       )):
-        outs_tiles[arr_idx].append(out)
+        outs_tiles[arr_idx][idx] = out
   else:
     # Cross-tile comparison
     separation = (2**substage // NUM_SUBLANES) * tile_cols
-    outs_tiles = [[None for _ in t] for t in arrs_tiles]
     for i in range(num_tiles // 2):
       idx = _compute_pair_slice_start_index(i, separation=separation)
       lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
@@ -218,7 +218,8 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
       )):
         outs_tiles[arr_idx][idx] = out_left
         outs_tiles[arr_idx][idx + separation] = out_right
-    assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
+
+  assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
   return outs_tiles
 
 
