@@ -179,9 +179,9 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
   tile_rows = NUM_LANES // NUM_SUBLANES
   tile_cols = num_tiles // tile_rows
 
-  def compute_is_descending(tile_idx):
-    tile_offset = ((tile_idx // tile_cols) * NUM_SUBLANES +
-                   (tile_idx % tile_cols) * (NUM_LANES * (NUM_LANES // dim0)))
+  def compute_is_descending(idx):
+    tile_offset = ((idx // tile_cols) * NUM_SUBLANES +
+                   (idx % tile_cols) * (NUM_LANES * (NUM_LANES // dim0)))
     is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
@@ -198,14 +198,14 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
     )
     is_right_half = create_bit_indicator(substage, iota_tile(0))
     outs_tiles = [[] for _ in arrs_tiles]
-    for tile_idx, (lefts, rights) in enumerate(zip(
+    for idx, (lefts, rights) in enumerate(zip(
         *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
     )):
-      for i, o in enumerate(compare_and_swap(
-          lefts, rights, is_descending=compute_is_descending(tile_idx),
+      for arr_idx, out in enumerate(compare_and_swap(
+          lefts, rights, is_descending=compute_is_descending(idx),
           is_right_half=is_right_half, num_keys=num_keys
       )):
-        outs_tiles[i].append(o)
+        outs_tiles[arr_idx].append(out)
   else:
     # Cross-tile comparison
     separation = (2**substage // NUM_SUBLANES) * tile_cols
@@ -213,11 +213,11 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
     for i in range(num_tiles // 2):
       idx = _compute_pair_slice_start_index(i, separation=separation)
       lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
-      for i, (o_left, o_right) in enumerate(compare_and_swap(
+      for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
           lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
       )):
-        outs_tiles[i][idx] = o_left
-        outs_tiles[i][idx + separation] = o_right
+        outs_tiles[arr_idx][idx] = out_left
+        outs_tiles[arr_idx][idx + separation] = out_right
     assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
   return outs_tiles
 
