@@ -208,7 +208,7 @@ def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, sta
       )):
         outs_tiles[arr_idx][idx] = out
   else:
-    # Cross-tile comparison
+    # Compare tiles
     separation = (2**substage // NUM_SUBLANES) * tile_cols
     for i in range(num_tiles // 2):
       idx = _compute_pair_slice_start_index(i, separation=separation)
