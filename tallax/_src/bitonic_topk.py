@@ -39,7 +39,7 @@ from tallax._src.sort import (
     compare,
 )
 
-def top1(operands, num_keys, axis):
+def top_1_arrays(operands, num_keys, axis):
   if axis == 1:
     # transpose and run on axis 0
     operands = jax.tree.map(lambda x: x.T, operands)

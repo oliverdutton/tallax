@@ -12,10 +12,10 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_topk import bitonic_topk_arrays as topk, bitonic_topk, top1
-from tallax._src.gather import take_along_axis_arrays as take_along_axis
+from tallax._src.bitonic_topk import bitonic_topk_arrays, bitonic_topk, top_1_arrays
+from tallax._src.gather import take_along_axis_arrays
 from tallax._src.sparse_random import sparse_random_categorical
-from tallax._src.cumsum import cumsum_arrays as cumsum
+from tallax._src.cumsum import cumsum_arrays
 from tallax._src.top_k import top_dynamic_k
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
@@ -46,14 +46,14 @@ def topp_mask(*, topk_logits, p, replace_val, axis):
     probs = exp_logits / exp_logits.sum(axis=0, keepdims=True)
 
     # Top-p filtering using cumsum on sorted probabilities
-    cumsum_probs = cumsum(probs, axis=0)
+    cumsum_probs = cumsum_arrays(probs, axis=0)
 
     # Find last idx where top-p probability mass is not covered
     threshold_idx = (cumsum_probs < p[None,:]).sum(0, keepdims=True)
     # vLLM current implementation uses binary search, computing a threshold.
     # so ties at the threshold are all included
     # we replicate that behavior here
-    thresholds = take_along_axis(
+    thresholds = take_along_axis_arrays(
         topk_logits, jnp.broadcast_to(threshold_idx, shape), 0)
     topp_logits = jnp.where(
         topk_logits >= thresholds,

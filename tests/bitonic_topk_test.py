@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, top1
+from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, top_1_arrays
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
@@ -65,12 +65,12 @@ def test_top1_pallas(shape, dtype, axis):
 
     def top1_refs(values_ref, indices_ref, out_values_ref, out_indices_ref):
         """Top1 refs kernel."""
-        result_values, result_indices = top1(
+        result_values, result_indices = top_1_arrays(
             [values_ref[...], indices_ref[...]],
             num_keys=1,
             axis=axis
         )
-        # top1 now returns 1D outputs directly
+        # top_1_arrays now returns 1D outputs directly
         out_values_ref[...] = result_values
         out_indices_ref[...] = result_indices
 
