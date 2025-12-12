@@ -12,10 +12,10 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_topk import pallas_compatible_bitonic_topk as topk, bitonic_topk, top1
-from tallax._src.gather import pallas_compatible_take_along_axis as take_along_axis
+from tallax._src.bitonic_topk import bitonic_topk_arrays as topk, bitonic_topk, top1
+from tallax._src.gather import take_along_axis_arrays as take_along_axis
 from tallax._src.sparse_random import sparse_random_categorical
-from tallax._src.cumsum import pallas_compatible_cumsum as cumsum
+from tallax._src.cumsum import cumsum_arrays as cumsum
 from tallax._src.top_k import top_dynamic_k
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
@@ -62,7 +62,7 @@ def topp_mask(*, topk_logits, p, replace_val, axis):
     return topp_logits
 
 
-def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val, dim0_offset: int = 0):
+def top_p_and_sample_arrays(*, topk_logits, topk_idx, rng_key, top_p, temperature, vocab_size, replace_val, dim0_offset: int = 0):
     """
     Implements top-p filtering, temperature scaling, and sampling.
 
@@ -115,7 +115,7 @@ def pallas_compatible_top_p_and_sample(*, topk_logits, topk_idx, rng_key, top_p,
       greedy_sampled, next_tokens)
 
 
-def top_p_and_sample_kernel(
+def top_p_and_sample_refs(
     topk_logits_ref,
     topk_idx_ref,
     rng_key_ref,
@@ -141,7 +141,7 @@ def top_p_and_sample_kernel(
         vocab_size: Vocabulary size
         replace_val: Value to replace filtered logits with
     """
-    sampled_tokens_ref[...] = pallas_compatible_top_p_and_sample(
+    sampled_tokens_ref[...] = top_p_and_sample_arrays(
       topk_logits=topk_logits_ref[...],
       topk_idx=topk_idx_ref[...],
       rng_key=rng_key_ref, # SMEM, so keep as ref
@@ -184,7 +184,7 @@ def _top_p_and_sample(
     """
     return pl.pallas_call(
         functools.partial(
-          top_p_and_sample_kernel,
+          top_p_and_sample_refs,
           vocab_size=vocab_size,
           replace_val=replace_val,
         ),
@@ -269,7 +269,7 @@ def top_p_and_sample(
     return sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature)
 
 def top_k(logits: jax.Array, k: jax.Array, replace_val):
-    def _top_k(logits: jax.Array, k: jax.Array):
+    def _top_k_arrays(logits: jax.Array, k: jax.Array):
       if logits.shape[-1] <= 4096:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
@@ -291,7 +291,7 @@ def top_k(logits: jax.Array, k: jax.Array, replace_val):
     
     @custom_partitioning
     def sharded_top_k(logits, k):
-      return _top_k(logits, k)
+      return _top_k_arrays(logits, k)
     
     def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
       logits_spec = arg_shapes[0].sharding.spec
@@ -303,10 +303,10 @@ def top_k(logits: jax.Array, k: jax.Array, replace_val):
       axis_name = arg_shardings[0].spec[1]
     
       def shmap_fn(logits, k):
-        topk_logits, topk_idxs = _top_k(logits, NUM_LANES)
+        topk_logits, topk_idxs = _top_k_arrays(logits, NUM_LANES)
         if axis_name is None:
           return topk_logits, topk_idxs
-        # convert idxs to global frame      
+        # convert idxs to global frame
         i = jax.lax.axis_index(axis_name)
         topk_idxs += i * logits.shape[1]
         # all-gather and top-k

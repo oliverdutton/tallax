@@ -6,7 +6,7 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.bitonic_topk import bitonic_topk_kernel, pallas_compatible_bitonic_topk
+from tallax._src.bitonic_topk import bitonic_topk_refs, bitonic_topk_arrays
 from tallax._src.topk_theory import calculate_depth_thresholds
 from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
@@ -135,10 +135,10 @@ def _topk_and_merge_unconverged_bins(
     bin_vals = bins_topm_vals_ref[:, pl.dslice(i * num_bins, num_bins)]
     num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
 
-  # Use pallas_compatible_bitonic_topk descending to get bin indices ordered by contribution count
+  # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
-  _, sorted_bin_indices = pallas_compatible_bitonic_topk([num_gt_k, bin_indices], k=NUM_LANES, num_keys=1)
+  _, sorted_bin_indices = bitonic_topk_arrays([num_gt_k, bin_indices], k=NUM_LANES, num_keys=1)
   # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
   packing_perm = jnp.take_along_axis(sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1)
 
@@ -197,10 +197,10 @@ def _topk_and_merge_unconverged_bins(
   (
     bins_topm_vals_ref[:, :NUM_LANES],
     bins_topm_idxs_ref[:, :NUM_LANES]
-  ) = pallas_compatible_bitonic_topk([val_input, idx_input], k=NUM_LANES, num_keys=1)
+  ) = bitonic_topk_arrays([val_input, idx_input], k=NUM_LANES, num_keys=1)
 
 
-def dynamic_topk_kernel(
+def dynamic_topk_refs(
     logits_ref,
     k_smem_ref,
     k_vmem_ref,
@@ -355,7 +355,7 @@ def dynamic_topk_kernel(
       ))
       def _():
         # Sort the binned superset
-        bitonic_topk_kernel(
+        bitonic_topk_refs(
           [ref.at[:, :depth_upper * num_bins]
             for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)],
           [topk_vals_ref, topk_idxs_ref],
@@ -481,7 +481,7 @@ def top_dynamic_k(
 
   outputs = pl.pallas_call(
       functools.partial(
-          dynamic_topk_kernel,
+          dynamic_topk_refs,
           max_k=max_k,
           num_bins=num_bins,
           bins_topm_unroll=bins_topm_unroll,

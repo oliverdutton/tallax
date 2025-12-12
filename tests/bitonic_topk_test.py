@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from tallax._src.bitonic_topk import bitonic_topk, pallas_compatible_bitonic_topk, top1
+from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, top1
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
@@ -26,10 +26,10 @@ def test_bitonic_topk_axis1(shape, dtype):
     indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
 
     k = min(128, shape[1])  # NUM_LANES or dimension size, whichever is smaller
-    # On CPU, call pallas_compatible_bitonic_topk directly (Pallas causes segfaults)
+    # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
     # On TPU/GPU, use the full bitonic_topk with Pallas
     if interpret:
-        result_values, result_indices = pallas_compatible_bitonic_topk([arr, indices], k=k, num_keys=1)
+        result_values, result_indices = bitonic_topk_arrays([arr, indices], k=k, num_keys=1)
     else:
         result_values, result_indices = bitonic_topk([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
 
@@ -63,8 +63,8 @@ def test_top1_pallas(shape, dtype, axis):
         # top1 returns 1D output with shape (batch_size,) where batch_size = shape[0] for axis=1
         out_shape_1d = (shape[0],)
 
-    def top1_kernel(values_ref, indices_ref, out_values_ref, out_indices_ref):
-        """Top1 kernel."""
+    def top1_refs(values_ref, indices_ref, out_values_ref, out_indices_ref):
+        """Top1 refs kernel."""
         result_values, result_indices = top1(
             [values_ref[...], indices_ref[...]],
             num_keys=1,
@@ -77,7 +77,7 @@ def test_top1_pallas(shape, dtype, axis):
     @functools.partial(jax.jit, static_argnames=("interpret",))
     def top1_pallas(values, indices, interpret=False):
         return pl.pallas_call(
-            top1_kernel,
+            top1_refs,
             out_shape=[
                 jax.ShapeDtypeStruct(out_shape_1d, values.dtype),
                 jax.ShapeDtypeStruct(out_shape_1d, jnp.int32),
