@@ -220,49 +220,6 @@ def _packed_subtile_substage(substage, arrs_tiles, *, stage, dim1_offset,
   return outs_tiles
 
 
-def _packed_crosstile_substage(substage, arrs_tiles, *, stage, dim1_offset,
-                                num_keys: int, dim0: int):
-  """Single substage using lane permutation (packed, between tiles)."""
-  index = global_base_index = iota_tile(1)
-  tile_rows = dim0 // NUM_SUBLANES
-  tile_cols = len(arrs_tiles[0]) // tile_rows
-
-  is_right_half = create_bit_indicator(substage, index)
-  permutation = jnp.bitwise_xor(index, 1 << substage)
-
-  arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
-      arrs_tiles
-  )
-
-  outs_tiles = [[] for _ in arrs_tiles]
-
-  for tile_idx, (lefts, rights) in enumerate(zip(
-      *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-      strict=True
-  )):
-    tile_offset = (tile_idx % tile_cols) * NUM_LANES
-
-    is_descending = create_bit_indicator(
-        stage, dim1_offset + tile_offset + global_base_index
-    )
-
-    if type(stage) == int:
-      # Performance optimizations for early, statically compiled stages
-      if stage < log2(NUM_SUBLANES):
-        is_descending = create_bit_indicator(stage, global_base_index)
-      elif stage < log2(NUM_LANES):
-        is_descending = create_bit_indicator(stage, tile_offset)
-
-    for i, o in enumerate(compare_and_swap(lefts, rights,
-                                   is_descending=is_descending,
-                                   is_right_half=is_right_half,
-                                   num_keys=num_keys)):
-      outs_tiles[i].append(o)
-
-  return outs_tiles
-
-
 def _crosstile_substage(arrs_tiles, substage, dim0, num_keys: int,
                         dim1_offset=0, stage=None):
   """Single substage using explicit tile pair comparison."""
@@ -318,16 +275,16 @@ def _packed_substages_arrays(
 
   Dispatches to:
   - _packed_subtile_substage for substage < log2(NUM_SUBLANES)
-  - _packed_crosstile_substage for substage >= log2(NUM_SUBLANES)
+  - _crosstile_substage for substage >= log2(NUM_SUBLANES)
   """
   assert num_substages <= log2(NUM_LANES)
 
   for substage in range(num_substages)[::-1]:
     if substage >= log2(NUM_SUBLANES):
-      # Inter-tile comparisons using lane permute
-      arrs_tiles = _packed_crosstile_substage(
-          substage, arrs_tiles, stage=stage,
-          dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
+      # Inter-tile comparisons using explicit tile pairs
+      arrs_tiles = _crosstile_substage(
+          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
+          stage=stage, num_keys=num_keys
       )
     else:
       # Intra-tile comparisons using sublane permute
