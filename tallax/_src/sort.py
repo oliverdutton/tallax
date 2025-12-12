@@ -174,6 +174,7 @@ def _compute_pair_slice_start_index(i, separation, slice_length=1):
 
 def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
   """Perform substage using sublane permutation or cross-tile comparison."""
+  assert dim0 <= NUM_LANES
   global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
   num_tiles = len(arrs_tiles[0])
   tile_rows = NUM_LANES // NUM_SUBLANES
