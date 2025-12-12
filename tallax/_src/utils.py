@@ -1,6 +1,7 @@
 
 import math
 import warnings
+from itertools import chain
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -20,6 +21,16 @@ def is_cpu_platform():
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
   return math.ceil(math.log2(x))
+
+
+def flatten(xs):
+  """Flatten a nested list by one level."""
+  return list(chain.from_iterable(xs))
+
+
+def ceil_multiple(i, n):
+  """Round up i to the nearest multiple of n."""
+  return pl.cdiv(i, n) * n
 
 
 def max_int(a, b):
