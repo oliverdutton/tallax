@@ -29,7 +29,7 @@ def cumsum_tile(tile, axis):
       0)
   return tile
 
-def pallas_compatible_cumsum(arr, axis, reverse=False):
+def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
 
@@ -39,7 +39,7 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   arr = pad(arr, tile_shape, val=0)
-  def _cumsum(arr):
+  def _cumsum_arrays(arr):
     n = arr.shape[axis] // tile_shape[axis]
     tiles = jnp.split(arr, n, axis=axis)
     if reverse:
@@ -55,7 +55,7 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
 
   batch_axis = 1 - axis
   return jnp.concatenate(
-    [_cumsum(x)
+    [_cumsum_arrays(x)
       for x in jnp.split(
         arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis)
     ],
@@ -63,12 +63,12 @@ def pallas_compatible_cumsum(arr, axis, reverse=False):
   )[:shape[0], :shape[1]]
 
 
-def cumsum_kernel(input_ref, output_ref, *, axis: int, reverse: bool):
+def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
   """Cumulative sum kernel.
 
   Computes the cumulative sum of the input array along the specified axis.
   """
-  output_ref[...] = pallas_compatible_cumsum(input_ref[...], axis=axis, reverse=reverse)
+  output_ref[...] = cumsum_arrays(input_ref[...], axis=axis, reverse=reverse)
 
 
 @functools.partial(jax.jit, static_argnames=("axis", "reverse", "interpret"))
@@ -92,7 +92,7 @@ def cumsum(
   """
   return pl.pallas_call(
       functools.partial(
-        cumsum_kernel,
+        cumsum_refs,
         axis=axis,
         reverse=reverse,
       ),

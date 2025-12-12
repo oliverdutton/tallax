@@ -39,7 +39,7 @@ from tallax._src.sort import (
     compare,
 )
 
-def top1(operands, num_keys, axis):
+def top_1_arrays(operands, num_keys, axis):
   if axis == 1:
     # transpose and run on axis 0
     operands = jax.tree.map(lambda x: x.T, operands)
@@ -165,7 +165,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def pallas_compatible_bitonic_topk(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
+def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -192,12 +192,12 @@ def pallas_compatible_bitonic_topk(operands: list[jax.Array], k: int = NUM_LANES
     arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    def _topk(arrs):
+    def _topk_arrays(arrs):
       # Convert to sublane transposed format
       arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
 
       dim0 = arrs[0].shape[0]
-      assert dim0 <= NUM_LANES:
+      assert dim0 <= NUM_LANES
       log_lanes = log2(NUM_LANES)
       num_merges = log2(shape[1]) - log_lanes
       num_intra_merges = min(
@@ -296,12 +296,12 @@ def pallas_compatible_bitonic_topk(operands: list[jax.Array], k: int = NUM_LANES
     return [
       jnp.concatenate(arr_slices, axis=0)[:shape[0],:k]
       for arr_slices in transpose_list_of_lists(
-        [_top_k(arrs)
+        [_topk_arrays(arrs)
         for arrs in transpose_list_of_lists([
         jnp.split(arr, pl.cdiv(padded_shape[0], NUM_LANES), axis=0) for arr in arrs])
     ])]
   
-def bitonic_topk_kernel(
+def bitonic_topk_refs(
     in_refs,
     out_refs,
     *,
@@ -320,7 +320,7 @@ def bitonic_topk_kernel(
     """
     if not descending:
       raise NotImplementedError
-    outs = pallas_compatible_bitonic_topk(
+    outs = bitonic_topk_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
       num_keys=num_keys)
     for out, out_ref in zip(outs, out_refs, strict=True):
@@ -380,7 +380,7 @@ def bitonic_topk(
     ]
     outputs = pl.pallas_call(
         functools.partial(
-            bitonic_topk_kernel,
+            bitonic_topk_refs,
             num_keys=num_keys,
             descending=descending,
         ),

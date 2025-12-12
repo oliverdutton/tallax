@@ -8,11 +8,11 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad
 
-def pallas_compatible_take_along_axis(val, idx, axis):
+def take_along_axis_arrays(val, idx, axis):
   shape = idx.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
-  def _gather(val, idx):
+  def _gather_arrays(val, idx):
     # Initialize accumulators
     accumulators = [
         jnp.zeros(tile_shape, dtype=val.dtype)
@@ -37,7 +37,7 @@ def pallas_compatible_take_along_axis(val, idx, axis):
   batch_axis = 1 - axis
   assert val.shape[batch_axis]==idx.shape[batch_axis]
   return jnp.concatenate(
-    [_gather(v, i) 
+    [_gather_arrays(v, i)
       for v, i in zip(*map(lambda arr: jnp.split(
         arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis), (val, idx)))
     ],
@@ -45,14 +45,14 @@ def pallas_compatible_take_along_axis(val, idx, axis):
   )[:shape[0], :shape[1]]
 
   
-def take_along_axis_kernel(values_ref, indices_ref, output_ref, *, axis: int):
+def take_along_axis_refs(values_ref, indices_ref, output_ref, *, axis: int):
   """Gather values by indexing in to all of value with a mask.
 
   This kernel processes multiple tiles of output (NUM_SUBLANES x K).
   It scans across the entire values_ref (which contains full vocab for the corresponding tokens)
   once, updating all output tiles.
   """
-  output_ref[...] = pallas_compatible_take_along_axis(values_ref[...], indices_ref[...], axis=axis)
+  output_ref[...] = take_along_axis_arrays(values_ref[...], indices_ref[...], axis=axis)
   
 
 @functools.partial(jit, static_argnames=("axis", "interpret",))
@@ -75,7 +75,7 @@ def take_along_axis(
   """
   return pl.pallas_call(
       functools.partial(
-        take_along_axis_kernel,
+        take_along_axis_refs,
         axis=axis,
       ),
       out_shape=jax.ShapeDtypeStruct(indices.shape, values.dtype),

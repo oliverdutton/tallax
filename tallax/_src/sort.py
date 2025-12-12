@@ -505,7 +505,7 @@ def bitonic_sort(
     )
 
 
-def _sort_kernel(
+def _sort_refs(
     in_refs,
     stage_ref,
     out_refs,
@@ -651,7 +651,7 @@ def _sort_pallas_vmem(
     stage = stage[None]
 
   return pl.pallas_call(
-      functools.partial(_sort_kernel, descending=descending, num_keys=num_keys,
+      functools.partial(_sort_refs, descending=descending, num_keys=num_keys,
                         is_stable=is_stable, log_n=log_n),
       out_shape=(out_shapes,),
       in_specs=in_specs,
@@ -679,7 +679,7 @@ class _AsyncCopyAggregator:
       descriptor.wait()
 
 
-def _substage_hbm_kernel(
+def _substage_hbm_refs(
     input_hbm_refs,
     substage_ref,
     stage_ref,
@@ -832,7 +832,7 @@ def _compute_substage_hbm(
   )
 
   return pl.pallas_call(
-      functools.partial(_substage_hbm_kernel, num_keys=num_keys,
+      functools.partial(_substage_hbm_refs, num_keys=num_keys,
                         descending=descending),
       grid=(operands[0].shape[0] // block_shape[0],),
       out_shape=(output_shape,),
