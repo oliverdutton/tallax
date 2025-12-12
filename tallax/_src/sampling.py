@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_topk import bitonic_topk_arrays, bitonic_topk, top_1_arrays
+from tallax._src.bitonic_topk import bitonic_topk_arrays, bitonic_topk, max_arrays
 from tallax._src.gather import take_along_axis_arrays
 from tallax._src.sparse_random import sparse_random_categorical
 from tallax._src.cumsum import cumsum_arrays

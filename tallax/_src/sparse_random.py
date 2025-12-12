@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax.extend.random import threefry2x32_p
 
-from tallax._src.bitonic_topk import top_1_arrays
+from tallax._src.bitonic_topk import max_arrays
 
 def _bits_to_uniform(bits, dtype):
     """
@@ -85,7 +85,7 @@ def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtyp
     # Add Gumbel noise to scaled logits
     gumbel_logits = logits + gumbel
     # Find argmax of Gumbel-perturbed logits
-    sampled_token_indices = top_1_arrays(
+    sampled_token_indices = max_arrays(
         [gumbel_logits, *indices],
         num_keys=1,
         axis=axis,
