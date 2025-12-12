@@ -318,16 +318,16 @@ def _packed_substages_arrays(
 
   Dispatches to:
   - _packed_subtile_substage for substage < log2(NUM_SUBLANES)
-  - _crosstile_substage for substage >= log2(NUM_SUBLANES)
+  - _packed_crosstile_substage for substage >= log2(NUM_SUBLANES)
   """
   assert num_substages <= log2(NUM_LANES)
 
   for substage in range(num_substages)[::-1]:
     if substage >= log2(NUM_SUBLANES):
-      # Inter-tile comparisons
-      arrs_tiles = _crosstile_substage(
-          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
-          stage=stage, num_keys=num_keys
+      # Inter-tile comparisons using lane permute
+      arrs_tiles = _packed_crosstile_substage(
+          substage, arrs_tiles, stage=stage,
+          dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
     else:
       # Intra-tile comparisons using sublane permute
