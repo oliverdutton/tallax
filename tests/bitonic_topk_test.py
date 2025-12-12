@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, max_arrays
+from tallax._src.bitonic_top_k import bitonic_top_k, bitonic_top_k_arrays, max_arrays
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
@@ -26,12 +26,12 @@ def test_bitonic_topk_axis1(shape, dtype):
     indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
 
     k = min(128, shape[1])  # NUM_LANES or dimension size, whichever is smaller
-    # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
+    # On CPU, call bitonic_top_k_arrays directly (Pallas causes segfaults)
     # On TPU/GPU, use the full bitonic_topk with Pallas
     if interpret:
-        result_values, result_indices = bitonic_topk_arrays([arr, indices], k=k, num_keys=1)
+        result_values, result_indices = bitonic_top_k_arrays([arr, indices], k=k, num_keys=1)
     else:
-        result_values, result_indices = bitonic_topk([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
+        result_values, result_indices = bitonic_top_k([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
 
     # Verify using test_utils (axis=1 is default)
     valid = verify_topk_output(arr, (result_values, result_indices), axis=1)

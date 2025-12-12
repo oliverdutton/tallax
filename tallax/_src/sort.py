@@ -36,7 +36,7 @@ from tallax._src.utils import (
 
 ### Bitonic Sort Core Operations
 
-def compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
+def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
              has_unique_key=False):
   """Compare and conditionally swap array pairs.
 
@@ -45,11 +45,11 @@ def compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_ri
     rights: Tuple of right arrays to compare
     num_keys: Number of arrays to use as sort keys
     is_descending: Boolean mask for sort direction
-    is_right_half: Mask for within-tile comparisons
+    is_right_half: Mask for subtile comparisons
     has_unique_key: Whether first key is guaranteed unique
 
   Returns:
-    Tuple of (sorted_lefts, sorted_rights) or sorted values for within-tile.
+    Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
   """
   num_arrs = len(lefts)
 
@@ -104,7 +104,7 @@ def compare(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_ri
 
 ### Cross-Tile Substage
 
-def _compute_crosstile_substage(
+def _sort_crosstile_substage(
     refs,
     substage: int,
     stage: int,
@@ -149,7 +149,7 @@ def _compute_crosstile_substage(
 
       is_descending = create_bit_indicator(stage, dim1_offset + pair_offset)
 
-      for i, vs in enumerate(compare(lefts, rights,
+      for i, vs in enumerate(compare_and_swap(lefts, rights,
                                       is_descending=is_descending,
                                       num_keys=num_keys)):
         outs[i].extend(vs)
@@ -160,7 +160,7 @@ def _compute_crosstile_substage(
 
 ### Within-Tile Substages
 
-def compute_start_index(i, separation, slice_length=1):
+def _compute_pair_slice_start_index(i, separation, slice_length=1):
   """Compute start index for pair-wise array slicing."""
   if slice_length > separation:
     raise ValueError(
@@ -172,7 +172,7 @@ def compute_start_index(i, separation, slice_length=1):
   return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
+def _sort_substage_by_permutation(substage, arrs_tiles, *, stage, permute_dim,
                                 dim1_offset, num_keys: int, dim0: int):
   """Perform substage using sublane or lane permutations."""
   if permute_dim == 0: # sublane
@@ -221,7 +221,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
       elif stage < log2(NUM_LANES):
         is_descending = create_bit_indicator(stage, tile_offset)
 
-    for i, o in enumerate(compare(lefts, rights,
+    for i, o in enumerate(compare_and_swap(lefts, rights,
                                    is_descending=is_descending,
                                    is_right_half=is_right_half,
                                    num_keys=num_keys)):
@@ -230,7 +230,7 @@ def _compute_substage_by_permute(substage, arrs_tiles, *, stage, permute_dim,
   return outs_tiles
 
 
-def _compute_substage_by_crosstile_comparison(
+def _sort_substage_by_crosstile_comparison(
     arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None
 ):
   """Perform substage by comparing explicit tile pairs."""
@@ -243,7 +243,7 @@ def _compute_substage_by_crosstile_comparison(
   outs_tiles = [[None for _ in t] for t in arrs_tiles]
 
   for i in range(num_tiles // 2):
-    idx = compute_start_index(i, separation=separation)
+    idx = _compute_pair_slice_start_index(i, separation=separation)
 
     tile_row = idx // tile_cols
     tile_col = idx % tile_cols
@@ -261,7 +261,7 @@ def _compute_substage_by_crosstile_comparison(
     if type(stage) == int and stage < log2(NUM_LANES):
       is_descending = create_bit_indicator(stage, pair_offset)
 
-    for i, (o_left, o_right) in enumerate(compare(
+    for i, (o_left, o_right) in enumerate(compare_and_swap(
         lefts, rights, is_descending=is_descending, num_keys=num_keys
     )):
       outs_tiles[i][idx] = o_left
@@ -274,7 +274,7 @@ def _compute_substage_by_crosstile_comparison(
   return outs_tiles
 
 
-def compute_subtile_substages_inner(
+def _sort_subtile_substages(
     arrs_tiles,
     num_substages: int,
     stage: int,
@@ -288,26 +288,26 @@ def compute_subtile_substages_inner(
 
   for substage in range(num_substages)[::-1]:
     if use_lane_permute:
-      arrs_tiles = _compute_substage_by_permute(
+      arrs_tiles = _sort_substage_by_permutation(
           substage, arrs_tiles, stage=stage, permute_dim=1,
           dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
     elif substage >= log2(NUM_SUBLANES):
       # Inter-tile comparisons
-      arrs_tiles = _compute_substage_by_crosstile_comparison(
+      arrs_tiles = _sort_substage_by_crosstile_comparison(
           arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
           stage=stage, num_keys=num_keys
       )
     else:
       # Intra-tile comparisons using sublane permute
-      arrs_tiles = _compute_substage_by_permute(
+      arrs_tiles = _sort_substage_by_permutation(
           substage, arrs_tiles, stage=stage, permute_dim=0,
           dim0=dim0, dim1_offset=dim1_offset, num_keys=num_keys
       )
   return arrs_tiles
 
 
-def _compute_subtile_substages(
+def _sort_subtile_substages_refs(
     refs,
     *,
     num_substages: int,
@@ -358,7 +358,7 @@ def _compute_subtile_substages(
 
     if stage is not None:
       # Run single stage
-      arrs_tiles = compute_subtile_substages_inner(
+      arrs_tiles = _sort_subtile_substages(
           arrs_tiles,
           num_substages=num_substages,
           stage=stage,
@@ -371,7 +371,7 @@ def _compute_subtile_substages(
       # Run all stages 1 to num_substages (allows compiler fusion)
       num_stages = num_substages
       for stage_ in range(1, num_stages + 1):
-        arrs_tiles = compute_subtile_substages_inner(
+        arrs_tiles = _sort_subtile_substages(
             arrs_tiles,
             num_substages=stage_,
             stage=stage_,
@@ -397,7 +397,7 @@ def _compute_subtile_substages(
 
 ### Stage Execution
 
-def _compute_stages(
+def _sort_stages(
     start_stage: int,
     end_stage: int,
     refs,
@@ -415,7 +415,7 @@ def _compute_stages(
 
   # Run stages 1 to 7 (if large enough), compiler fused
   if start_stage_static_lower_bound == 1:
-    _compute_subtile_substages(
+    _sort_subtile_substages_refs(
         refs,
         num_substages=min(log2(NUM_LANES), end_stage),
         stage=None,
@@ -425,7 +425,7 @@ def _compute_stages(
     )
   elif (all_concrete_ints(start_stage, end_stage)
         and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
-    _compute_subtile_substages(
+    _sort_subtile_substages_refs(
         refs,
         num_substages=start_stage,
         stage=start_stage,
@@ -445,7 +445,7 @@ def _compute_stages(
       # Run substages 7 and up
       @pl.when(stage > substage)
       def _():
-        _compute_crosstile_substage(
+        _sort_crosstile_substage(
             refs,
             substage=substage,
             stage=stage,
@@ -455,7 +455,7 @@ def _compute_stages(
         )
 
     # Run substages 0-6 inclusive
-    _compute_subtile_substages(
+    _sort_subtile_substages_refs(
         refs,
         num_substages=log2(NUM_LANES),
         stage=stage,
@@ -488,7 +488,7 @@ def bitonic_sort(
 
   if stage_ref is None:
     # Execute full bitonic sort
-    _compute_stages(
+    _sort_stages(
         1, log_n + 1, refs,
         num_keys=num_keys,
         dim1_offset=dim1_offset,
@@ -496,7 +496,7 @@ def bitonic_sort(
   else:
     # Run single stage (for large arrays that don't fit in VMEM)
     stage = stage_ref[0]
-    _compute_stages(
+    _sort_stages(
         stage, stage + 1,
         refs,
         num_keys=num_keys,
@@ -583,7 +583,7 @@ def _sort_refs(
     static_argnames=("k", "block_token", "block_seq", "return_argsort",
                      "descending", "num_keys", "is_stable", "log_n", "interpret")
 )
-def _sort_pallas_vmem(
+def _sort_in_vmem(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int,
     k: int | None = None,
@@ -667,7 +667,7 @@ def _sort_pallas_vmem(
 
 ### HBM-Based Substage (for large arrays)
 
-class _AsyncCopyAggregator:
+class _AsyncCopyGroup:
   """Bundles multiple async copy operations as single operation."""
 
   def __init__(self, copy_descriptors):
@@ -679,7 +679,7 @@ class _AsyncCopyAggregator:
       descriptor.wait()
 
 
-def _substage_hbm_refs(
+def _sort_substage_in_hbm_refs(
     input_hbm_refs,
     substage_ref,
     stage_ref,
@@ -708,7 +708,7 @@ def _substage_hbm_refs(
   pair_length = 2 ** (substage + 1)
   slices_per_pair = (pair_length // 2) // slice_length
 
-  def compute_start_index(i):
+  def _compute_pair_slice_start_index(i):
     pair_idx = i // slices_per_pair
     pair_subslice_idx = i % slices_per_pair
     return pair_idx * pair_length + pair_subslice_idx * slice_length
@@ -716,7 +716,7 @@ def _substage_hbm_refs(
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = compute_start_index(i)
+    left_start = _compute_pair_slice_start_index(i)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
@@ -737,14 +737,14 @@ def _substage_hbm_refs(
         copies.append(
             pltpu.async_copy(src_ref=src, dst_ref=dst, sem=sem)
         )
-    return _AsyncCopyAggregator(copies)
+    return _AsyncCopyGroup(copies)
 
   load_dma = functools.partial(perform_dma, is_load=True)
   store_dma = functools.partial(perform_dma, is_load=False)
 
   def compute(loop_idx):
     """Perform comparison and swap logic."""
-    start_idx = compute_start_index(loop_idx)
+    start_idx = _compute_pair_slice_start_index(loop_idx)
     slot = lax.rem(loop_idx, 2)
 
     refs = []
@@ -755,7 +755,7 @@ def _substage_hbm_refs(
         scratch_ref[slot] = input_ref[slot].astype(scratch_ref.dtype)
         refs.append(tuple(scratch_ref[slot]))
     is_descending = create_bit_indicator(stage, start_idx + int(descending) * shape[1])
-    outputs = compare(
+    outputs = compare_and_swap(
         *transpose_list_of_lists(refs),
         is_descending=is_descending,
         num_keys=num_keys
@@ -799,7 +799,7 @@ def _substage_hbm_refs(
     jax.jit,
     static_argnames=('block_shape', 'num_keys', 'descending', 'interpret')
 )
-def _compute_substage_hbm(
+def _sort_substage_in_hbm(
     operand,
     substage,
     stage,
@@ -832,7 +832,7 @@ def _compute_substage_hbm(
   )
 
   return pl.pallas_call(
-      functools.partial(_substage_hbm_refs, num_keys=num_keys,
+      functools.partial(_sort_substage_in_hbm_refs, num_keys=num_keys,
                         descending=descending),
       grid=(operands[0].shape[0] // block_shape[0],),
       out_shape=(output_shape,),
@@ -941,7 +941,7 @@ def sort(
   # Sort based on array size
   if num_stages <= num_vmem_substages:
     # Array fits in VMEM
-    operands = _sort_pallas_vmem(
+    operands = _sort_in_vmem(
         operands,
         descending=descending,
         num_keys=num_keys,
@@ -956,7 +956,7 @@ def sort(
       """Execute complete sorting stage (HBM + VMEM)."""
       def _compute_substages_hbm_body(i, operands):
         substage = stage - 1 - i
-        return _compute_substage_hbm(
+        return _sort_substage_in_hbm(
             operands, substage, stage, num_keys=num_keys, descending=descending,
             interpret=interpret
         )
@@ -967,7 +967,7 @@ def sort(
       )
 
       # VMEM-based substages for within-block operations
-      return _sort_pallas_vmem(
+      return _sort_in_vmem(
           operands,
           block_seq=2**num_vmem_substages,
           stage=stage,
@@ -978,7 +978,7 @@ def sort(
       )
 
     # Initial bitonic sorting of VMEM-sized blocks
-    operands = _sort_pallas_vmem(
+    operands = _sort_in_vmem(
         tuple(operands),
         block_seq=2**num_vmem_substages,
         stage=None,

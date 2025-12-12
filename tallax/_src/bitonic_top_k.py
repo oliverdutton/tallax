@@ -36,8 +36,8 @@ from tallax._src.utils import (
     to_32bit_dtype,
 )
 from tallax._src.sort import (
-    compute_subtile_substages_inner,
-    compare,
+    _sort_subtile_substages,
+    compare_and_swap,
 )
 
 def max_arrays(operands, num_keys, axis):
@@ -67,7 +67,7 @@ def max_arrays(operands, num_keys, axis):
   shape = operands[0].shape
   for _ in range(log2(shape[0] // NUM_SUBLANES)):
     lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
-    operands = transpose_list_of_lists(compare(lefts, rights, num_keys=num_keys, is_descending=True))[0]
+    operands = transpose_list_of_lists(compare_and_swap(lefts, rights, num_keys=num_keys, is_descending=True))[0]
   assert operands[0].shape[0] == NUM_SUBLANES
   assert shape[1] % NUM_LANES == 0
 
@@ -87,7 +87,7 @@ def max_arrays(operands, num_keys, axis):
           *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
           strict=True
       )):
-        for j, (o, _) in enumerate(compare(
+        for j, (o, _) in enumerate(compare_and_swap(
             lefts, rights,
             is_descending=True,
             num_keys=num_keys
@@ -167,14 +167,14 @@ def _merge_max_crosstile(
         for j in (idx, idx + 1)
     )
     # Keep only max (left) values, discard min (right)
-    for j, (o_left, _) in enumerate(compare(
+    for j, (o_left, _) in enumerate(compare_and_swap(
         lefts, rights, is_descending=True, num_keys=num_keys
     )):
       outs_tiles[j].append(o_left)  
   return outs_tiles
 
 
-def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
+def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -215,7 +215,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
   
       # Build bitonic sequences up to length 64 (stage 6)
       for stage in range(1, log_lanes):  # stages 1-6 inclusive
-        arrs_tiles = compute_subtile_substages_inner(
+        arrs_tiles = _sort_subtile_substages(
           arrs_tiles,
           num_substages=stage,
           stage=stage,
@@ -234,7 +234,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           _split_actives(x)[1] for x in arrs_tiles]
           arrs_tiles = [
           _split_actives(x)[0] for x in arrs_tiles]
-        arrs_tiles = compute_subtile_substages_inner(
+        arrs_tiles = _sort_subtile_substages(
           arrs_tiles,
           num_substages=log_lanes,
           # tile i is different order to tile i+1, so they can be max merged
@@ -257,7 +257,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         distance = dim0 * (2**i)
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * dim0 / NUM_LANES * NUM_LANES) = log2(2 * distance)
-        arrs_tiles = compute_subtile_substages_inner(
+        arrs_tiles = _sort_subtile_substages(
           arrs_tiles,
           num_substages=log_lanes,
           stage=log_lanes+i,
@@ -280,7 +280,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
               *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
               strict=True
           )):
-            for j, (o, _) in enumerate(compare(
+            for j, (o, _) in enumerate(compare_and_swap(
                 lefts, rights,
                 is_descending=True,
                 num_keys=num_keys
@@ -290,7 +290,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
   
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=2**7 to ensure descending direction
-      arrs_tiles = compute_subtile_substages_inner(
+      arrs_tiles = _sort_subtile_substages(
         arrs_tiles,
         num_substages=log_lanes,
         stage=log_lanes,
@@ -310,7 +310,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         jnp.split(arr, pl.cdiv(padded_shape[0], NUM_LANES), axis=0) for arr in arrs])
     ])]
   
-def bitonic_topk_refs(
+def bitonic_top_k_refs(
     in_refs,
     out_refs,
     *,
@@ -329,7 +329,7 @@ def bitonic_topk_refs(
     """
     if not descending:
       raise NotImplementedError
-    outs = bitonic_topk_arrays(
+    outs = bitonic_top_k_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
       num_keys=num_keys)
     for out, out_ref in zip(outs, out_refs, strict=True):
@@ -340,7 +340,7 @@ def bitonic_topk_refs(
     jit,
     static_argnames=("k", "num_keys", "descending", "interpret"),
 )
-def bitonic_topk(
+def bitonic_top_k(
     operand: jax.Array | Sequence[jax.Array],
     k: int = NUM_LANES,
     num_keys: int = 1,
@@ -389,7 +389,7 @@ def bitonic_topk(
     ]
     outputs = pl.pallas_call(
         functools.partial(
-            bitonic_topk_refs,
+            bitonic_top_k_refs,
             num_keys=num_keys,
             descending=descending,
         ),
