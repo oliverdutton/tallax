@@ -33,7 +33,7 @@ def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
 
-  Note: most TPU versions do not allow lane sums in bfloat16, so suggest specifying dtype=jnp.float32
+  Note: most TPU versions do not allow lane sums in bfloat16, so suggest  casting to jnp.float32 before passing in
   '''
   assert arr.ndim==2
   shape = arr.shape
