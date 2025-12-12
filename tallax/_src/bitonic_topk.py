@@ -100,26 +100,26 @@ def flat(xs):
   return list(chain.from_iterable(xs))
 
 
-def split_rows(tiles):
+def _split_rows(tiles):
   num_rows = NUM_LANES // NUM_SUBLANES
   num_cols = len(tiles) // num_rows
   return [tiles[row*num_cols:(row+1)*num_cols] for row in range(num_rows)]
 
 
-def split_actives(tiles):
+def _split_actives(tiles):
   num_rows = NUM_LANES // NUM_SUBLANES
   num_cols = len(tiles) // num_rows
   num_active_cols = 2 * (num_cols // 2)  
   active = flat((
-    x[:num_active_cols] for x in split_rows(tiles)
+    x[:num_active_cols] for x in _split_rows(tiles)
   ))
   remainder = flat((
-    x[num_active_cols:] for x in split_rows(tiles)
+    x[num_active_cols:] for x in _split_rows(tiles)
   ))
   return [active, remainder]
 
-def merge_remainder(merged, remainder):
-  return flat(map(flat, zip(*map(split_rows, (merged, remainder)))))
+def _merge_remainder(merged, remainder):
+  return flat(map(flat, zip(*map(_split_rows, (merged, remainder)))))
 
 def ceil_multiple(i, n):
   return pl.cdiv(i, n) * n
@@ -236,9 +236,9 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         has_remainder = ((len(arrs_tiles[0][::16])%2) != 0)
         if has_remainder:
           remainder_arrs_tiles = [
-          split_actives(x)[1] for x in arrs_tiles]
+          _split_actives(x)[1] for x in arrs_tiles]
           arrs_tiles = [
-          split_actives(x)[0] for x in arrs_tiles]
+          _split_actives(x)[0] for x in arrs_tiles]
         arrs_tiles = compute_subtile_substages_inner(
           arrs_tiles,
           num_substages=log_lanes,
@@ -255,7 +255,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
             num_keys=num_keys
         )
         if has_remainder:
-          arrs_tiles = [merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
+          arrs_tiles = [_merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
   
       # Progressive intra-tile merging with lane permute
       for i in range(num_intra_merges)[::-1]:
