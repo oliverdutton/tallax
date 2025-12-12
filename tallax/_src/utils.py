@@ -23,7 +23,7 @@ def log2(x: int) -> int:
   return math.ceil(math.log2(x))
 
 
-def flat(xs):
+def flatten(xs):
   """Flatten a nested list by one level."""
   return list(chain.from_iterable(xs))
 

@@ -25,7 +25,7 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
-    flat,
+    flatten,
     ceil_multiple,
     iota_tile,
     pad,
@@ -106,17 +106,17 @@ def _split_rows(tiles):
 def _split_actives(tiles):
   num_rows = NUM_LANES // NUM_SUBLANES
   num_cols = len(tiles) // num_rows
-  num_active_cols = 2 * (num_cols // 2)  
-  active = flat((
+  num_active_cols = 2 * (num_cols // 2)
+  active = flatten((
     x[:num_active_cols] for x in _split_rows(tiles)
   ))
-  remainder = flat((
+  remainder = flatten((
     x[num_active_cols:] for x in _split_rows(tiles)
   ))
   return [active, remainder]
 
 def _merge_remainder(merged, remainder):
-  return flat(map(flat, zip(*map(_split_rows, (merged, remainder)))))
+  return flatten(map(flatten, zip(*map(_split_rows, (merged, remainder)))))
 
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
