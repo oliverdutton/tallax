@@ -9,7 +9,7 @@ from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 def test_bitonic_topk_axis1(shape, dtype):
     """Test bitonic_topk for axis=1 (last axis)."""
@@ -38,7 +38,7 @@ def test_bitonic_topk_axis1(shape, dtype):
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}"
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_top1_pallas(shape, dtype, axis):
