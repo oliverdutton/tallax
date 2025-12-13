@@ -793,34 +793,14 @@ def sort(
     Tuple of sorted arrays (and optionally argsort indices)
 
   Note:
-    Requires ndim=2. block_token must be power of 2 in [NUM_SUBLANES, NUM_LANES].
+    block_token must be 2^n in [NUM_SUBLANES, NUM_LANES].
   """
   operands, shape = canonicalize_operand(operand)
 
-  # Shape validations
-  if operands[0].ndim != 2:
-    raise ValueError(f"Requires ndim=2, got ndim={operands[0].ndim}")
-
-  if shape[0] == 0 or shape[1] == 0:
-    raise ValueError(f"Requires shape[0]>0 and shape[1]>0, got shape={shape}")
-
-  if num_keys < 1:
-    raise ValueError(f"Requires num_keys>=1, got num_keys={num_keys}")
-
-  if num_keys > len(operands):
-    raise ValueError(
-      f"Requires num_keys<={len(operands)}, got num_keys={num_keys}"
-    )
-
+  # Validate block_token
   if block_token is not None:
-    # Check if block_token is a power of 2
-    if block_token & (block_token - 1) != 0:
-      raise ValueError(f"Requires block_token=2^n, got {block_token}")
-
-    if block_token < NUM_SUBLANES or block_token > NUM_LANES:
-      raise ValueError(
-        f"Requires block_token in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}"
-      )
+    if block_token & (block_token - 1) != 0 or block_token < NUM_SUBLANES or block_token > NUM_LANES:
+      raise ValueError(f"Requires block_token=2^n in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}")
 
   num_stages = log2(shape[1])
 

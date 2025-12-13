@@ -431,37 +431,17 @@ def top_dynamic_k(
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
 
   Note:
-    Requires ndim=2. max_k and all k values must be in (0, vocab_size].
+    max_k <= vocab_size for compilation. All k <= max_k at runtime.
   """
-  # Shape validations
-  if logits.ndim != 2:
-    raise ValueError(f"Requires ndim=2, got ndim={logits.ndim}")
-
   num_tokens, vocab_size = logits.shape
 
-  if max_k <= 0:
-    raise ValueError(f"Requires max_k>0, got max_k={max_k}")
-
-  if max_k > vocab_size:
-    raise ValueError(
-      f"Requires max_k<={vocab_size}, got max_k={max_k}"
-    )
-
-  if num_tokens % block_token != 0:
-    raise ValueError(f"Requires num_tokens%block_token=0, got {num_tokens}%{block_token}={num_tokens%block_token}")
+  if max_k <= 0 or max_k > vocab_size:
+    raise ValueError(f"Requires 0 < max_k <= {vocab_size}, got max_k={max_k}")
 
   if max_k > NUM_LANES:
     raise NotImplementedError
 
-  # Validate k values
   k = jnp.broadcast_to(k, (num_tokens,))
-  if jnp.any(k < 0):
-    raise ValueError(f"Requires k>=0 for all tokens, got min(k)={jnp.min(k)}")
-
-  if jnp.any(k > max_k):
-    raise ValueError(
-      f"Requires k<={max_k} for all tokens, got max(k)={jnp.max(k)}"
-    )
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -578,18 +558,10 @@ def top_k(
           - topk_idxs: Top-k indices of shape [num_tokens, k].
 
   Note:
-    Requires ndim=2. k must be in (0, vocab_size].
+    k <= NUM_LANES.
   """
-  # Shape validations
-  if logits.ndim != 2:
-    raise ValueError(f"Requires ndim=2, got ndim={logits.ndim}")
-
-  if k <= 0:
-    raise ValueError(f"Requires k>0, got k={k}")
-
-  num_tokens, vocab_size = logits.shape
-  if k > vocab_size:
-    raise ValueError(f"Requires k<={vocab_size}, got k={k}")
+  if k <= 0 or k > NUM_LANES:
+    raise ValueError(f"Requires 0 < k <= {NUM_LANES}, got k={k}")
 
   return top_dynamic_k(
     logits,

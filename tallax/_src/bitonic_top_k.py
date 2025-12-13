@@ -380,36 +380,13 @@ def bitonic_top_k(
         ValueError: If k > NUM_LANES
 
     Limitations:
-        - Only supports k <= NUM_LANES (128). For k > 128, use tax.top_k instead.
-        - Only descending=True is currently implemented (see bitonic_top_k_refs line 330-331)
-        - Requires ndim=2, k in (0, vocab_size]
-        - Total elements (dim0 * dim1) must be >= NUM_SUBLANES * NUM_LANES after padding
+        - k <= NUM_LANES (128). For k > 128, use tax.top_k.
+        - Only descending=True currently implemented.
     """
     operands, unpadded_shape = canonicalize_operand(operand)
 
-    # Shape validations
-    if operands[0].ndim != 2:
-      raise ValueError(f"Requires ndim=2, got ndim={operands[0].ndim}")
-
-    if k <= 0:
-      raise ValueError(f"Requires k>0, got k={k}")
-
-    vocab_size = unpadded_shape[1]
-    if k > vocab_size:
-      raise ValueError(f"Requires k<={vocab_size}, got k={k}")
-
-    if k > NUM_LANES:
-      raise ValueError(
-          f"Requires k<={NUM_LANES}, got k={k}"
-      )
-
-    if num_keys < 1:
-      raise ValueError(f"Requires num_keys>=1, got num_keys={num_keys}")
-
-    if num_keys > len(operands):
-      raise ValueError(
-        f"Requires num_keys<={len(operands)}, got num_keys={num_keys}"
-      )
+    if k <= 0 or k > NUM_LANES:
+      raise ValueError(f"Requires 0 < k <= {NUM_LANES}, got k={k}")
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape
