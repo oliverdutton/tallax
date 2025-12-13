@@ -382,15 +382,8 @@ def bitonic_top_k(
     Limitations:
         - Only supports k <= NUM_LANES (128). For k > 128, use tax.top_k instead.
         - Only descending=True is currently implemented (see bitonic_top_k_refs line 330-331)
-        - Requires 2D input arrays after canonicalization
+        - Requires 2D arrays with k in (0, vocab_size]
         - Total elements (dim0 * dim1) must be >= NUM_SUBLANES * NUM_LANES after padding
-
-    Note - Shape validations (raise ValueError):
-        - operand.ndim != 2: Arrays must be 2-dimensional
-        - k <= 0: k must be positive
-        - k > vocab_size: k cannot exceed vocabulary size
-        - num_keys < 1: Must have at least one sort key
-        - num_keys > len(operands): num_keys cannot exceed number of operands
     """
     operands, unpadded_shape = canonicalize_operand(operand)
 

@@ -792,13 +792,8 @@ def sort(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
 
-  Note - Shape validations (raise ValueError):
-    - operand.ndim != 2: Arrays must be 2-dimensional
-    - shape[0] == 0 or shape[1] == 0: Arrays must be non-empty
-    - num_keys < 1: Must have at least one sort key
-    - num_keys > len(operands): num_keys cannot exceed number of operands
-    - block_token not power of 2: Must be power of 2 between NUM_SUBLANES and NUM_LANES
-    - block_token < NUM_SUBLANES or block_token > NUM_LANES: Invalid block_token range
+  Note:
+    Requires 2D non-empty arrays. block_token must be power of 2 in [NUM_SUBLANES, NUM_LANES].
   """
   operands, shape = canonicalize_operand(operand)
 

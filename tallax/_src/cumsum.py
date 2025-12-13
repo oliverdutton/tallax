@@ -90,10 +90,8 @@ def cumsum(
   Returns:
       Cumulative sum array.
 
-  Note - Shape validations (raise ValueError):
-    - arr.ndim != 2: Array must be 2-dimensional
-    - axis not in (0, 1, -1, -2): Invalid axis for 2D array
-    - arr.shape[0] == 0 or arr.shape[1] == 0: Array must be non-empty
+  Note:
+    Requires 2D non-empty array. axis must be 0, 1, -1, or -2.
   """
   # Shape validations
   if arr.ndim != 2:
