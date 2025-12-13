@@ -21,12 +21,12 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
         Sorted array.
 
     Note:
-        axis must be -1 or last dimension.
+        axis must be last dimension.
     """
     if axis is not None:
         canonical_axis = axis if axis >= 0 else axis + a.ndim
         if canonical_axis != a.ndim - 1:
-            raise ValueError(f"Requires axis=-1 or axis=ndim-1, got axis={axis}")
+            raise ValueError(f"Requires last dimension, got axis={axis}")
 
     if axis is None:
         a_work = a.ravel()
@@ -72,12 +72,12 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
         Array of indices.
 
     Note:
-        axis must be -1 or last dimension.
+        axis must be last dimension.
     """
     if axis is not None:
         canonical_axis = axis if axis >= 0 else axis + a.ndim
         if canonical_axis != a.ndim - 1:
-            raise ValueError(f"Requires axis=-1 or axis=ndim-1, got axis={axis}")
+            raise ValueError(f"Requires last dimension, got axis={axis}")
 
     if axis is None:
         a_work = a.ravel()
