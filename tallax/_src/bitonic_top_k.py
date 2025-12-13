@@ -385,7 +385,7 @@ def bitonic_top_k(
         - Requires 2D input arrays after canonicalization
         - Total elements (dim0 * dim1) must be >= NUM_SUBLANES * NUM_LANES after padding
 
-    Note - Missing shape validations (should raise ValueError):
+    Note - Shape validations (raise ValueError):
         - operand.ndim != 2: Arrays must be 2-dimensional
         - k <= 0: k must be positive
         - k > vocab_size: k cannot exceed vocabulary size

@@ -20,7 +20,7 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
     Returns:
         Sorted array.
 
-    Note - Missing shape validations (should raise ValueError):
+    Note - Shape validations (raise ValueError):
         - a.ndim == 0: Cannot sort scalar arrays
         - a.size == 0: Cannot sort empty arrays
         - axis is not None and axis != -1 and axis != a.ndim - 1: Only last axis supported
@@ -89,7 +89,7 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
     Returns:
         Array of indices.
 
-    Note - Missing shape validations (should raise ValueError):
+    Note - Shape validations (raise ValueError):
         - a.ndim == 0: Cannot argsort scalar arrays
         - a.size == 0: Cannot argsort empty arrays
         - axis is not None and axis != -1 and axis != a.ndim - 1: Only last axis supported
@@ -151,7 +151,7 @@ def take_along_axis(arr, indices, axis, interpret=False):
     Returns:
         Array with selected values.
 
-    Note - Missing shape validations (should raise ValueError):
+    Note - Shape validations (raise ValueError):
         - arr.ndim != indices.ndim: Arrays must have same number of dimensions
         - arr.shape[i] != indices.shape[i] for i != axis: Non-axis dimensions must match
         - axis < -arr.ndim or axis >= arr.ndim: Invalid axis value
