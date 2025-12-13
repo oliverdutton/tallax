@@ -191,6 +191,12 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
 
     Returns:
         List of JAX arrays of shape (original_dim0, k) with top-k elements
+
+    Limitations:
+        - Only supports k <= NUM_LANES (128)
+        - Requires dim0 <= NUM_LANES after padding (enforced at line 209)
+        - Total elements must satisfy alignment requirements for sublane transpose
+        - Works best when dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES
     """
     if k > NUM_LANES:
       raise NotImplementedError
@@ -350,12 +356,7 @@ def bitonic_top_k(
     """
     Compute top-k using bitonic sort in sublane transposed format.
 
-    Optimized for k=NUM_LANES=128 only. Works entirely in sublane transposed
-    format for maximum TPU efficiency. Supports multiple operands like sort().
-
-    Supports arbitrary input shapes - padding is handled automatically:
-    - For small inputs (prod < NUM_LANES2): pads dim0 to make prod = NUM_LANES2
-    - For larger inputs: pads both dims minimally to satisfy alignment
+    Supports 2D inputs, sorted descending for k<=NUM_LANES=128 only. Supports multiple operands like sort().
 
     Args:
         operand: Input array(s) of shape [num_tokens, vocab_size].
@@ -369,16 +370,11 @@ def bitonic_top_k(
     Returns:
         Tuple of arrays (same length as input operands):
             - Each array has shape [num_tokens, k]
-
-    Raises:
-        ValueError: If k != NUM_LANES
     """
-    if k > NUM_LANES:
-      raise ValueError(
-          f"bitonic_topk only supports k<=NUM_LANES={NUM_LANES}, got k={k}"
-      )
-
     operands, unpadded_shape = canonicalize_operand(operand)
+
+    if k <= 0 or k > NUM_LANES:
+      raise ValueError(f"Requires 0 < k <= {NUM_LANES}, got k={k}")
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape

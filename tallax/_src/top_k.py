@@ -429,14 +429,14 @@ def top_dynamic_k(
           Tuple of (topk_vals, topk_idxs):
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
+
+  Note:
+    max_k <= min(NUM_LANES, vocab_size) for compilation. All k <= max_k at runtime.
   """
   num_tokens, vocab_size = logits.shape
 
-  if num_tokens % block_token != 0:
-    raise ValueError("num_tokens must be divisible by block_token")
-    
-  if max_k > NUM_LANES:
-    raise NotImplementedError
+  if max_k <= 0 or max_k > min(NUM_LANES, vocab_size):
+    raise ValueError(f"Requires 0 < max_k <= {min(NUM_LANES, vocab_size)}, got max_k={max_k}")
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
@@ -553,7 +553,13 @@ def top_k(
       Tuple of (topk_vals, topk_idxs):
           - topk_vals: Top-k values of shape [num_tokens, k].
           - topk_idxs: Top-k indices of shape [num_tokens, k].
+
+  Note:
+    k <= NUM_LANES.
   """
+  if k <= 0 or k > NUM_LANES:
+    raise ValueError(f"Requires 0 < k <= {NUM_LANES}, got k={k}")
+
   return top_dynamic_k(
     logits,
     k=k,

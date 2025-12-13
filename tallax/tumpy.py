@@ -19,17 +19,20 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
 
     Returns:
         Sorted array.
+
+    Note:
+        axis must be last dimension.
     """
+    if axis is not None:
+        canonical_axis = axis if axis >= 0 else axis + a.ndim
+        if canonical_axis != a.ndim - 1:
+            raise ValueError(f"Requires last dimension, got axis={axis}")
+
     if axis is None:
         a_work = a.ravel()
         target_shape = a_work.shape
         sort_dim_size = a_work.size
     else:
-        ndim = a.ndim
-        canonical_axis = axis if axis >= 0 else axis + ndim
-        if canonical_axis != ndim - 1:
-            raise ValueError("tumpy only supports sorting along the last axis.")
-
         a_work = a
         target_shape = a.shape
         sort_dim_size = a.shape[-1]
@@ -67,17 +70,20 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
 
     Returns:
         Array of indices.
+
+    Note:
+        axis must be last dimension.
     """
+    if axis is not None:
+        canonical_axis = axis if axis >= 0 else axis + a.ndim
+        if canonical_axis != a.ndim - 1:
+            raise ValueError(f"Requires last dimension, got axis={axis}")
+
     if axis is None:
         a_work = a.ravel()
         target_shape = a_work.shape
         sort_dim_size = a_work.size
     else:
-        ndim = a.ndim
-        canonical_axis = axis if axis >= 0 else axis + ndim
-        if canonical_axis != ndim - 1:
-            raise ValueError("tumpy only supports sorting along the last axis.")
-
         a_work = a
         target_shape = a.shape
         sort_dim_size = a.shape[-1]
@@ -108,5 +114,13 @@ def take_along_axis(arr, indices, axis, interpret=False):
 
     Returns:
         Array with selected values.
+
+    Note:
+        Non-axis dimensions must match between arr and indices.
     """
+    normalized_axis = axis if axis >= 0 else axis + arr.ndim
+    for i in range(arr.ndim):
+        if i != normalized_axis and arr.shape[i] != indices.shape[i]:
+            raise ValueError(f"arr.shape[{i}]={arr.shape[i]} != indices.shape[{i}]={indices.shape[i]}")
+
     return _take_along_axis(arr, indices, axis, interpret=interpret)

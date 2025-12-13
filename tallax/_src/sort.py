@@ -791,8 +791,17 @@ def sort(
 
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
+
+  Note:
+    block_token must be 2^n in [NUM_SUBLANES, NUM_LANES].
   """
   operands, shape = canonicalize_operand(operand)
+
+  # Validate block_token
+  if block_token is not None:
+    if block_token & (block_token - 1) != 0 or block_token < NUM_SUBLANES or block_token > NUM_LANES:
+      raise ValueError(f"Requires block_token=2^n in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}")
+
   num_stages = log2(shape[1])
 
   if (shape[1] != 2**num_stages and

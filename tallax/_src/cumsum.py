@@ -89,7 +89,14 @@ def cumsum(
 
   Returns:
       Cumulative sum array.
+
+  Note:
+    axis must be 0, 1, -1, or -2.
   """
+  normalized_axis = axis if axis >= 0 else axis + arr.ndim
+  if normalized_axis not in (0, 1):
+    raise ValueError(f"Requires axis in {{0,1,-1,-2}}, got axis={axis}")
+
   return pl.pallas_call(
       functools.partial(
         cumsum_refs,
