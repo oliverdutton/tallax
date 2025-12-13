@@ -429,6 +429,13 @@ def top_dynamic_k(
           Tuple of (topk_vals, topk_idxs):
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
+
+  Note - Missing shape validations (should raise ValueError):
+    - logits.ndim != 2: Logits must be 2-dimensional
+    - max_k <= 0: max_k must be positive
+    - max_k > vocab_size: max_k cannot exceed vocabulary size
+    - k values < 0: All k values must be non-negative
+    - k values > max_k: All k values must be <= max_k
   """
   num_tokens, vocab_size = logits.shape
 
@@ -553,6 +560,11 @@ def top_k(
       Tuple of (topk_vals, topk_idxs):
           - topk_vals: Top-k values of shape [num_tokens, k].
           - topk_idxs: Top-k indices of shape [num_tokens, k].
+
+  Note - Missing shape validations (should raise ValueError):
+    - logits.ndim != 2: Logits must be 2-dimensional
+    - k <= 0: k must be positive
+    - k > vocab_size: k cannot exceed vocabulary size
   """
   return top_dynamic_k(
     logits,

@@ -791,6 +791,14 @@ def sort(
 
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
+
+  Note - Missing shape validations (should raise ValueError):
+    - operand.ndim != 2: Arrays must be 2-dimensional
+    - shape[0] == 0 or shape[1] == 0: Arrays must be non-empty
+    - num_keys < 1: Must have at least one sort key
+    - num_keys > len(operands): num_keys cannot exceed number of operands
+    - block_token not power of 2: Must be power of 2 between NUM_SUBLANES and NUM_LANES
+    - block_token < NUM_SUBLANES or block_token > shape[0]: Invalid block_token range
   """
   operands, shape = canonicalize_operand(operand)
   num_stages = log2(shape[1])

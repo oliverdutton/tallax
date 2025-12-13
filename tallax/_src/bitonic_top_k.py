@@ -191,6 +191,12 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
 
     Returns:
         List of JAX arrays of shape (original_dim0, k) with top-k elements
+
+    Limitations:
+        - Only supports k <= NUM_LANES (128)
+        - Requires dim0 <= NUM_LANES after padding (enforced at line 209)
+        - Total elements must satisfy alignment requirements for sublane transpose
+        - Works best when dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES
     """
     if k > NUM_LANES:
       raise NotImplementedError
@@ -371,7 +377,20 @@ def bitonic_top_k(
             - Each array has shape [num_tokens, k]
 
     Raises:
-        ValueError: If k != NUM_LANES
+        ValueError: If k > NUM_LANES
+
+    Limitations:
+        - Only supports k <= NUM_LANES (128). For k > 128, use tax.top_k instead.
+        - Only descending=True is currently implemented (see bitonic_top_k_refs line 330-331)
+        - Requires 2D input arrays after canonicalization
+        - Total elements (dim0 * dim1) must be >= NUM_SUBLANES * NUM_LANES after padding
+
+    Note - Missing shape validations (should raise ValueError):
+        - operand.ndim != 2: Arrays must be 2-dimensional
+        - k <= 0: k must be positive
+        - k > vocab_size: k cannot exceed vocabulary size
+        - num_keys < 1: Must have at least one sort key
+        - num_keys > len(operands): num_keys cannot exceed number of operands
     """
     if k > NUM_LANES:
       raise ValueError(

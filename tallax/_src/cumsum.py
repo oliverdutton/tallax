@@ -89,6 +89,11 @@ def cumsum(
 
   Returns:
       Cumulative sum array.
+
+  Note - Missing shape validations (should raise ValueError):
+    - arr.ndim != 2: Array must be 2-dimensional (currently enforced by assertion at line 38)
+    - axis not in (0, 1, -1, -2): Invalid axis for 2D array
+    - arr.shape[0] == 0 or arr.shape[1] == 0: Array must be non-empty
   """
   return pl.pallas_call(
       functools.partial(
