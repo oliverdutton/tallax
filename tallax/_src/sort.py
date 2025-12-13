@@ -705,7 +705,7 @@ def _run_array_substage_on_hbm_refs(
     jax.jit,
     static_argnames=('block_shape', 'num_keys', 'descending', 'interpret')
 )
-def _run_array_substage_on_hbm(
+def _run_array_substage_in_hbm(
     operand,
     substage,
     stage,
@@ -862,7 +862,7 @@ def sort(
       """Execute complete sorting stage (HBM + VMEM)."""
       def _compute_substages_hbm_body(i, operands):
         substage = stage - 1 - i
-        return _run_array_substage_on_hbm(
+        return _run_array_substage_in_hbm(
             operands, substage, stage, num_keys=num_keys, descending=descending,
             interpret=interpret
         )
