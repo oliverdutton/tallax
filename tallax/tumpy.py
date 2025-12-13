@@ -43,11 +43,6 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
         target_shape = a_work.shape
         sort_dim_size = a_work.size
     else:
-        ndim = a.ndim
-        canonical_axis = axis if axis >= 0 else axis + ndim
-        if canonical_axis != ndim - 1:
-            raise ValueError("tumpy only supports sorting along the last axis.")
-
         a_work = a
         target_shape = a.shape
         sort_dim_size = a.shape[-1]
@@ -109,11 +104,6 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
         target_shape = a_work.shape
         sort_dim_size = a_work.size
     else:
-        ndim = a.ndim
-        canonical_axis = axis if axis >= 0 else axis + ndim
-        if canonical_axis != ndim - 1:
-            raise ValueError("tumpy only supports sorting along the last axis.")
-
         a_work = a
         target_shape = a.shape
         sort_dim_size = a.shape[-1]
