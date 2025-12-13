@@ -278,7 +278,7 @@ def create_bit_indicator(bit_position: int, index=None):
   return (index >> bit_position) & 1
 
 
-def convert_to_sublane_sort_format(arr):
+def to_compressed_transpose_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
   nelems = arr.shape[0] * arr.shape[1]
   assert (nelems % NUM_LANES**2) == 0
@@ -291,7 +291,7 @@ def convert_to_sublane_sort_format(arr):
   return tiles
 
 
-def convert_from_sublane_sort_format(tiles, dim0):
+def from_compressed_transpose_format(tiles, dim0):
   """Convert from sublane format back to original layout."""
   dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
   arr = join_tiles_to_array(

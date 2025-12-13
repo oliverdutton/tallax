@@ -31,12 +31,12 @@ from tallax._src.utils import (
     pad,
     canonicalize_operand,
     transpose_list_of_lists,
-    convert_to_sublane_sort_format,
-    convert_from_sublane_sort_format,
+    to_compressed_transpose_format,
+    from_compressed_transpose_format,
     to_32bit_dtype,
 )
 from tallax._src.sort import (
-    _sort_subtile_substages,
+    run_compressed_transpose_format_substages_on_tiles,
     compare_and_swap,
 )
 
@@ -203,7 +203,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
 
     def _topk_arrays(arrs):
       # Convert to sublane transposed format
-      arrs_tiles = [convert_to_sublane_sort_format(arr) for arr in arrs]
+      arrs_tiles = [to_compressed_transpose_format(arr) for arr in arrs]
 
       dim0 = arrs[0].shape[0]
       assert dim0 <= NUM_LANES
@@ -215,7 +215,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
   
       # Build bitonic sequences up to length 64 (stage 6)
       for stage in range(1, log_lanes):  # stages 1-6 inclusive
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=stage,
           stage=stage,
@@ -299,7 +299,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
         num_keys=num_keys,
       )
   
-      return [convert_from_sublane_sort_format(
+      return [from_compressed_transpose_format(
         tiles, dim0=dim0) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
     return [

@@ -22,8 +22,8 @@ from tallax._src.utils import (
     join_tiles_to_array,
     iota_tile,
     create_bit_indicator,
-    convert_to_sublane_sort_format,
-    convert_from_sublane_sort_format,
+    to_compressed_transpose_format,
+    from_compressed_transpose_format,
     transpose_list_of_lists,
     to_32bit_dtype,
     same_shape_dtype,
@@ -248,7 +248,7 @@ def _run_compressed_transpose_format_substages_on_refs(
     arrs = [pad(ref_slice[...], block_shape=(
         pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
     dim0 = arrs[0].shape[0]
-    arrs_tiles = jax.tree.map(convert_to_sublane_sort_format, arrs)
+    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
 
     arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
@@ -260,7 +260,7 @@ def _run_compressed_transpose_format_substages_on_refs(
     )
 
     outs = [
-        convert_from_sublane_sort_format(tiles, dim0=dim0)[:slice_shape[0]]
+        from_compressed_transpose_format(tiles, dim0=dim0)[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
 
