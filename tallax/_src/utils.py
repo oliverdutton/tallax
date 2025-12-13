@@ -292,7 +292,7 @@ def to_compressed_transpose_format(arr):
 
 
 def from_compressed_transpose_format(tiles, dim0):
-  """Convert from sublane format back to original layout."""
+  """Convert from compressed transpose format back to original layout."""
   dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
   arr = join_tiles_to_array(
       (NUM_LANES, (dim0 * dim1) // NUM_LANES),

@@ -1,11 +1,11 @@
 """
-Bitonic Top-K for k=NUM_LANES=128 using sublane transposed format.
+Bitonic Top-K for k=NUM_LANES=128 using compressed transpose format.
 
 This implementation is optimized for TPU with k=128 and works entirely in
-sublane transposed format to maximize efficiency of permutation operations.
+compressed transpose format to maximize efficiency of permutation operations.
 
 Algorithm:
-- Convert input to sublane transposed format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
+- Convert input to compressed transpose format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
 - Build bitonic sequences using stages 1-6 (so sorted in 64 length chunks)
 - Cross-tile merge with max selection, reducing tile count
 - Progressive lane permute merging with decreasing distances
@@ -120,9 +120,9 @@ def _merge_remainder(merged, remainder):
 
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
-  """Compute padded shape compatible with sublane format transpose requirements.
+  """Compute padded shape compatible with compressed transpose format requirements.
 
-  The sublane format transpose requires the total number of elements (dim0 * dim1)
+  The compressed transpose format requires the total number of elements (dim0 * dim1)
   to be a multiple of NUM_LANES^2 (128^2 = 16384). This function finds the minimal
   padded shape that satisfies this constraint while keeping dim0 as a power of 2 between NUM_SUBLANES and NUM_LANES.
 
@@ -131,7 +131,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
     unpadded_dim1: Original second dimension size
 
   Returns:
-    Tuple of (padded_dim0, padded_dim1) compatible with sublane transpose
+    Tuple of (padded_dim0, padded_dim1) compatible with compressed transpose format
   """
   if unpadded_dim0 >= NUM_LANES:
     dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
@@ -202,7 +202,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     def _topk_arrays(arrs):
-      # Convert to sublane transposed format
+      # Convert to compressed transpose format
       arrs_tiles = [to_compressed_transpose_format(arr) for arr in arrs]
 
       dim0 = arrs[0].shape[0]
@@ -318,13 +318,13 @@ def bitonic_top_k_refs(
     descending: bool,
 ):
     """
-    Pallas kernel for bitonic top-k with k=128 in sublane format.
+    Pallas kernel for bitonic top-k with k=128 in compressed transpose format.
 
     Algorithm:
     1. Pad input to satisfy alignment requirements
-    2. Convert to sublane transposed format: (num_tokens, vocab) -> (128, num_tokens*chunks)
+    2. Convert to compressed transpose format: (num_tokens, vocab) -> (128, num_tokens*chunks)
     3. Run bitonic top-k stages to select top 128 values per token
-    4. Convert back from sublane format
+    4. Convert back from compressed transpose format
     5. Unpad and extract top-128 per token
     """
     if not descending:
@@ -348,9 +348,9 @@ def bitonic_top_k(
     interpret: bool = False,
 ) -> tuple[jax.Array, ...]:
     """
-    Compute top-k using bitonic sort in sublane transposed format.
+    Compute top-k using bitonic sort in compressed transpose format.
 
-    Optimized for k=NUM_LANES=128 only. Works entirely in sublane transposed
+    Optimized for k=NUM_LANES=128 only. Works entirely in compressed transpose
     format for maximum TPU efficiency. Supports multiple operands like sort().
 
     Supports arbitrary input shapes - padding is handled automatically:
