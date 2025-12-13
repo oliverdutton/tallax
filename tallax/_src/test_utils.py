@@ -10,7 +10,7 @@ import pytest
 
 from tallax import tax
 from tallax._src.utils import is_cpu_platform
-from tallax._src.sort import sort_xla_equivalent
+from tallax._src.sort import xla_equivalent_sort
 
 
 @jax.jit
@@ -48,7 +48,7 @@ def verify_sort_output(
   if is_stable:
     # Exact match required for stable sort
     kwargs_for_xla = kwargs.copy()
-    out_xla = sort_xla_equivalent(operand, **kwargs_for_xla)
+    out_xla = xla_equivalent_sort(operand, **kwargs_for_xla)
     valid = bool(exact_match(out_pallas, out_xla))
 
     if not valid:
@@ -67,7 +67,7 @@ def verify_sort_output(
 
   else:
     # Check output is valid permutation with correct relative order
-    out_pallas_stable_sorted = sort_xla_equivalent(
+    out_pallas_stable_sorted = xla_equivalent_sort(
         out_pallas,
         num_keys=num_keys,
         is_stable=True,
@@ -91,10 +91,10 @@ def verify_sort_output(
 
     narrs = len(out_pallas)
     kwargs_for_xla = kwargs.copy()
-    operands_fully_sorted = sort_xla_equivalent(
+    operands_fully_sorted = xla_equivalent_sort(
         operand, **{**kwargs_for_xla, 'num_keys': narrs}
     )
-    out_pallas_fully_sorted = sort_xla_equivalent(
+    out_pallas_fully_sorted = xla_equivalent_sort(
         out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
     )
     valid_permute = bool(exact_match(operands_fully_sorted, out_pallas_fully_sorted))
@@ -102,7 +102,7 @@ def verify_sort_output(
     valid &= valid_permute
 
   if print_outputs:
-    o_pallas, o_xla = sort_xla_equivalent(operand, **kwargs)
+    o_pallas, o_xla = xla_equivalent_sort(operand, **kwargs)
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 

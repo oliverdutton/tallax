@@ -22,8 +22,8 @@ from tallax._src.utils import (
     join_tiles_to_array,
     iota_tile,
     create_bit_indicator,
-    convert_to_sublane_sort_format,
-    convert_from_sublane_sort_format,
+    to_compressed_transpose_format,
+    from_compressed_transpose_format,
     transpose_list_of_lists,
     to_32bit_dtype,
     same_shape_dtype,
@@ -102,9 +102,175 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
   )
 
 
+### Within-Tile Substages
+
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
+  """Perform substage using sublane permutation or cross-tile comparison."""
+
+  def _compute_pair_slice_start_index(i, separation, slice_length=1):
+    """Compute start index for pair-wise array slicing."""
+    if slice_length > separation:
+      raise ValueError(
+          f'Separation must be at least slice length, {separation=} {slice_length=}'
+      )
+    slices_per_pair = separation // slice_length
+    pair_idx = i // slices_per_pair
+    slice_idx = i % slices_per_pair
+    return pair_idx * 2 * separation + slice_idx * slice_length
+
+  assert dim0 <= NUM_LANES
+  global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
+  num_tiles = len(arrs_tiles[0])
+  tile_rows = NUM_LANES // NUM_SUBLANES
+  tile_cols = num_tiles // tile_rows
+
+  def compute_is_descending(idx):
+    tile_offset = ((idx // tile_cols) * NUM_SUBLANES +
+                   (idx % tile_cols) * (NUM_LANES * (NUM_LANES // dim0)))
+    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
+    if type(stage) == int:
+      if stage < log2(NUM_SUBLANES):
+        return create_bit_indicator(stage, global_base_index)
+      elif stage < log2(NUM_LANES):
+        return create_bit_indicator(stage, tile_offset)
+    return is_desc
+
+  outs_tiles = [[None for _ in t] for t in arrs_tiles]
+
+  if substage < log2(NUM_SUBLANES):
+    # Sublane permutation
+    permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
+    arrs_tiles_permuted = jax.tree.map(
+        lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
+    )
+    is_right_half = create_bit_indicator(substage, iota_tile(0))
+    for idx, (lefts, rights) in enumerate(zip(
+        *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
+    )):
+      for arr_idx, out in enumerate(compare_and_swap(
+          lefts, rights, is_descending=compute_is_descending(idx),
+          is_right_half=is_right_half, num_keys=num_keys
+      )):
+        outs_tiles[arr_idx][idx] = out
+  else:
+    # Compare tiles
+    separation = (2**substage // NUM_SUBLANES) * tile_cols
+    for i in range(num_tiles // 2):
+      idx = _compute_pair_slice_start_index(i, separation=separation)
+      lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
+      for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
+          lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
+      )):
+        outs_tiles[arr_idx][idx] = out_left
+        outs_tiles[arr_idx][idx + separation] = out_right
+
+  assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
+  return outs_tiles
+
+
+def run_compressed_transpose_format_substages_on_tiles(
+    arrs_tiles,
+    num_substages: int,
+    stage: int,
+    dim0: int,
+    num_keys: int,
+    dim1_offset: int = 0,
+):
+  """Execute multiple substages within tiles."""
+  assert num_substages <= log2(NUM_LANES)
+
+  def _sort_tile_stage(arrs_tiles, stage, num_substages):
+    for substage in range(num_substages)[::-1]:
+      arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
+          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
+          stage=stage, num_keys=num_keys
+      )
+    return arrs_tiles
+
+  if stage is not None:
+    # Run single stage
+    arrs_tiles = _sort_tile_stage(
+        arrs_tiles,
+        num_substages=num_substages,
+        stage=stage,
+    )
+  else:
+    # Run all stages 1 to num_substages (allows compiler fusion)
+    num_stages = num_substages
+    for stage_ in range(1, num_stages + 1):
+      arrs_tiles = _sort_tile_stage(
+          arrs_tiles,
+          num_substages=stage_,
+          stage=stage_,
+      )
+
+  return arrs_tiles
+
+
+def _run_compressed_transpose_format_substages_on_refs(
+    refs,
+    *,
+    num_substages: int,
+    stage: int,
+    num_keys: int,
+    unroll: int = 256,
+    dim1_offset: int = 0,
+    slice_dim1: int = None,
+):
+  """Orchestrate subtile sorting with proper blocking."""
+  shape = refs[0].shape
+  if slice_dim1 is None:
+    slice_dim1 = min(unroll * NUM_LANES, shape[1])
+
+  unroll_dim0 = (unroll * NUM_LANES) // slice_dim1
+  slice_dim0 = min(unroll_dim0 * NUM_SUBLANES, shape[0])
+  unroll = (slice_dim0 * slice_dim1) // (NUM_SUBLANES * NUM_LANES)
+
+  grid_dim0 = shape[0] // slice_dim0
+  grid_dim1 = shape[1] // slice_dim1
+
+  @pl.loop(0, grid_dim0 * grid_dim1)
+  def process_block(loop_idx):
+    block_row = loop_idx // grid_dim1
+    block_col = loop_idx % grid_dim1
+
+    ref_slices = [
+        ref.at[
+            pl.dslice(block_row * slice_dim0, slice_dim0),
+            pl.dslice(block_col * slice_dim1, slice_dim1)
+        ]
+        for ref in refs
+    ]
+
+    slice_shape = ref_slices[0].shape
+
+    # pad in dim0 (if needed)
+    arrs = [pad(ref_slice[...], block_shape=(
+        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
+    dim0 = arrs[0].shape[0]
+    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
+
+    arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+        arrs_tiles,
+        stage=stage,
+        num_substages=num_substages,
+        dim1_offset=dim1_offset + (block_col * slice_dim1),
+        dim0=dim0,
+        num_keys=num_keys,
+    )
+
+    outs = [
+        from_compressed_transpose_format(tiles, dim0=dim0)[:slice_shape[0]]
+        for tiles in arrs_tiles
+    ]
+
+    for ref_slice, out in zip(ref_slices, outs, strict=True):
+      ref_slice[...] = out
+
+
 ### Cross-Tile Substage
 
-def _sort_crosstile_substage(
+def _run_array_substage_on_refs(
     refs,
     substage: int,
     stage: int,
@@ -158,193 +324,44 @@ def _sort_crosstile_substage(
       ref_slice[...] = jnp.concatenate(out, axis=-1)
 
 
-### Within-Tile Substages
-
-def _compute_pair_slice_start_index(i, separation, slice_length=1):
-  """Compute start index for pair-wise array slicing."""
-  if slice_length > separation:
-    raise ValueError(
-        f'Separation must be at least slice length, {separation=} {slice_length=}'
-    )
-  slices_per_pair = separation // slice_length
-  pair_idx = i // slices_per_pair
-  slice_idx = i % slices_per_pair
-  return pair_idx * 2 * separation + slice_idx * slice_length
-
-
-def _sort_substage(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
-  """Perform substage using sublane permutation or cross-tile comparison."""
-  assert dim0 <= NUM_LANES
-  global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
-  num_tiles = len(arrs_tiles[0])
-  tile_rows = NUM_LANES // NUM_SUBLANES
-  tile_cols = num_tiles // tile_rows
-
-  def compute_is_descending(idx):
-    tile_offset = ((idx // tile_cols) * NUM_SUBLANES +
-                   (idx % tile_cols) * (NUM_LANES * (NUM_LANES // dim0)))
-    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
-    if type(stage) == int:
-      if stage < log2(NUM_SUBLANES):
-        return create_bit_indicator(stage, global_base_index)
-      elif stage < log2(NUM_LANES):
-        return create_bit_indicator(stage, tile_offset)
-    return is_desc
-
-  outs_tiles = [[None for _ in t] for t in arrs_tiles]
-
-  if substage < log2(NUM_SUBLANES):
-    # Sublane permutation
-    permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
-    arrs_tiles_permuted = jax.tree.map(
-        lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
-    )
-    is_right_half = create_bit_indicator(substage, iota_tile(0))
-    for idx, (lefts, rights) in enumerate(zip(
-        *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
-    )):
-      for arr_idx, out in enumerate(compare_and_swap(
-          lefts, rights, is_descending=compute_is_descending(idx),
-          is_right_half=is_right_half, num_keys=num_keys
-      )):
-        outs_tiles[arr_idx][idx] = out
-  else:
-    # Compare tiles
-    separation = (2**substage // NUM_SUBLANES) * tile_cols
-    for i in range(num_tiles // 2):
-      idx = _compute_pair_slice_start_index(i, separation=separation)
-      lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
-      for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
-          lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
-      )):
-        outs_tiles[arr_idx][idx] = out_left
-        outs_tiles[arr_idx][idx + separation] = out_right
-
-  assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
-  return outs_tiles
-
-
-def _sort_subtile_substages(
-    arrs_tiles,
-    num_substages: int,
-    stage: int,
-    dim0: int,
-    num_keys: int,
-    dim1_offset: int = 0,
-):
-  """Execute multiple substages within tiles."""
-  assert num_substages <= log2(NUM_LANES)
-
-  def _sort_tile_stage(arrs_tiles, stage, num_substages):
-    for substage in range(num_substages)[::-1]:
-      arrs_tiles = _sort_substage(
-          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
-          stage=stage, num_keys=num_keys
-      )
-    return arrs_tiles
-
-  if stage is not None:
-    # Run single stage
-    arrs_tiles = _sort_tile_stage(
-        arrs_tiles,
-        num_substages=num_substages,
-        stage=stage,
-    )
-  else:
-    # Run all stages 1 to num_substages (allows compiler fusion)
-    num_stages = num_substages
-    for stage_ in range(1, num_stages + 1):
-      arrs_tiles = _sort_tile_stage(
-          arrs_tiles,
-          num_substages=stage_,
-          stage=stage_,
-      )
-
-  return arrs_tiles
-
-
-def _sort_subtile_substages_refs(
-    refs,
-    *,
-    num_substages: int,
-    stage: int,
-    num_keys: int,
-    unroll: int = 256,
-    dim1_offset: int = 0,
-    slice_dim1: int = None,
-):
-  """Orchestrate subtile sorting with proper blocking."""
-  shape = refs[0].shape
-  if slice_dim1 is None:
-    slice_dim1 = min(unroll * NUM_LANES, shape[1])
-
-  unroll_dim0 = (unroll * NUM_LANES) // slice_dim1
-  slice_dim0 = min(unroll_dim0 * NUM_SUBLANES, shape[0])
-  unroll = (slice_dim0 * slice_dim1) // (NUM_SUBLANES * NUM_LANES)
-
-  grid_dim0 = shape[0] // slice_dim0
-  grid_dim1 = shape[1] // slice_dim1
-
-  @pl.loop(0, grid_dim0 * grid_dim1)
-  def process_block(loop_idx):
-    block_row = loop_idx // grid_dim1
-    block_col = loop_idx % grid_dim1
-
-    ref_slices = [
-        ref.at[
-            pl.dslice(block_row * slice_dim0, slice_dim0),
-            pl.dslice(block_col * slice_dim1, slice_dim1)
-        ]
-        for ref in refs
-    ]
-
-    slice_shape = ref_slices[0].shape
-
-    # pad in dim0 (if needed)
-    arrs = [pad(ref_slice[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
-    dim0 = arrs[0].shape[0]
-    arrs_tiles = jax.tree.map(convert_to_sublane_sort_format, arrs)
-
-    arrs_tiles = _sort_subtile_substages(
-        arrs_tiles,
-        stage=stage,
-        num_substages=num_substages,
-        dim1_offset=dim1_offset + (block_col * slice_dim1),
-        dim0=dim0,
-        num_keys=num_keys,
-    )
-
-    outs = [
-        convert_from_sublane_sort_format(tiles, dim0=dim0)[:slice_shape[0]]
-        for tiles in arrs_tiles
-    ]
-
-    for ref_slice, out in zip(ref_slices, outs, strict=True):
-      ref_slice[...] = out
-
-
 ### Stage Execution
 
-def _sort_stages(
-    start_stage: int,
-    end_stage: int,
+def _run_stages(
     refs,
+    stage_ref,
+    *,
     num_keys: int,
+    descending: bool | None = None,
+    log_n: int | None = None,
+    dim1_offset: int | None = None,
     unroll_crosstile: int = 64,
     unroll_subtile: int = 64,
-    dim1_offset: int = 0,
-    start_stage_static_lower_bound: int | None = None
 ):
-  """Execute range of bitonic sorting stages."""
-  log_n = log2(refs[0].shape[1])
+  """Execute bitonic sorting stages."""
+  # Track global index for bitonic sort order (for array sub-sorting)
+  # Second term controls whether final stage is descending or ascending
+  dim1 = refs[0].shape[1]
+  if log_n is None:
+    log_n = log2(dim1)
+  if dim1_offset is None:
+    dim1_offset = (pl.program_id(1) * dim1 +
+                   int(descending) * pl.num_programs(1) * dim1)
 
-  if start_stage_static_lower_bound is None:
-    start_stage_static_lower_bound = start_stage
+  if stage_ref is None:
+    # Execute full bitonic sort
+    start_stage = 1
+    end_stage = log_n + 1
+    start_stage_static_lower_bound = 1
+  else:
+    # Run single stage (for large arrays that don't fit in VMEM)
+    stage = stage_ref[0]
+    start_stage = stage
+    end_stage = stage + 1
+    start_stage_static_lower_bound = log_n
 
   # Run stages 1 to 7 (if large enough), compiler fused
   if start_stage_static_lower_bound == 1:
-    _sort_subtile_substages_refs(
+    _run_compressed_transpose_format_substages_on_refs(
         refs,
         num_substages=min(log2(NUM_LANES), end_stage),
         stage=None,
@@ -354,7 +371,7 @@ def _sort_stages(
     )
   elif (all_concrete_ints(start_stage, end_stage)
         and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
-    _sort_subtile_substages_refs(
+    _run_compressed_transpose_format_substages_on_refs(
         refs,
         num_substages=start_stage,
         stage=start_stage,
@@ -374,7 +391,7 @@ def _sort_stages(
       # Run substages 7 and up
       @pl.when(stage > substage)
       def _():
-        _sort_crosstile_substage(
+        _run_array_substage_on_refs(
             refs,
             substage=substage,
             stage=stage,
@@ -384,53 +401,13 @@ def _sort_stages(
         )
 
     # Run substages 0-6 inclusive
-    _sort_subtile_substages_refs(
+    _run_compressed_transpose_format_substages_on_refs(
         refs,
         num_substages=log2(NUM_LANES),
         stage=stage,
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
-    )
-
-
-### Main Bitonic Sort Kernel
-
-def bitonic_sort(
-    refs,
-    stage_ref,
-    *,
-    num_keys: int,
-    descending: bool | None = None,
-    log_n: int | None = None,
-    dim1_offset: int | None = None,
-):
-  """Core bitonic sort implementation."""
-  # Track global index for bitonic sort order (for array sub-sorting)
-  # Second term controls whether final stage is descending or ascending
-  dim1 = refs[0].shape[1]
-  if log_n is None:
-    log_n = log2(dim1)
-  if dim1_offset is None:
-    dim1_offset = (pl.program_id(1) * dim1 +
-                   int(descending) * pl.num_programs(1) * dim1)
-
-  if stage_ref is None:
-    # Execute full bitonic sort
-    _sort_stages(
-        1, log_n + 1, refs,
-        num_keys=num_keys,
-        dim1_offset=dim1_offset,
-    )
-  else:
-    # Run single stage (for large arrays that don't fit in VMEM)
-    stage = stage_ref[0]
-    _sort_stages(
-        stage, stage + 1,
-        refs,
-        num_keys=num_keys,
-        dim1_offset=dim1_offset,
-        start_stage_static_lower_bound=log_n,
     )
 
 
@@ -485,7 +462,7 @@ def _sort_refs(
     indices_ref[...] = indices
     refs.insert(num_keys, indices_ref)
 
-  bitonic_sort(
+  _run_stages(
       refs,
       stage_ref,
       descending=descending,
@@ -608,7 +585,7 @@ class _AsyncCopyGroup:
       descriptor.wait()
 
 
-def _sort_substage_in_hbm_refs(
+def _run_array_substage_on_hbm_refs(
     input_hbm_refs,
     substage_ref,
     stage_ref,
@@ -728,7 +705,7 @@ def _sort_substage_in_hbm_refs(
     jax.jit,
     static_argnames=('block_shape', 'num_keys', 'descending', 'interpret')
 )
-def _sort_substage_in_hbm(
+def _run_array_substage_in_hbm(
     operand,
     substage,
     stage,
@@ -761,7 +738,7 @@ def _sort_substage_in_hbm(
   )
 
   return pl.pallas_call(
-      functools.partial(_sort_substage_in_hbm_refs, num_keys=num_keys,
+      functools.partial(_run_array_substage_on_hbm_refs, num_keys=num_keys,
                         descending=descending),
       grid=(operands[0].shape[0] // block_shape[0],),
       out_shape=(output_shape,),
@@ -885,7 +862,7 @@ def sort(
       """Execute complete sorting stage (HBM + VMEM)."""
       def _compute_substages_hbm_body(i, operands):
         substage = stage - 1 - i
-        return _sort_substage_in_hbm(
+        return _run_array_substage_in_hbm(
             operands, substage, stage, num_keys=num_keys, descending=descending,
             interpret=interpret
         )
@@ -957,7 +934,7 @@ def sort(
     static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
                      'is_stable', 'num_keys', 'block_token', 'interpret')
 )
-def sort_xla_equivalent(
+def xla_equivalent_sort(
     operand,
     num_keys: int,
     is_stable: bool = False,
