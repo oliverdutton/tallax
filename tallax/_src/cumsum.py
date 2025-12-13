@@ -95,6 +95,18 @@ def cumsum(
     - axis not in (0, 1, -1, -2): Invalid axis for 2D array
     - arr.shape[0] == 0 or arr.shape[1] == 0: Array must be non-empty
   """
+  # Shape validations
+  if arr.ndim != 2:
+    raise ValueError(f"Array must be 2-dimensional, got {arr.ndim}D")
+
+  # Normalize axis
+  normalized_axis = axis if axis >= 0 else axis + arr.ndim
+  if normalized_axis not in (0, 1):
+    raise ValueError(f"Invalid axis {axis} for 2D array")
+
+  if arr.shape[0] == 0 or arr.shape[1] == 0:
+    raise ValueError(f"Array must be non-empty, got shape {arr.shape}")
+
   return pl.pallas_call(
       functools.partial(
         cumsum_refs,

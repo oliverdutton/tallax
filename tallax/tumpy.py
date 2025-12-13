@@ -25,6 +25,22 @@ def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, inter
         - a.size == 0: Cannot sort empty arrays
         - axis is not None and axis != -1 and axis != a.ndim - 1: Only last axis supported
     """
+    # Shape validations
+    if a.ndim == 0:
+        raise ValueError("Cannot sort scalar arrays")
+
+    if a.size == 0:
+        raise ValueError("Cannot sort empty arrays")
+
+    if axis is not None:
+        ndim = a.ndim
+        canonical_axis = axis if axis >= 0 else axis + ndim
+        if canonical_axis != ndim - 1:
+            raise ValueError(
+                f"tumpy only supports sorting along the last axis. "
+                f"Got axis={axis} (canonical: {canonical_axis}) for {ndim}D array"
+            )
+
     if axis is None:
         a_work = a.ravel()
         target_shape = a_work.shape
@@ -78,6 +94,22 @@ def argsort(a, axis=-1, kind=None, order=None, stable=True, descending=False, in
         - a.size == 0: Cannot argsort empty arrays
         - axis is not None and axis != -1 and axis != a.ndim - 1: Only last axis supported
     """
+    # Shape validations
+    if a.ndim == 0:
+        raise ValueError("Cannot argsort scalar arrays")
+
+    if a.size == 0:
+        raise ValueError("Cannot argsort empty arrays")
+
+    if axis is not None:
+        ndim = a.ndim
+        canonical_axis = axis if axis >= 0 else axis + ndim
+        if canonical_axis != ndim - 1:
+            raise ValueError(
+                f"tumpy only supports sorting along the last axis. "
+                f"Got axis={axis} (canonical: {canonical_axis}) for {ndim}D array"
+            )
+
     if axis is None:
         a_work = a.ravel()
         target_shape = a_work.shape
@@ -124,4 +156,28 @@ def take_along_axis(arr, indices, axis, interpret=False):
         - arr.shape[i] != indices.shape[i] for i != axis: Non-axis dimensions must match
         - axis < -arr.ndim or axis >= arr.ndim: Invalid axis value
     """
+    # Shape validations
+    if arr.ndim != indices.ndim:
+        raise ValueError(
+            f"Arrays must have same number of dimensions, "
+            f"got arr.ndim={arr.ndim} and indices.ndim={indices.ndim}"
+        )
+
+    # Validate axis
+    if axis < -arr.ndim or axis >= arr.ndim:
+        raise ValueError(
+            f"Invalid axis {axis} for array with {arr.ndim} dimensions"
+        )
+
+    # Normalize axis to positive
+    normalized_axis = axis if axis >= 0 else axis + arr.ndim
+
+    # Check non-axis dimensions match
+    for i in range(arr.ndim):
+        if i != normalized_axis and arr.shape[i] != indices.shape[i]:
+            raise ValueError(
+                f"Non-axis dimension {i} must match: "
+                f"arr.shape[{i}]={arr.shape[i]} != indices.shape[{i}]={indices.shape[i]}"
+            )
+
     return _take_along_axis(arr, indices, axis, interpret=interpret)

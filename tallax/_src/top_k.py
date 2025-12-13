@@ -437,15 +437,35 @@ def top_dynamic_k(
     - k values < 0: All k values must be non-negative
     - k values > max_k: All k values must be <= max_k
   """
+  # Shape validations
+  if logits.ndim != 2:
+    raise ValueError(f"Logits must be 2-dimensional, got {logits.ndim}D")
+
   num_tokens, vocab_size = logits.shape
+
+  if max_k <= 0:
+    raise ValueError(f"max_k must be positive, got max_k={max_k}")
+
+  if max_k > vocab_size:
+    raise ValueError(
+      f"max_k ({max_k}) cannot exceed vocabulary size ({vocab_size})"
+    )
 
   if num_tokens % block_token != 0:
     raise ValueError("num_tokens must be divisible by block_token")
-    
+
   if max_k > NUM_LANES:
     raise NotImplementedError
 
+  # Validate k values
   k = jnp.broadcast_to(k, (num_tokens,))
+  if jnp.any(k < 0):
+    raise ValueError(f"All k values must be non-negative, got min k={jnp.min(k)}")
+
+  if jnp.any(k > max_k):
+    raise ValueError(
+      f"All k values must be <= max_k ({max_k}), got max k={jnp.max(k)}"
+    )
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -566,6 +586,17 @@ def top_k(
     - k <= 0: k must be positive
     - k > vocab_size: k cannot exceed vocabulary size
   """
+  # Shape validations
+  if logits.ndim != 2:
+    raise ValueError(f"Logits must be 2-dimensional, got {logits.ndim}D")
+
+  if k <= 0:
+    raise ValueError(f"k must be positive, got k={k}")
+
+  num_tokens, vocab_size = logits.shape
+  if k > vocab_size:
+    raise ValueError(f"k ({k}) cannot exceed vocabulary size ({vocab_size})")
+
   return top_dynamic_k(
     logits,
     k=k,

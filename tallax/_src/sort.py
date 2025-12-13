@@ -801,6 +801,33 @@ def sort(
     - block_token < NUM_SUBLANES or block_token > shape[0]: Invalid block_token range
   """
   operands, shape = canonicalize_operand(operand)
+
+  # Shape validations
+  if operands[0].ndim != 2:
+    raise ValueError(f"Arrays must be 2-dimensional, got {operands[0].ndim}D")
+
+  if shape[0] == 0 or shape[1] == 0:
+    raise ValueError(f"Arrays must be non-empty, got shape {shape}")
+
+  if num_keys < 1:
+    raise ValueError(f"Must have at least one sort key, got num_keys={num_keys}")
+
+  if num_keys > len(operands):
+    raise ValueError(
+      f"num_keys ({num_keys}) cannot exceed number of operands ({len(operands)})"
+    )
+
+  if block_token is not None:
+    # Check if block_token is a power of 2
+    if block_token & (block_token - 1) != 0:
+      raise ValueError(f"block_token must be a power of 2, got {block_token}")
+
+    if block_token < NUM_SUBLANES or block_token > shape[0]:
+      raise ValueError(
+        f"block_token must be between NUM_SUBLANES ({NUM_SUBLANES}) and "
+        f"shape[0] ({shape[0]}), got {block_token}"
+      )
+
   num_stages = log2(shape[1])
 
   if (shape[1] != 2**num_stages and
