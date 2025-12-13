@@ -441,7 +441,7 @@ def _sort_refs(
 
   if descending and is_stable:
     # Maintain order by sorting indices ascending while keys descending
-    # Flip sign on indices, then flip back before write out
+    # Reverse indices (negate relative to array length), then reverse back before write out
     indices = indices.shape[1] - indices
 
   # Reuse in/out VMEM buffers to reduce memory usage
@@ -805,7 +805,7 @@ def sort(
   if use_indices:
     indices = jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
     if descending and is_stable:
-      # Keys descending, but ties sorted ascending, so flip indices
+      # Keys descending, but ties sorted ascending, so reverse indices
       indices = shape[1] - indices
     indices_index = num_keys
     operands.insert(num_keys, indices)

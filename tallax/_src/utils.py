@@ -186,8 +186,8 @@ def canonicalize_operand(operand):
 def float_to_sortable_int(x: jnp.ndarray, standardize_input=True) -> jnp.ndarray:
   """Transform float32 bits into sortable int32 representation.
 
-  Positive floats map to [INT_MIN, -1].
-  Negative floats map to [INT_MAX, 0] with reversed order.
+  Negative floats map to [INT_MIN, -1] with reversed order.
+  Positive floats map to [0, INT_MAX].
   """
   if standardize_input:
     x = standardize(x)
@@ -268,7 +268,7 @@ def iota_tile(dim):
 def create_bit_indicator(bit_position: int, index=None):
   """Create mask indicating which elements have specific bit set.
 
-  Returns int format for ALU operations rather than mask operations.
+  Returns bool when bit_position is static int, int32 (0 or 1) when dynamic.
   """
   if index is None:
     index = iota_tile(1)
