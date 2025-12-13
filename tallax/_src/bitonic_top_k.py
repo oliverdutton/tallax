@@ -382,33 +382,33 @@ def bitonic_top_k(
     Limitations:
         - Only supports k <= NUM_LANES (128). For k > 128, use tax.top_k instead.
         - Only descending=True is currently implemented (see bitonic_top_k_refs line 330-331)
-        - Requires 2D arrays with k in (0, vocab_size]
+        - Requires ndim=2, k in (0, vocab_size]
         - Total elements (dim0 * dim1) must be >= NUM_SUBLANES * NUM_LANES after padding
     """
     operands, unpadded_shape = canonicalize_operand(operand)
 
     # Shape validations
     if operands[0].ndim != 2:
-      raise ValueError(f"Arrays must be 2-dimensional, got {operands[0].ndim}D")
+      raise ValueError(f"Requires ndim=2, got ndim={operands[0].ndim}")
 
     if k <= 0:
-      raise ValueError(f"k must be positive, got k={k}")
+      raise ValueError(f"Requires k>0, got k={k}")
 
     vocab_size = unpadded_shape[1]
     if k > vocab_size:
-      raise ValueError(f"k ({k}) cannot exceed vocabulary size ({vocab_size})")
+      raise ValueError(f"Requires k<={vocab_size}, got k={k}")
 
     if k > NUM_LANES:
       raise ValueError(
-          f"bitonic_topk only supports k<=NUM_LANES={NUM_LANES}, got k={k}"
+          f"Requires k<={NUM_LANES}, got k={k}"
       )
 
     if num_keys < 1:
-      raise ValueError(f"Must have at least one sort key, got num_keys={num_keys}")
+      raise ValueError(f"Requires num_keys>=1, got num_keys={num_keys}")
 
     if num_keys > len(operands):
       raise ValueError(
-        f"num_keys ({num_keys}) cannot exceed number of operands ({len(operands)})"
+        f"Requires num_keys<={len(operands)}, got num_keys={num_keys}"
       )
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
       val='min' if descending else 'max') for x in operands]

@@ -431,24 +431,24 @@ def top_dynamic_k(
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
 
   Note:
-    Requires 2D logits. max_k and all k values must be in (0, vocab_size].
+    Requires ndim=2. max_k and all k values must be in (0, vocab_size].
   """
   # Shape validations
   if logits.ndim != 2:
-    raise ValueError(f"Logits must be 2-dimensional, got {logits.ndim}D")
+    raise ValueError(f"Requires ndim=2, got ndim={logits.ndim}")
 
   num_tokens, vocab_size = logits.shape
 
   if max_k <= 0:
-    raise ValueError(f"max_k must be positive, got max_k={max_k}")
+    raise ValueError(f"Requires max_k>0, got max_k={max_k}")
 
   if max_k > vocab_size:
     raise ValueError(
-      f"max_k ({max_k}) cannot exceed vocabulary size ({vocab_size})"
+      f"Requires max_k<={vocab_size}, got max_k={max_k}"
     )
 
   if num_tokens % block_token != 0:
-    raise ValueError("num_tokens must be divisible by block_token")
+    raise ValueError(f"Requires num_tokens%block_token=0, got {num_tokens}%{block_token}={num_tokens%block_token}")
 
   if max_k > NUM_LANES:
     raise NotImplementedError
@@ -456,11 +456,11 @@ def top_dynamic_k(
   # Validate k values
   k = jnp.broadcast_to(k, (num_tokens,))
   if jnp.any(k < 0):
-    raise ValueError(f"All k values must be non-negative, got min k={jnp.min(k)}")
+    raise ValueError(f"Requires k>=0 for all tokens, got min(k)={jnp.min(k)}")
 
   if jnp.any(k > max_k):
     raise ValueError(
-      f"All k values must be <= max_k ({max_k}), got max k={jnp.max(k)}"
+      f"Requires k<={max_k} for all tokens, got max(k)={jnp.max(k)}"
     )
 
   # Auto-compute schedules if not provided
@@ -578,18 +578,18 @@ def top_k(
           - topk_idxs: Top-k indices of shape [num_tokens, k].
 
   Note:
-    Requires 2D logits. k must be in (0, vocab_size].
+    Requires ndim=2. k must be in (0, vocab_size].
   """
   # Shape validations
   if logits.ndim != 2:
-    raise ValueError(f"Logits must be 2-dimensional, got {logits.ndim}D")
+    raise ValueError(f"Requires ndim=2, got ndim={logits.ndim}")
 
   if k <= 0:
-    raise ValueError(f"k must be positive, got k={k}")
+    raise ValueError(f"Requires k>0, got k={k}")
 
   num_tokens, vocab_size = logits.shape
   if k > vocab_size:
-    raise ValueError(f"k ({k}) cannot exceed vocabulary size ({vocab_size})")
+    raise ValueError(f"Requires k<={vocab_size}, got k={k}")
 
   return top_dynamic_k(
     logits,

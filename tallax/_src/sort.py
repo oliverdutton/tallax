@@ -793,34 +793,33 @@ def sort(
     Tuple of sorted arrays (and optionally argsort indices)
 
   Note:
-    Requires 2D non-empty arrays. block_token must be power of 2 in [NUM_SUBLANES, NUM_LANES].
+    Requires ndim=2. block_token must be power of 2 in [NUM_SUBLANES, NUM_LANES].
   """
   operands, shape = canonicalize_operand(operand)
 
   # Shape validations
   if operands[0].ndim != 2:
-    raise ValueError(f"Arrays must be 2-dimensional, got {operands[0].ndim}D")
+    raise ValueError(f"Requires ndim=2, got ndim={operands[0].ndim}")
 
   if shape[0] == 0 or shape[1] == 0:
-    raise ValueError(f"Arrays must be non-empty, got shape {shape}")
+    raise ValueError(f"Requires shape[0]>0 and shape[1]>0, got shape={shape}")
 
   if num_keys < 1:
-    raise ValueError(f"Must have at least one sort key, got num_keys={num_keys}")
+    raise ValueError(f"Requires num_keys>=1, got num_keys={num_keys}")
 
   if num_keys > len(operands):
     raise ValueError(
-      f"num_keys ({num_keys}) cannot exceed number of operands ({len(operands)})"
+      f"Requires num_keys<={len(operands)}, got num_keys={num_keys}"
     )
 
   if block_token is not None:
     # Check if block_token is a power of 2
     if block_token & (block_token - 1) != 0:
-      raise ValueError(f"block_token must be a power of 2, got {block_token}")
+      raise ValueError(f"Requires block_token=2^n, got {block_token}")
 
     if block_token < NUM_SUBLANES or block_token > NUM_LANES:
       raise ValueError(
-        f"block_token must be between NUM_SUBLANES ({NUM_SUBLANES}) and "
-        f"NUM_LANES ({NUM_LANES}), got {block_token}"
+        f"Requires block_token in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}"
       )
 
   num_stages = log2(shape[1])

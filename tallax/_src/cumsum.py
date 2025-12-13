@@ -91,19 +91,19 @@ def cumsum(
       Cumulative sum array.
 
   Note:
-    Requires 2D non-empty array. axis must be 0, 1, -1, or -2.
+    Requires ndim=2. axis must be 0, 1, -1, or -2.
   """
   # Shape validations
   if arr.ndim != 2:
-    raise ValueError(f"Array must be 2-dimensional, got {arr.ndim}D")
+    raise ValueError(f"Requires ndim=2, got ndim={arr.ndim}")
 
   # Normalize axis
   normalized_axis = axis if axis >= 0 else axis + arr.ndim
   if normalized_axis not in (0, 1):
-    raise ValueError(f"Invalid axis {axis} for 2D array")
+    raise ValueError(f"Requires axis in {{0,1,-1,-2}}, got axis={axis}")
 
   if arr.shape[0] == 0 or arr.shape[1] == 0:
-    raise ValueError(f"Array must be non-empty, got shape {arr.shape}")
+    raise ValueError(f"Requires shape[0]>0 and shape[1]>0, got shape={arr.shape}")
 
   return pl.pallas_call(
       functools.partial(
