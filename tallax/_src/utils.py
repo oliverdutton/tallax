@@ -210,6 +210,7 @@ def pack_bf16_u16_to_i32(val, index):
   """
   assert index.dtype == jnp.int32
   val_f32 = standardize(val.astype(jnp.float32))
+  index = jnp.where(val_f32 < 0, index.shape[1] - index, index)
   return float_to_sortable_int(
       ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
       standardize_input=False
@@ -222,6 +223,7 @@ def unpack_bf16_u16_from_i32(packed):
   packed = sortable_int_to_float(packed)
   val = (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
   index = packed.view(jnp.int32) & 0xFFFF
+  index = jnp.where(val < 0, index.shape[1] - index, index)
   return val, index
 
 
