@@ -176,13 +176,15 @@ def _merge_max_crosstile(
 
 def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
-    Progressive bitonic merge for top-k selection.
+    Progressive bitonic merge for top-k selection in last dimension. Uses compressed transpose format to reduce runtime.
 
     Strategy:
-    1. Build bitonic sequences (stages 1-6) within tiles
-    2. Cross-tile bitonic merge until we reach target tile count
-    3. Final progressive merge with lane permutations
-    4. Sort final bitonic sequence to descending order
+    1. Build bitonic sequences of 128 length
+    2. Max merge those sorted sequences
+      a. Merge pairs of tiles
+      b. Merge within compressed transposed format tiles
+    
+    Supports 2D inputs, sorted descending for k<=NUM_LANES=128 only. Supports multiple operands like lax.sort().
 
     Args:
         operands: List of JAX arrays of shape (dim0, dim1)
@@ -190,18 +192,13 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
         num_keys: Number of sort keys (default: 1)
 
     Returns:
-        List of JAX arrays of shape (original_dim0, k) with top-k elements
-
-    Limitations:
-        - Only supports k <= NUM_LANES (128)
-        - Requires dim0 <= NUM_LANES after padding (enforced at line 209)
-        - Total elements must satisfy alignment requirements for sublane transpose
-        - Works best when dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES
+        List of JAX arrays of shape (dim0, k)
     """
-    if k > NUM_LANES:
-      raise NotImplementedError
+    if k <= 0 or k > NUM_LANES:
+      raise ValueError(f"Requires 0 < k <= {NUM_LANES}, got k={k}")
     # Compute padded shape that satisfies alignment requirements
     shape = operands[0].shape
+    operand_dtypes = [x.dtype for x in operands]
     padded_shape = _compute_padded_shape(*shape)
     # Pad both dimensions if needed
     arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
@@ -308,14 +305,16 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
       return [from_compressed_transpose_format(
         tiles, dim0=dim0) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
-    return [
+    outputs = [
       jnp.concatenate(arr_slices, axis=0)[:shape[0],:k]
       for arr_slices in transpose_list_of_lists(
         [_topk_arrays(arrs)
         for arrs in transpose_list_of_lists([
         jnp.split(arr, pl.cdiv(padded_shape[0], NUM_LANES), axis=0) for arr in arrs])
     ])]
-  
+    return [o.astype(dtype) for o, dtype in zip(outputs, operand_dtypes, strict=True)]
+
+
 def bitonic_top_k_refs(
     in_refs,
     out_refs,
@@ -356,7 +355,7 @@ def bitonic_top_k(
     """
     Compute top-k using bitonic sort in sublane transposed format.
 
-    Supports 2D inputs, sorted descending for k<=NUM_LANES=128 only. Supports multiple operands like sort().
+    Supports 2D inputs, sorted descending for k<=NUM_LANES=128 only. Supports multiple operands like lax.sort().
 
     Args:
         operand: Input array(s) of shape [num_tokens, vocab_size].
