@@ -186,8 +186,8 @@ def canonicalize_operand(operand):
 def float_to_sortable_int(x: jnp.ndarray, standardize_input=True) -> jnp.ndarray:
   """Transform float32 bits into sortable int32 representation.
 
-  Positive floats map to [INT_MIN, -1].
-  Negative floats map to [INT_MAX, 0] with reversed order.
+  Negative floats map to [INT_MIN, -1] with reversed order.
+  Positive floats map to [0, INT_MAX].
   """
   if standardize_input:
     x = standardize(x)
@@ -210,7 +210,7 @@ def pack_bf16_u16_to_i32(val, index):
   """
   assert index.dtype == jnp.int32
   val_f32 = standardize(val.astype(jnp.float32))
-  index = jnp.where(val_f32 < 0, index.shape[1] - index, index)
+  index = jnp.where(val_f32 < 0, index.shape[1] - 1 - index, index)
   return float_to_sortable_int(
       ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
       standardize_input=False
@@ -223,7 +223,7 @@ def unpack_bf16_u16_from_i32(packed):
   packed = sortable_int_to_float(packed)
   val = (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
   index = packed.view(jnp.int32) & 0xFFFF
-  index = jnp.where(val < 0, index.shape[1] - index, index)
+  index = jnp.where(val < 0, index.shape[1] - 1 - index, index)
   return val, index
 
 
@@ -268,7 +268,7 @@ def iota_tile(dim):
 def create_bit_indicator(bit_position: int, index=None):
   """Create mask indicating which elements have specific bit set.
 
-  Returns int format for ALU operations rather than mask operations.
+  Returns bool when bit_position is static int, int32 (0 or 1) when dynamic.
   """
   if index is None:
     index = iota_tile(1)
