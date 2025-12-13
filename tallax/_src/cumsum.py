@@ -93,6 +93,8 @@ def cumsum(
   Note:
     axis must be 0, 1, -1, or -2.
   """
+  if arr.ndim!=2:
+    raise ValueError('Only 2D inputs supported')
   normalized_axis = axis if axis >= 0 else axis + arr.ndim
   if normalized_axis not in (0, 1):
     raise ValueError(f"Requires axis in {{0,1,-1,-2}}, got axis={axis}")
