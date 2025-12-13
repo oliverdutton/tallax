@@ -431,15 +431,12 @@ def top_dynamic_k(
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
 
   Note:
-    max_k <= vocab_size for compilation. All k <= max_k at runtime.
+    max_k <= min(NUM_LANES, vocab_size) for compilation. All k <= max_k at runtime.
   """
   num_tokens, vocab_size = logits.shape
 
-  if max_k <= 0 or max_k > vocab_size:
-    raise ValueError(f"Requires 0 < max_k <= {vocab_size}, got max_k={max_k}")
-
-  if max_k > NUM_LANES:
-    raise NotImplementedError
+  if max_k <= 0 or max_k > min(NUM_LANES, vocab_size):
+    raise ValueError(f"Requires 0 < max_k <= {min(NUM_LANES, vocab_size)}, got max_k={max_k}")
 
   k = jnp.broadcast_to(k, (num_tokens,))
 
