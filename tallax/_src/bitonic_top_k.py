@@ -356,12 +356,7 @@ def bitonic_top_k(
     """
     Compute top-k using bitonic sort in sublane transposed format.
 
-    Optimized for k=NUM_LANES=128 only. Works entirely in sublane transposed
-    format for maximum TPU efficiency. Supports multiple operands like sort().
-
-    Supports arbitrary input shapes - padding is handled automatically:
-    - For small inputs (prod < NUM_LANES2): pads dim0 to make prod = NUM_LANES2
-    - For larger inputs: pads both dims minimally to satisfy alignment
+    Supports 2D inputs, sorted descending for k<=NUM_LANES=128 only. Supports multiple operands like sort().
 
     Args:
         operand: Input array(s) of shape [num_tokens, vocab_size].
@@ -375,13 +370,6 @@ def bitonic_top_k(
     Returns:
         Tuple of arrays (same length as input operands):
             - Each array has shape [num_tokens, k]
-
-    Raises:
-        ValueError: If k > NUM_LANES
-
-    Limitations:
-        - k <= NUM_LANES (128). For k > 128, use tax.top_k.
-        - Only descending=True currently implemented.
     """
     operands, unpadded_shape = canonicalize_operand(operand)
 
