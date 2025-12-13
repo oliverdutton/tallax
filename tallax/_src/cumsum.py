@@ -89,9 +89,6 @@ def cumsum(
 
   Returns:
       Cumulative sum array.
-
-  Note:
-    axis must be 0, 1, -1, or -2.
   """
   if arr.ndim!=2:
     raise ValueError('Only 2D inputs supported')
