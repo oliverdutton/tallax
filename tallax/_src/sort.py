@@ -524,7 +524,7 @@ def _sort_in_vmem(
   if k is None:
     k = shape[-1]
   if block_token is None:
-    block_token = min(max(NUM_SUBLANES, (2**14) // shape[0]), shape[0])
+    block_token = min(min(max(NUM_SUBLANES, (2**14) // shape[0]), shape[0]), NUM_LANES)
   if block_seq is None:
     block_seq = shape[1]
   if k != shape[1] and block_seq != shape[1]:
@@ -800,7 +800,7 @@ def sort(
   # Validate block_token
   if block_token is not None:
     if block_token & (block_token - 1) != 0 or block_token < NUM_SUBLANES or block_token > NUM_LANES:
-      raise ValueError(f"Requires block_token=2^n in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}")
+      raise ValueError(f"Requires block_token to be a power of 2 in [{NUM_SUBLANES}, {NUM_LANES}], got {block_token}")
 
   num_stages = log2(shape[1])
 
