@@ -8,7 +8,7 @@ Algorithm:
 - Convert input to compressed transpose format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
 - Build bitonic sequences using stages 1-6 (so sorted in 64 length chunks)
 - Cross-tile merge with max selection, reducing tile count
-- Progressive lane permute merging with decreasing distances
+- Progressive sublane permute merging with decreasing distances
 - Convert back to original format
 """
 
