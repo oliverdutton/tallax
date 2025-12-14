@@ -99,7 +99,7 @@ To recover efficiency:
 
 For **k ≤ 128**, top-k can be computed in this format without the compression adding lane permute operations.
 
-> **Result:** This Pallas implementation is significantly faster than XLA's top-k and the naive transpose implementation which uses excessive padding for small batch sizes.
+**Result:** This Pallas implementation is significantly faster than XLA's top-k and the naive transpose implementation which uses excessive padding for small batch sizes.
 
 ### Supported Configurations
 
