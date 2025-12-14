@@ -128,12 +128,9 @@ def verify_topk_output(x, outs, axis=1):
     if out_vals.ndim != 2 or out_indexs.ndim != 2:
         raise ValueError(f"verify_topk_output requires 2D outputs, got values.ndim={out_vals.ndim}, indices.ndim={out_indexs.ndim}")
 
-    # The batch axis is opposite to the sampling axis:
-    # - axis=1 (sampling along columns): batch is axis 0, so in_axes=(0, 0, 0)
-    # - axis=0 (sampling along rows): batch is axis 1, so in_axes=(1, 1, 1)
     batch_axis = 1 - axis
 
-    @functools.partial(jax.vmap, in_axes=(batch_axis, batch_axis, batch_axis))
+    @functools.partial(jax.vmap, in_axes=batch_axis)
     def verify_slice(x_slice, vals_slice, idxs_slice):
         """Verify a single slice."""
         x_sorted = jnp.sort(x_slice, descending=True)
