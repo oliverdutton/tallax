@@ -49,7 +49,7 @@ This divide-and-filter approach dramatically reduces the amount of elements to c
 
 ## Early Stopping
 
-The algorithm exploits probabilistic convergence for significant speedups. For randomly partitioned inputs with 256 bins, collectively bins-top-4 has a >95% probability of containing the entire top-128, rising to >99.9999% by bins-top-8.[^1] [^2]
+The algorithm exploits probabilistic convergence for significant speedups. For randomly partitioned inputs with 256 bins, collectively bins-top-4 has a >95% probability of containing the entire top-128, rising to >99.9999% by bins-top-8.[^1] [^2] Checking for convergence and top-k'ing the minimal number of elements significantly improves average runtimes.
 
 [^1]: The convergence theory is a classic "Balls into Bins" combinatorics problem — probability calculation code is included in tallax.
 
