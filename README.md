@@ -110,11 +110,8 @@ Theoretically extensible to larger k with larger sort dimensions with low batch 
 
 ---
 
-## Why Not Other Algorithms?
+## Why Use Bitonic Top-k in the Algorithm
 
-For typical LLM vocabulary sizes (100–200k tokens):
+For computing top-128 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 256 bins, we expect a 99.9999% chance of convergence by bins-top-8. This produces a filtered subset size of only 256 × 8 = 2,048 elements.
 
-- 256 bins with 99.9999% convergence by bins-top-8
-- Filtered subset size: 256 × 8 = **2,048 elements**
-
-At this reduced size, the choice of final top-k algorithm (Bitonic vs. RadixSelect, etc.) contributes negligibly to overall runtime, so alternatives were not explored.
+At this reduced size, the choice of final top-k algorithm (Bitonic vs. RadixSelect, etc.) contributes negligibly to overall runtime, so alternatives to bitonic top-k were not explored.​​​​​​​​​​​​​​​​
