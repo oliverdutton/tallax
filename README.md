@@ -38,10 +38,12 @@ The algorithm finds top-k elements by:
 
 1. **Partitioning** the input
 2. **Computing top-m** for each partition in parallel
-3. **Identifying unconverged partitions** — those where values beyond their top-m could still be part of the overall top-k
+3. **Identifying unconverged partitions** — those where values beyond their top-m could still be part of the overall top-k[^0]
 4. **Running top-k** over only the top-m values and unconverged partitions contents
 
 This divide-and-filter approach dramatically reduces the amount of elements to compute top-k on.
+
+[^0]: The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
 
 ---
 
