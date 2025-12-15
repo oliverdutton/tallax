@@ -6,22 +6,17 @@
 branch = 'main'
 !git clone -q -b {branch} --single-branch https://github.com/oliverdutton/tallax.git && cd tallax && pip install -q .[tpu]
 '''
-import sys
-import os
 
-from tallax._src.tpu_inference_sampling_as_standalone_file import TPUSupportedSamplingMetadata, sample as vllm_sample, ShardingAxisName2D, Mesh, topp_mask
-
-
-from tallax._src.sampling import top_p_and_sample, sample as _pallas_sample
-from tallax._src.utils import log2
-from tallax._src.test_utils import benchmark
 import jax
 from jax import numpy as jnp
 import numpy as np
 import functools
 from jax.experimental import pallas as pl
 
-NUM_LANES = 128
+from tallax._src.sampling import sample as _pallas_sample
+from tallax._src.test_utils import benchmark
+
+from tallax._src.tpu_inference_sampling_as_standalone_file import TPUSupportedSamplingMetadata, sample as vllm_sample, ShardingAxisName2D, Mesh, topp_mask
 
 def uniquely_define_topk(logits, k):
   boundary_val = jax.lax.sort(logits)[-k]
@@ -63,6 +58,7 @@ logits_top_4_8 = logits.at[:8,:128].add(100).at[8:,:256*8:16].add(100)
 logits_top_8 = logits.at[:,:256*8:16].add(100)
 
 logits_cases = (logits, logits_top_4, logits_top_4_8, logits_top_8, logits_worst_case)
+
 logits_cases = tuple(jax.vmap(uniquely_define_topk)(x, tpu_sampling_metadata.top_k) for x in logits_cases)
 #idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
 
@@ -79,8 +75,13 @@ def _run():
   )
 
 benchmark(_run)
+
+# Seeing sampled tokens is believing
 for v in _run():
   print(v)
 outs = _run()
-print([(a==b).mean() for a, b in zip(outs[::2], outs[1::2])])
+# Check sampled token matches
+# We use varying k and temperatures of 10**rand so that sometimes random gumbel noise dominates, sometimes logits values dominates
+# Similarly, varying p threshold in top-p
+print(['{:.2f}'.format((a==b).mean()) for a, b in zip(outs[::2], outs[1::2])])
 #print(tpu_sampling_metadata.temperature)
