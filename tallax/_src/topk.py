@@ -6,8 +6,8 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.bitonic_top_k import bitonic_topk_refs, bitonic_topk_arrays
-from tallax.top_k_convergence_theory import calculate_depth_thresholds
+from tallax._src.bitonic_topk import bitonic_topk_refs, bitonic_topk_arrays
+from tallax.topk_convergence_theory import calculate_depth_thresholds
 from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
 def binned_topk(

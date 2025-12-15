@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax.experimental import pallas as pl
-from tallax._src.bitonic_top_k import bitonic_topk, bitonic_topk_arrays, max_arrays
+from tallax._src.bitonic_topk import bitonic_topk, bitonic_topk_arrays, max_arrays
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
