@@ -200,7 +200,7 @@ def _merge_unconverged_bins_topk(
   ) = bitonic_topk_arrays([val_input, idx_input], k=NUM_LANES, num_keys=1)
 
 
-def dynamic_top_k_refs(
+def dynamic_topk_refs(
     logits_ref,
     k_smem_ref,
     k_vmem_ref,
@@ -251,16 +251,16 @@ def dynamic_top_k_refs(
     @pl.when(termination_flag_ref[0] == 0)
     def _():
       # Compute binned top-m
-      bins_topm_vals, bins_topm_idxs = binned_top_k(
+      bins_topm_vals, bins_topm_idxs = binned_topk(
           logits_ref,
           k=m,
-          bins_top_k_vals=[
+          bins_topk_vals=[
               bins_topm_vals_ref[
                   token_slice, pl.dslice(i * num_bins, num_bins)
               ].astype(to_32bit_dtype(logits_ref.dtype))
               for i in range(m)
           ],
-          bins_top_k_idxs=[
+          bins_topk_idxs=[
               bins_topm_idxs_ref[
                   token_slice, pl.dslice(i * num_bins, num_bins)
               ]
@@ -321,7 +321,7 @@ def dynamic_top_k_refs(
     # This optimization applies when guarantee_convergence is enabled but
     # we haven't fully converged (m_final != max_k) and termination criterion not met.
     # Packs the most active bins to help converge.
-    _merge_unconverged_bins_top_k(
+    _merge_unconverged_bins_topk(
         logits_ref,
         bins_topm_vals_ref.at[token_slice],
         bins_topm_idxs_ref.at[token_slice],
@@ -481,7 +481,7 @@ def top_dynamic_k(
 
   outputs = pl.pallas_call(
       functools.partial(
-          dynamic_top_k_refs,
+          dynamic_topk_refs,
           max_k=max_k,
           num_bins=num_bins,
           bins_topm_unroll=bins_topm_unroll,

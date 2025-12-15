@@ -11,8 +11,8 @@ from tallax._src.test_utils import verify_topk_output
     is_cpu_platform(),
     reason="Top-k tests require TPU/GPU - CPU uses interpret mode which is slow"
 )
-def test_top_k():
-    """Test top_k Pallas implementation."""
+def test_topk():
+    """Test topk Pallas implementation."""
     num_queries = 16
     vocab_size = 201088
     k = 64
