@@ -524,7 +524,7 @@ def top_dynamic_k(
         "interpret"
     ),
 )
-def top_k(
+def topk(
     logits,
     k: int,
     block_token: int = NUM_SUBLANES,
