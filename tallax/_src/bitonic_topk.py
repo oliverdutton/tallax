@@ -234,7 +234,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           _split_actives(x)[1] for x in arrs_tiles]
           arrs_tiles = [
           _split_actives(x)[0] for x in arrs_tiles]
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=log_lanes,
           # tile i is different order to tile i+1, so they can be max merged
@@ -257,7 +257,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         distance = dim0 * (2**i)
         # Calculate stage based on current merge size
         # Stage = log2(2 * distance * dim0 / NUM_LANES * NUM_LANES) = log2(2 * distance)
-        arrs_tiles = _sort_subtile_substages(
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=log_lanes,
           stage=log_lanes+i,
@@ -290,7 +290,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
   
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=2**7 to ensure descending direction
-      arrs_tiles = _sort_subtile_substages(
+      arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
         num_substages=log_lanes,
         stage=log_lanes,
