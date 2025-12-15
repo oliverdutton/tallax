@@ -3,7 +3,7 @@
 import jax
 import jax.numpy as jnp
 import pytest
-from tallax.tax.fused_sampling import fused_tpu_sampling
+from tallax.sampling import fused_tpu_sampling
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES
 
 
