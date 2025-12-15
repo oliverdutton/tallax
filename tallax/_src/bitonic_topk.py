@@ -174,7 +174,7 @@ def _merge_max_crosstile(
   return outs_tiles
 
 
-def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
+def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -310,7 +310,7 @@ def bitonic_top_k_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys
         jnp.split(arr, pl.cdiv(padded_shape[0], NUM_LANES), axis=0) for arr in arrs])
     ])]
   
-def bitonic_top_k_refs(
+def bitonic_topk_refs(
     in_refs,
     out_refs,
     *,
@@ -329,7 +329,7 @@ def bitonic_top_k_refs(
     """
     if not descending:
       raise NotImplementedError
-    outs = bitonic_top_k_arrays(
+    outs = bitonic_topk_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
       num_keys=num_keys)
     for out, out_ref in zip(outs, out_refs, strict=True):
@@ -340,7 +340,7 @@ def bitonic_top_k_refs(
     jit,
     static_argnames=("k", "num_keys", "descending", "interpret"),
 )
-def bitonic_top_k(
+def bitonic_topk(
     operand: jax.Array | Sequence[jax.Array],
     k: int = NUM_LANES,
     num_keys: int = 1,
@@ -379,7 +379,7 @@ def bitonic_top_k(
       )
 
     operands, unpadded_shape = canonicalize_operand(operand)
-    operands = [pad(x, (NUM_SUBLANES, NUM_LANES), 
+    operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
       val='min' if descending else 'max') for x in operands]
     num_tokens, vocab_size = operands[0].shape
     # Define output shapes
@@ -389,7 +389,7 @@ def bitonic_top_k(
     ]
     outputs = pl.pallas_call(
         functools.partial(
-            bitonic_top_k_refs,
+            bitonic_topk_refs,
             num_keys=num_keys,
             descending=descending,
         ),
