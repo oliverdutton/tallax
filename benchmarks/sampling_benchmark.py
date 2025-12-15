@@ -9,10 +9,9 @@ branch = 'main'
 import sys
 import os
 
-from tallax.benchmarks.tpu_inference_sampling import TPUSupportedSamplingMetadata, sample as vllm_sample, ShardingAxisName2D, Mesh, topp_mask
+from tallax._src.tpu_inference_sampling_as_standalone_file import TPUSupportedSamplingMetadata, sample as vllm_sample, ShardingAxisName2D, Mesh, topp_mask
 
 
-from tallax.tax import top_dynamic_k
 from tallax._src.sampling import top_p_and_sample, sample as _pallas_sample
 from tallax._src.utils import log2
 from tallax._src.test_utils import benchmark
