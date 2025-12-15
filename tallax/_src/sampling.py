@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_top_k import bitonic_top_k_arrays, bitonic_top_k, max_arrays
+from tallax._src.bitonic_top_k import bitonic_topk_arrays, bitonic_topk, max_arrays
 from tallax._src.gather import take_along_axis_arrays
 from tallax._src.sparse_random import sparse_random_categorical
 from tallax._src.cumsum import cumsum_arrays
@@ -273,7 +273,7 @@ def _top_k_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
       if logits.shape[-1] <= 4096:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
-        topk_logits, topk_idxs = bitonic_top_k([logits, idxs], NUM_LANES)
+        topk_logits, topk_idxs = bitonic_topk([logits, idxs], NUM_LANES)
         topk_logits = jnp.where(
           jnp.arange(NUM_LANES)[None, :] < k[:,None],
           topk_logits,
@@ -311,7 +311,7 @@ def _top_k_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
         topk_idxs += i * logits.shape[1]
         # all-gather and top-k
         operands = [jax.lax.all_gather(x, axis_name, axis=1) for x in (topk_logits, topk_idxs)]
-        topk_logits, topk_idxs = bitonic_top_k(operands, k=NUM_LANES)
+        topk_logits, topk_idxs = bitonic_topk(operands, k=NUM_LANES)
         topk_logits = jnp.where(
           jax.lax.broadcasted_iota(jnp.int32, topk_logits.shape, 1) < k[:,None],
           topk_logits,

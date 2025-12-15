@@ -6,15 +6,15 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.bitonic_top_k import bitonic_top_k_refs, bitonic_top_k_arrays
+from tallax._src.bitonic_top_k import bitonic_topk_refs, bitonic_topk_arrays
 from tallax.top_k_convergence_theory import calculate_depth_thresholds
 from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
-def binned_top_k(
+def binned_topk(
     logits,
     k: int,
-    bins_top_k_vals,
-    bins_top_k_idxs,
+    bins_topk_vals,
+    bins_topk_idxs,
     completed_k: int = 0,
     num_bins: int = NUM_LANES,
     unroll: int = 32,
@@ -29,20 +29,20 @@ def binned_top_k(
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Number of top elements to find.
-      bins_top_k_vals: List of k arrays, each of shape [num_tokens, num_bins],
+      bins_topk_vals: List of k arrays, each of shape [num_tokens, num_bins],
           containing current top-k values per bin.
-      bins_top_k_idxs: List of k arrays, each of shape [num_tokens, num_bins],
+      bins_topk_idxs: List of k arrays, each of shape [num_tokens, num_bins],
           containing current top-k indices per bin.
       completed_k: Number of top-k positions already finalized (default: 0).
       num_bins: Number of bins/lanes to process simultaneously (default: 128).
       unroll: Loop unroll factor for the vocabulary scan (default: 32).
 
   Returns:
-      Tuple of (bins_top_k_vals, bins_top_k_idxs) with updated top-k values and indices.
+      Tuple of (bins_topk_vals, bins_topk_idxs) with updated top-k values and indices.
   """
   num_tokens, vocab_size = logits.shape
 
-  def update_bins_topk(bubble_vals, bubble_idxs, bins_top_k_vals, bins_top_k_idxs):
+  def update_bins_topk(bubble_vals, bubble_idxs, bins_topk_vals, bins_topk_idxs):
     """
     Update bins topk with bubble vals/idxs using sinking sort.
 
@@ -54,23 +54,23 @@ def binned_top_k(
       # Invalidate already-found elements
       # We use the idxs list to check identity
       bubble_vals = jnp.where(
-          bubble_idxs == bins_top_k_idxs[i],
+          bubble_idxs == bins_topk_idxs[i],
           get_dtype_info(bubble_vals).min,
           bubble_vals
       )
     for i in range(completed_k, k):
       # Exchange with stored top-k
       # Only perform the swap if the value is larger
-      mask = bubble_vals > bins_top_k_vals[i]
-      bins_top_k_vals[i], bubble_vals = (
-          jnp.where(m, bubble_vals, bins_top_k_vals[i])
+      mask = bubble_vals > bins_topk_vals[i]
+      bins_topk_vals[i], bubble_vals = (
+          jnp.where(m, bubble_vals, bins_topk_vals[i])
           for m in (mask, ~mask)
       )
-      bins_top_k_idxs[i], bubble_idxs = (
-          jnp.where(m, bubble_idxs, bins_top_k_idxs[i])
+      bins_topk_idxs[i], bubble_idxs = (
+          jnp.where(m, bubble_idxs, bins_topk_idxs[i])
           for m in (mask, ~mask)
       )
-    return (bins_top_k_vals, bins_top_k_idxs)
+    return (bins_topk_vals, bins_topk_idxs)
 
   def compute_idxs(i):
     """Compute global vocabulary indices for bin slice i."""
@@ -88,7 +88,7 @@ def binned_top_k(
   bins_topk_outs = unrolled_fori_loop(
       num_full_slices,
       loop_body,
-      (bins_top_k_vals, bins_top_k_idxs),
+      (bins_topk_vals, bins_topk_idxs),
       unroll=unroll,
   )
 
@@ -105,7 +105,7 @@ def binned_top_k(
     bins_topk_outs = update_bins_topk(final_vals, final_idxs, *bins_topk_outs)
   return bins_topk_outs
 
-def _merge_unconverged_bins_top_k(
+def _merge_unconverged_bins_topk(
     logits_ref,
     bins_topm_vals_ref,
     bins_topm_idxs_ref,
