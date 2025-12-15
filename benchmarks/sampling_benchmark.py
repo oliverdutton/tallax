@@ -40,17 +40,17 @@ def pallas_sample(rng_key, mesh, logits, tpu_sampling_metadata):
   del mesh
   return _pallas_sample(rng_key, logits, tpu_sampling_metadata)
 
+mesh = Mesh(np.array([jax.devices()[0]]), axis_names=(ShardingAxisName2D.ATTN_DATA,))
+
+num_tokens, vocab_size = shape = (16, 2**18)
+print(shape)
+
 tpu_sampling_metadata = TPUSupportedSamplingMetadata(
   top_k=jax.random.randint(jax.random.key(17), (num_tokens,), 7, 128, dtype=jnp.int32),
   top_p=jax.random.uniform(jax.random.key(22), (num_tokens,), dtype=jnp.float32),
   temperature=10**jax.random.normal(jax.random.key(73), (num_tokens,), dtype=jnp.float32),
   do_sampling=True,
 )
-mesh = Mesh(np.array([jax.devices()[0]]), axis_names=(ShardingAxisName2D.ATTN_DATA,))
-
-shape = (16, 1024*8)
-num_tokens, vocab_size = shape = (16,2**18)
-print(shape)
 
 # Generate test data
 key, sample_key = jax.random.split(jax.random.PRNGKey(4267))
