@@ -51,7 +51,7 @@ This divide-and-filter approach dramatically reduces the amount of elements to c
 
 The algorithm exploits probabilistic convergence for significant speedups. For randomly partitioned inputs with 256 bins, collectively bins-top-4 has a >95% probability of containing the entire top-128, rising to >99.9999% by bins-top-8.[^1] [^2] Checking for convergence and top-k'ing the minimal number of elements significantly improves average runtimes.
 
-[^1]: The convergence theory is a classic "Balls into Bins" combinatorics problem — probability calculation code is included in tallax.
+[^1]: The convergence theory is a classic "Balls into Bins" combinatorics problem — probability calculation code is included in tallax. For top-k'ing LLM logits, as tokenizers often have the first indices as the most likely token then decreasing by construction you would expect even faster convergence than the random distribution assumption used here.
 
 [^2]: TPU hardware utilization is often optimal with batch size of 8 as a minimal unit, so `probability^batch_dim` is the more practical value, reducing probabilities to 70% and 99.9995% respectively
 
