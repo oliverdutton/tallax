@@ -1,4 +1,3 @@
-import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -6,8 +5,6 @@ from tallax._src.top_p_and_sample import top_p_mask
 from tallax._src.tpu_inference_sampling_as_standalone_file import topp_mask
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)])
-@pytest.mark.parametrize("p", [0.001, 0.1, 0.5, 0.999, 1.0])
 def test_top_p_mask(shape, p):
     """Test top_p_mask for exact match against topp_mask from tpu_inference_sampling."""
     key = jax.random.key(42)
@@ -49,6 +46,13 @@ def test_top_p_mask(shape, p):
 
 if __name__ == "__main__":
     print("Running top_p_mask tests...")
-    test_top_p_mask((8, 128), 0.5)
-    test_top_p_mask((16, 256), 0.9)
-    print("top_p_mask tests passed!")
+    shapes = [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)]
+    ps = [0.001, 0.1, 0.5, 0.999, 1.0]
+
+    for shape in shapes:
+        for p in ps:
+            print(f"Testing shape={shape}, p={p}...")
+            test_top_p_mask(shape, p)
+            print(f"  ✓ Passed")
+
+    print("\nAll top_p_mask tests passed!")
