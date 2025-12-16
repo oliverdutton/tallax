@@ -8,12 +8,14 @@ from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [1])
 def test_bitonic_topk(shape, dtype, axis):
     """Test bitonic_topk for both axes with k values."""
     interpret = is_cpu_platform()
+    if interpret and (shape[1] > 256):
+        pytest.skip("Test too large for CPU, as compilation is very slow")
     key = jax.random.PRNGKey(axis)
 
     # Generate test data based on dtype
