@@ -21,9 +21,7 @@ def test_bitonic_topk_axis1(shape, dtype):
     else:
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
-    # Create indices array with column indices (for axis=1 operation)
-    # For shape (8, 128), we want [[0, 1, 2, ..., 127], [0, 1, 2, ..., 127], ...]
-    indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
+    indices = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
 
     k = min(128, shape[1])  # NUM_LANES or dimension size, whichever is smaller
     # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
@@ -51,15 +49,12 @@ def test_top1_pallas(shape, dtype, axis):
     else:
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
-    # Create indices array
-    # axis=0: row indices [[0,0,...], [1,1,...], ...]
-    # axis=1: column indices [[0,1,2,...], [0,1,2,...], ...]
     if axis == 0:
-        indices = jnp.broadcast_to(jnp.arange(shape[0])[:, None], shape).astype(jnp.int32)
+        indices = jax.lax.broadcasted_iota(jnp.int32, shape, 0)
         # top1 returns 1D output with shape (batch_size,) where batch_size = shape[1] for axis=0
         out_shape_1d = (shape[1],)
     else:  # axis == 1
-        indices = jnp.broadcast_to(jnp.arange(shape[1])[None, :], shape).astype(jnp.int32)
+        indices = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
         # top1 returns 1D output with shape (batch_size,) where batch_size = shape[0] for axis=1
         out_shape_1d = (shape[0],)
 
@@ -90,12 +85,12 @@ def test_top1_pallas(shape, dtype, axis):
     # Reshape 1D outputs to 2D for verify_topk_output
     if axis == 0:
         # axis=0: result is (shape[1],) -> reshape to (1, shape[1])
-        result_values = result_values[None, :]
-        result_indices = result_indices[None, :]
+        result_values = jnp.expand_dims(result_values, axis=0)
+        result_indices = jnp.expand_dims(result_indices, axis=0)
     else:  # axis == 1
         # axis=1: result is (shape[0],) -> reshape to (shape[0], 1)
-        result_values = result_values[:, None]
-        result_indices = result_indices[:, None]
+        result_values = jnp.expand_dims(result_values, axis=1)
+        result_indices = jnp.expand_dims(result_indices, axis=1)
 
     # Verify using axis parameter with 2D outputs
     valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
