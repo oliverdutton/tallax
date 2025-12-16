@@ -1,17 +1,4 @@
-
-try:
-    import pytest
-    HAS_PYTEST = True
-except ImportError:
-    HAS_PYTEST = False
-    def parametrize(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
-    class _FakePytest:
-        mark = type('Mark', (), {'parametrize': staticmethod(parametrize)})()
-    pytest = _FakePytest()
-
+import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
