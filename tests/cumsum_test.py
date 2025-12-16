@@ -11,7 +11,7 @@ from tallax._src.utils import is_cpu_platform
 @pytest.mark.parametrize("axis", [0, 1])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("reverse", [False, True])
-def test_cumsum_correctness(shape, axis, dtype, reverse):
+def test_cumsum(shape, axis, dtype, reverse):
     """Test cumsum for various shapes, axes, dtypes, and reverse parameter."""
     key = jax.random.key(42)
 
@@ -33,4 +33,4 @@ def test_cumsum_correctness(shape, axis, dtype, reverse):
         np.testing.assert_array_equal(actual, expected)
 
 if __name__ == "__main__":
-    test_cumsum_correctness()
+    test_cumsum()
