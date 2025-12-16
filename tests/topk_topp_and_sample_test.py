@@ -59,10 +59,8 @@ def test_topk_topp_and_sample(shape, dtype, case, seed):
     )
 
     # Generate logits based on case
-    if case == "random":
-        logits = jax.random.normal(logits_key, shape).astype(dtype)
-    else:  # worst_case
-        logits = jax.random.normal(logits_key, shape).astype(dtype)
+    logits = jax.random.normal(logits_key, shape).astype(dtype)
+    if case == "worst_case":
         logits = logits.at[:, 13::256].add(100)
 
     logits = jax.vmap(uniquely_define_topk)(logits, tpu_sampling_metadata.top_k)
