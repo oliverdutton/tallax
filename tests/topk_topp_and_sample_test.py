@@ -24,8 +24,8 @@ def uniquely_define_topk(logits, k):
     mask = mask & (mask.cumsum() > k)
     return jnp.where(mask, float('-inf'), logits)
 
-
-@pytest.mark.parametrize("shape", [(16, 16384), (13, 11792), (256, 2048), (279, 3570)])
+# shapes on either side of the shape[1] pure bitonic vs divide and filter implementations
+@pytest.mark.parametrize("shape", [(16, 16384), (13, 11792), (256, 2048), (256, 8192), (279, 3570), (279, 7593)])
 @pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
 @pytest.mark.parametrize("case", ["random", "worst_case"])
 @pytest.mark.parametrize("seed", [42, 123, 456])
