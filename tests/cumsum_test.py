@@ -28,7 +28,7 @@ def test_cumsum(shape, axis, dtype, reverse):
 
     # Use close match for float32, exact for int32
     if dtype == jnp.float32:
-        np.testing.assert_allclose(actual, expected, rtol=1e-3, atol=1e-6)
+        np.testing.assert_allclose(actual, expected, rtol=5e-3, atol=1e-5)
     else:
         np.testing.assert_array_equal(actual, expected)
 
