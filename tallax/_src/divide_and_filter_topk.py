@@ -439,8 +439,8 @@ def top_dynamic_k(
     
   if max_k > NUM_LANES:
     raise NotImplementedError
-
-  k = jnp.broadcast_to(k, (num_tokens,))
+  if jnp.ndim(k) == 0:
+    k = jnp.broadcast_to(k, (num_tokens,))
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
