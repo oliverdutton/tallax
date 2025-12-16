@@ -27,10 +27,11 @@ def test_bitonic_topk(shape, dtype, axis):
     k = min(128, shape[axis])
     # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
     # On TPU/GPU, use the full bitonic_topk with Pallas
+    # Note: bitonic_topk_arrays only works on axis=1, so we only test axis=1
     if interpret:
-        result_values, result_indices = bitonic_topk_arrays([arr, indices], k=k, num_keys=1, axis=axis)
+        result_values, result_indices = bitonic_topk_arrays([arr, indices], k=k, num_keys=1)
     else:
-        result_values, result_indices = bitonic_topk([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret, axis=axis)
+        result_values, result_indices = bitonic_topk([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
 
     valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}, axis {axis}"

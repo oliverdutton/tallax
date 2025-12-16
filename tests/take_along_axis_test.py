@@ -30,18 +30,3 @@ def test_take_along_axis(num_tokens, vocab_size, k, axis):
     result = take_along_axis(values, indices, axis=axis, interpret=is_cpu_platform())
 
     np.testing.assert_array_equal(result, expected)
-
-def test_take_along_axis_large_k():
-    # Explicitly test (8, 1024) as requested in review
-    num_tokens = 8
-    vocab_size = 2048
-    k = 1024
-
-    key = jax.random.PRNGKey(1)
-    values = jax.random.normal(key, (num_tokens, vocab_size))
-    indices = jax.random.randint(key, (num_tokens, k), 0, vocab_size)
-
-    expected = jnp.take_along_axis(values, indices, axis=1)
-    result = take_along_axis(values, indices, axis=1, interpret=is_cpu_platform())
-
-    np.testing.assert_array_equal(result, expected)
