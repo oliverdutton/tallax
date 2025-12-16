@@ -25,7 +25,7 @@ def uniquely_define_topk(logits, k):
     return jnp.where(mask, float('-inf'), logits)
 
 
-@pytest.mark.parametrize("shape", [(16, 16384), (13, 11792)])
+@pytest.mark.parametrize("shape", [(16, 16384), (13, 11792), (256, 2048), (279, 3570)])
 @pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
 @pytest.mark.parametrize("case", ["random", "worst_case"])
 @pytest.mark.parametrize("seed", [42, 123, 456])
