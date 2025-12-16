@@ -6,7 +6,7 @@ from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.skipif(
     is_cpu_platform(),
@@ -24,7 +24,11 @@ def test_divide_and_filter_topk(shape, dtype):
         logits = jax.random.randint(key, shape, 0, 1000, dtype=dtype)
 
     # Run divide and filter top-k implementation
-    outputs = tax.top_k(logits, k=k, interpret=is_cpu_platform())
+    outputs = tax.top_k(
+        logits,
+        k=k,
+        interpret=is_cpu_platform(),
+        num_bins=128 if shape[1] <= 128 else 256)
 
     # Validate results using verify_topk_output (axis=1 is default)
     validation = verify_topk_output(logits, outputs, axis=1)
