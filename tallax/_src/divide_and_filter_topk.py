@@ -434,7 +434,7 @@ def top_dynamic_k(
 
   # pad in first dimension for block spec
   # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
-  logits = pad(logits, (block_token, 1), val='min')
+  logits = pad(logits, (block_token, NUM_LANES), val='min')
   num_tokens, vocab_size = logits.shape
     
   if max_k > NUM_LANES:
