@@ -441,6 +441,7 @@ def top_dynamic_k(
     raise NotImplementedError
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
+  k = pad(k, (num_tokens,), val=0)
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
