@@ -508,12 +508,12 @@ def top_dynamic_k(
   )(logits, k, k)
   topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
-  topk_vals, topk_idxs = (x[:,:max_k] for x in (topk_vals, topk_idxs))
+  topk_vals, topk_idxs = (x[:unpadded_num_tokens,:max_k] for x in (topk_vals, topk_idxs))
   valid = valid.squeeze().astype(bool)
 
   if guarantee_convergence:
     return topk_vals, topk_idxs
-  return topk_vals, topk_idxs, valid, depths, cutoff_vals
+  return topk_vals, topk_idxs, valid, depths[:unpadded_num_tokens], cutoff_vals[:unpadded_num_tokens]
 
 @functools.partial(
     jit,
