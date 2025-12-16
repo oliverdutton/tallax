@@ -45,11 +45,10 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
     # Top-p filtering using cumsum on sorted probabilities
     cumsum_probs = cumsum_arrays(probs, axis=0)
 
-    # Find last idx where top-p probability mass is not covered
-    # Use <= instead of < to handle p=1.0 case correctly (include all when p=1.0)
-    threshold_idx = (cumsum_probs <= p[None,:]).sum(0, keepdims=True)
-    # Clamp to valid range [0, shape[0]-1]
-    threshold_idx = jnp.minimum(threshold_idx, shape[0] - 1)
+    # Find last idx where top-p probability mass is (over)covered
+    threshold_idx = (cumsum_probs < p[None,:]).sum(0, keepdims=True)
+    # Clamp for p=1.0 case
+    threshold_idx = jnp.where(p[None,:]==1., shape[0] - 1, threshold_idx)
     # vLLM current implementation uses binary search, computing a threshold.
     # so ties at the threshold are all included
     # we replicate that behavior here
