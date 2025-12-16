@@ -49,6 +49,8 @@ def test_topk_topp_and_sample(shape, dtype, case, seed):
     key, topk_key, topp_key, temp_key, logits_key, sample_key = jax.random.split(key, 6)
 
     # Create sampling metadata with varying top_k, top_p, and temperature
+    # We use varying k and temperatures of 10**normal(0,1) so that sometimes random gumbel noise dominates,
+    # sometimes logits values dominates. Similarly, varying p threshold in top-p
     tpu_sampling_metadata = TPUSupportedSamplingMetadata(
         top_k=jax.random.randint(topk_key, (num_tokens,), 7, 128, dtype=jnp.int32) * 0 + 2,
         top_p=jax.random.uniform(topp_key, (num_tokens,), dtype=jnp.float32),
