@@ -77,7 +77,7 @@ def _topk_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
     return sharded_topk(logits, k)
 
 
-def sample(rng_key, logits, tpu_sampling_metadata):
+def topk_topp_and_sample(rng_key, logits, tpu_sampling_metadata):
   vocab_size = logits.shape[1]
   topk_logits, topk_idxs = _topk_with_sharding(
     logits,
