@@ -430,10 +430,12 @@ def top_dynamic_k(
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
   """
-  num_tokens, vocab_size = logits.shape
+  unpadded_num_tokens = logits.shape[0]
 
-  if num_tokens % block_token != 0:
-    raise ValueError("num_tokens must be divisible by block_token")
+  # pad in first dimension for block spec
+  # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
+  logits = pad(logits, (block_token, 1), val='min')
+  num_tokens, vocab_size = logits.shape
     
   if max_k > NUM_LANES:
     raise NotImplementedError
