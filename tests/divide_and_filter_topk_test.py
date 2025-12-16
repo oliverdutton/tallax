@@ -24,10 +24,10 @@ def test_divide_and_filter_topk(shape, dtype):
         logits = jax.random.randint(key, shape, 0, 1000, dtype=dtype)
 
     # Run divide and filter top-k implementation
-    result = tax.top_k(logits, k=k, block_size=8, interpret=False)
+    outputs = tax.top_k(logits, k=k, interpret=is_cpu_platform())
 
     # Validate results using verify_topk_output (axis=1 is default)
-    validation = verify_topk_output(logits, result, axis=1)
+    validation = verify_topk_output(logits, outputs, axis=1)
 
     assert validation.all(), (
         f"Divide and filter top-k validation failed for shape {shape}, dtype {dtype}: "
