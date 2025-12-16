@@ -14,25 +14,28 @@ def take_along_axis_arrays(val, idx, axis):
   val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
   def _gather_arrays(val, idx):
     # Initialize accumulators
+    num_idx_tiles = idx.shape[axis] // tile_shape[axis]
     accumulators = [
         jnp.zeros(tile_shape, dtype=val.dtype)
-        for _ in range(idx.shape[axis] // tile_shape[axis])
+        for _ in range(num_idx_tiles)
     ]
-    for val_offset in range(0, val.shape[axis], tile_shape[axis]):
-      # Load values for this block once
-      val_tile = lax.slice_in_dim(val, val_offset, val_offset+tile_shape[axis], axis=axis)
-  
+
+    # Split arrays into tiles to avoid dynamic slicing layout issues
+    num_val_tiles = val.shape[axis] // tile_shape[axis]
+    val_tiles = jnp.split(val, num_val_tiles, axis=axis)
+    idx_tiles = jnp.split(idx, num_idx_tiles, axis=axis)
+
+    for val_tile_idx, val_tile in enumerate(val_tiles):
+      val_offset = val_tile_idx * tile_shape[axis]
       # Apply to all K blocks
-      for idx_offset in range(0, idx.shape[axis], tile_shape[axis]):
-        idx_tile = lax.slice_in_dim(idx, idx_offset, idx_offset+tile_shape[axis], axis=axis)
+      for idx_tile_idx, idx_tile in enumerate(idx_tiles):
         mask = (idx_tile >= val_offset) & (idx_tile < val_offset + tile_shape[axis])
         gather_tile = jnp.take_along_axis(
             val_tile,
             (idx_tile - val_offset) % tile_shape[axis],
             axis=axis
         )
-        i = idx_offset // tile_shape[axis]      
-        accumulators[i] = jnp.where(mask, gather_tile, accumulators[i])
+        accumulators[idx_tile_idx] = jnp.where(mask, gather_tile, accumulators[idx_tile_idx])
     return jnp.concatenate(accumulators, axis=axis)
   batch_axis = 1 - axis
   assert val.shape[batch_axis]==idx.shape[batch_axis]
