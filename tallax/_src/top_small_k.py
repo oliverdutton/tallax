@@ -311,11 +311,11 @@ def top_small_k(
         pltpu.VMEM((block_token, max(first_stage_size, padded_dim0)), to_32bit_dtype(logits.dtype)),
         # bins_topk_idxs_ref: Used for both stages
         pltpu.VMEM((block_token, max(first_stage_size, padded_dim0)), jnp.int32),
-        # stage2_vals_ref: After first transpose and for second binned_topk output
-        pltpu.VMEM((padded_dim0, NUM_LANES), to_32bit_dtype(logits.dtype)),
-        # stage2_idxs_ref: After first transpose and for second binned_topk output
-        pltpu.VMEM((padded_dim0, NUM_LANES), jnp.int32),
-        # final_vals_ref: For final selection sort (block_token, second_stage_size padded to NUM_LANES)
+        # stage2_vals_ref: After first transpose, shape (padded_dim0, block_token)
+        pltpu.VMEM((padded_dim0, block_token), to_32bit_dtype(logits.dtype)),
+        # stage2_idxs_ref: After first transpose
+        pltpu.VMEM((padded_dim0, block_token), jnp.int32),
+        # final_vals_ref: For final selection sort, shape (block_token, NUM_LANES)
         pltpu.VMEM((block_token, NUM_LANES), to_32bit_dtype(logits.dtype)),
         # final_idxs_ref: For final selection sort
         pltpu.VMEM((block_token, NUM_LANES), jnp.int32),
