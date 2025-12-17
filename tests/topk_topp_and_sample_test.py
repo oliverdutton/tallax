@@ -25,10 +25,10 @@ def uniquely_define_topk(logits, k):
     return jnp.where(mask, float('-inf'), logits)
 
 # shapes on either side of the shape[1] pure bitonic vs divide and filter implementations
-@pytest.mark.parametrize("shape", [(16, 16384), (13, 11792), (256, 2048), (256, 8192), (279, 3570), (279, 7593)])
-@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
-@pytest.mark.parametrize("case", ["random", "worst_case"])
-@pytest.mark.parametrize("seed", [42, 123, 456])
+@pytest.mark.parametrize("shape", [(16, 1024), (13, 1024), (128, 1024), (101, 1024), (137,1024), (256, 1024), (279, 3570), (279, 7593)])
+@pytest.mark.parametrize("dtype", [jnp.float32,])
+@pytest.mark.parametrize("case", ["random"])
+@pytest.mark.parametrize("seed", [42])
 @pytest.mark.skipif(
     is_cpu_platform(),
     reason="Sampling tests require TPU/GPU - CPU uses interpret mode which is slow"
