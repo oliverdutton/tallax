@@ -10,12 +10,9 @@ from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad
 
 def take_along_axis_arrays(val, idx, axis):
   shape = idx.shape
-  print(f'pre pad shape {shape}')
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
-  print(f'outer {val.shape=} {idx.shape=}')
   def _gather_arrays(val, idx):
-    print(f'inner {val.shape=} {idx.shape=}')
     # Initialize accumulators
     accumulators = [
         jnp.zeros(tile_shape, dtype=val.dtype)
