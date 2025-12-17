@@ -29,9 +29,9 @@ def test_top_p_mask(shape, seed, p_threshold, dtype):
 
     # Generate p values: None means random uniform, otherwise use fixed threshold
     if p_threshold is None:
-        p_array = jax.random.uniform(p_key, shape[:1], dtype=dtype)
+        p_array = jax.random.uniform(p_key, shape[:1], dtype=jnp.float32)
     else:
-        p_array = jnp.full(shape[:1], p_threshold, dtype=dtype)
+        p_array = jnp.full(shape[:1], p_threshold, dtype=jnp.float32)
 
     replace_val = -1e12
 
