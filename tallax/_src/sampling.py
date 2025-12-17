@@ -19,7 +19,7 @@ from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, tra
 
 def _topk_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
     def _topk_arrays(logits: jax.Array, k: jax.Array):
-      if logits.shape[-1] <= 4096:
+      if logits.shape[-1] <= 0:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
         topk_logits, topk_idxs = bitonic_topk([logits, idxs], NUM_LANES)
