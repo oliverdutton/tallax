@@ -6,7 +6,7 @@ from tallax._src.top_p_and_sample import top_p_mask as pallas_top_p_mask
 from tallax._src.tpu_inference_sampling_as_standalone_file import topp_mask as tpu_inference_top_p_mask
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (32, 128)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (21, 128), (256, 128), (137, 17), (137, 193)])
 @pytest.mark.parametrize("seed", [42, 123, 456])
 @pytest.mark.parametrize("p_threshold", [0.001, 0.1, 0.5, 0.999, 1., None])
 def test_top_p_mask(shape, seed, p_threshold):
