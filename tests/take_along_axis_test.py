@@ -6,7 +6,7 @@ import numpy as np
 from tallax._src.gather import take_along_axis
 from tallax._src.utils import is_cpu_platform
 
-@pytest.mark.parametrize("num_tokens", [8, 16, 13])
+@pytest.mark.parametrize("num_tokens", [8, 16, 13, 128, 137, 256, 279])
 @pytest.mark.parametrize("vocab_size", [128, 256, 300])
 @pytest.mark.parametrize("k", [64, 128, 200, 300])
 @pytest.mark.parametrize("axis", [0, 1])
