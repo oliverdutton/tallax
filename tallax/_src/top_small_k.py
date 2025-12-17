@@ -4,8 +4,8 @@ Top-k for small k values (k << 128) using two-stage binned approach.
 Algorithm for test case (8, 10240) with k=3:
 1. First binned topk: (8, 10240) -> (8, 384) using 128 bins, k=3
 2. Transpose: (8, 384) -> (384, 8) using classic transpose
-3. Pad: (384, 8) -> (6144, 8) where 6144 = 16*k*128
-4. Transpose: (6144, 8) -> (8, 6144)
+3. Pad: (384, 8) -> (6144, 128) where 6144 = 16*k*128, split into 48 tiles
+4. Transpose: (6144, 128) -> (8, 6144)
 5. Second binned topk: (8, 6144) -> (8, 24) using 8 bins, k=3
 6. Transpose: (24, 8) -> (8, 24)
 7. Pad: (8, 24) -> (8, 128)
@@ -91,8 +91,8 @@ def top_small_k_refs(
     1. Input: (8, 10240)
     2. After binned_topk: (8, 384) where 384 = 128*3
     3. Transpose: (384, 8)
-    4. Pad: (6144, 8) where 6144 = 16*3*128
-    5. Transpose: (8, 6144)
+    4. Pad: (384, 8) -> (6144, 128) - dim0 to 16*k*128, dim1 to 128
+    5. Transpose: (6144, 128) -> (8, 6144)
     6. After binned_topk: (8, 24) where 24 = 8*3
     7. Transpose: (24, 8) -> (8, 24)
     8. Pad dim1: (8, 24) -> (8, 128)
@@ -311,10 +311,10 @@ def top_small_k(
         pltpu.VMEM((block_token, max(first_stage_size, padded_dim0)), to_32bit_dtype(logits.dtype)),
         # bins_topk_idxs_ref: Used for both stages
         pltpu.VMEM((block_token, max(first_stage_size, padded_dim0)), jnp.int32),
-        # stage2_vals_ref: After first transpose, shape (padded_dim0, block_token)
-        pltpu.VMEM((padded_dim0, block_token), to_32bit_dtype(logits.dtype)),
+        # stage2_vals_ref: After first transpose, pad (384,8) to (6144,128) for compressed format tiles
+        pltpu.VMEM((padded_dim0, NUM_LANES), to_32bit_dtype(logits.dtype)),
         # stage2_idxs_ref: After first transpose
-        pltpu.VMEM((padded_dim0, block_token), jnp.int32),
+        pltpu.VMEM((padded_dim0, NUM_LANES), jnp.int32),
         # final_vals_ref: For final selection sort, shape (block_token, NUM_LANES)
         pltpu.VMEM((block_token, NUM_LANES), to_32bit_dtype(logits.dtype)),
         # final_idxs_ref: For final selection sort
