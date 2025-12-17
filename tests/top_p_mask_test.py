@@ -9,7 +9,8 @@ from tallax._src.tpu_inference_sampling_as_standalone_file import topp_mask as t
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (21, 128), (256, 128), (137, 17), (137, 193)])
 @pytest.mark.parametrize("seed", [42, 123, 456])
 @pytest.mark.parametrize("p_threshold", [0.001, 0.1, 0.5, 0.999, 1., None])
-def test_top_p_mask(shape, seed, p_threshold):
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.bfloat16])
+def test_top_p_mask(shape, seed, p_threshold, dtype):
     """Test pallas_top_p_mask for exact match against tpu_inference_top_p_mask.
 
     Strategy:
@@ -18,19 +19,19 @@ def test_top_p_mask(shape, seed, p_threshold):
     3. Apply pallas_top_p_mask to sorted input
     4. Reverse argsort to return to original order
     5. Apply tpu_inference_top_p_mask to unsorted input (per-batch element)
-    6. Compare results (should match exactly in f32)
+    6. Compare results (should match exactly for given dtype)
     """
     key = jax.random.key(seed)
     key, logits_key, p_key = jax.random.split(key, 3)
 
-    # Generate random logits (f32)
-    logits = jax.random.normal(logits_key, shape, dtype=jnp.float32)
+    # Generate random logits
+    logits = jax.random.normal(logits_key, shape, dtype=dtype)
 
     # Generate p values: None means random uniform, otherwise use fixed threshold
     if p_threshold is None:
-        p_array = jax.random.uniform(p_key, shape[:1], dtype=jnp.float32)
+        p_array = jax.random.uniform(p_key, shape[:1], dtype=dtype)
     else:
-        p_array = jnp.full(shape[:1], p_threshold, dtype=jnp.float32)
+        p_array = jnp.full(shape[:1], p_threshold, dtype=dtype)
 
     replace_val = -1e12
 
@@ -66,9 +67,9 @@ def test_top_p_mask(shape, seed, p_threshold):
             tpu_inference_top_p_mask(logits[i:i+1], float(p_array[i]), replace_val)[0]
         )
 
-    # Compare results in original order (should match exactly in f32)
+    # Compare results in original order (should match exactly for given dtype)
     np.testing.assert_array_equal(result_pallas_original_order, result_tpu_inference,
-        err_msg=f"pallas_top_p_mask should match tpu_inference_top_p_mask for shape={shape}, seed={seed}, p={p_threshold}")
+        err_msg=f"pallas_top_p_mask should match tpu_inference_top_p_mask for shape={shape}, seed={seed}, p={p_threshold}, dtype={dtype}")
 
 
 if __name__ == "__main__":
@@ -76,12 +77,14 @@ if __name__ == "__main__":
     shapes = [(8, 128), (16, 256), (13, 167), (32, 128)]
     seeds = [42, 123, 456]
     p_thresholds = [0.001, 0.1, 0.5, 0.999, 1., None]
+    dtypes = [jnp.float32, jnp.bfloat16]
 
     for shape in shapes:
         for seed in seeds:
             for p_threshold in p_thresholds:
-                print(f"Testing shape={shape}, seed={seed}, p_threshold={p_threshold}...")
-                test_top_p_mask(shape, seed, p_threshold)
-                print(f"  ✓ Passed")
+                for dtype in dtypes:
+                    print(f"Testing shape={shape}, seed={seed}, p_threshold={p_threshold}, dtype={dtype}...")
+                    test_top_p_mask(shape, seed, p_threshold, dtype)
+                    print(f"  ✓ Passed")
 
     print("\nAll top_p_mask tests passed!")
