@@ -313,7 +313,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         num_keys=num_keys,
       )
       return [(from_compressed_transpose_format if axis==1 else join_tiles_to_array)(
-        tiles, dim0=dim0) for tiles in arrs_tiles]
+        tiles, dim0=(dim0 if axis==1 else arrs[0].shape[0])) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
     arrs = [
       jnp.concatenate(arr_slices, axis=batch_axis)
