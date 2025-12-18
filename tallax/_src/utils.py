@@ -247,10 +247,12 @@ def split_array_to_tiles(arr):
   return tiles
 
 
-def join_tiles_to_array(target_shape, tiles):
+def join_tiles_to_array(tiles, dim0):
   """Reconstruct 2D array from flat list of tiles."""
-  num_rows, num_cols = target_shape
+  num_tiles = len(tiles)
   tile_rows, tile_cols = tiles[0].shape
+  num_rows = dim0
+  num_cols = (num_tiles*tile_rows*tile_cols)//dim0
   grid_cols = num_cols // tile_cols
 
   rows = []
@@ -291,8 +293,7 @@ def to_compressed_transpose_format(arr):
 def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout."""
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
-  arr = join_tiles_to_array(
-  (len(tiles) * NUM_SUBLANES, NUM_LANES), tiles).T
+  arr = join_tiles_to_array(tiles, dim0=len(tiles) * NUM_SUBLANES).T
   arrs = jnp.split(arr, NUM_LANES // dim0, axis=0)
   return jnp.concatenate(arrs, axis=1)
 
