@@ -216,7 +216,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=log2(k),
-          # tile i is different order to tile i+1, so they can be max merged
+          # tile with starting global index i is part of an oppositely ordered sequence to i+k, with which its about to be merged
           stage=log2(k),
           dim0=dim0,
           num_keys=num_keys,
