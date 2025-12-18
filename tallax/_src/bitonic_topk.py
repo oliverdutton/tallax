@@ -293,7 +293,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
   
       # Progressive merge tiles together as far as possible
       for _ in range(num_tile_merges):
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=k, dim0=dim0)
+        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=ceil_multiple(k, NUM_SUBLANES), dim0=dim0)
       num_tiles = len(arrs_tiles[0])
       assert num_tiles == pl.cdiv(k, NUM_SUBLANES), f'{num_tiles=}, should be {pl.cdiv(k, NUM_SUBLANES)}'
       for i in range(num_lane_merges)[::-1]:
