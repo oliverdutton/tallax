@@ -38,6 +38,7 @@ from tallax._src.utils import (
 from tallax._src.sort import (
     run_compressed_transpose_format_substages_on_tiles,
     compare_and_swap,
+    compute_pair_slice_start_index,
 )
 
 def max_arrays(operands, num_keys, axis):
