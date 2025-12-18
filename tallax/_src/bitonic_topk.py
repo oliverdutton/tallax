@@ -178,43 +178,10 @@ def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
     
     
 
-# compare cross sublane
-separation = separation
-
 # until pl.cdiv(k, NUM_SUBLANES) tiles left. compare at distance ceil_multiple(k, NUM_SUBLANES)
 # now the number of tiles is set. 
 # then compare cross lane min(log2(pl.cdiv(NUM_LANES, dim0)), num_merges) times. 
 # then compare cross sublane log2(pl.cdiv(NUM_SUBLANES, k)) times
-separation = num_tiles * NUM_SUBLANES * 2**i
-
-
-    def _max_reduce_bitonic(arrs_tiles, separation):
-        # separation is comparison distance
-        assert separation == 2**log2(separation)
-        num_tiles = len(arrs_tiles[0])
-        if separation < NUM_SUBLANES:
-            # cross sublane
-            reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=0, separation=separation)
-        elif separation < num_tiles * NUM_SUBLANES:
-            # cross tile
-            tile_separation = separation // NUM_SUBLANES
-            reduce_fn = functools.partial(_max_reduce_bitonic_inter_tile, separation=tile_separation)
-            
-        else:
-            # cross lane (compressed transpose format)
-            lane_separation = (separation * dim0) // (num_tiles * NUM_SUBLANES)
-            reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=1, separation=lane_separation)
-            
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-          arrs_tiles,
-          num_substages=log2(k),
-          stage=log2(separation),
-          dim0=dim0,
-          num_keys=num_keys,
-        )
-        return reduce_fn(arrs_tiles, num_keys=num_keys)
-    
-
 def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
     """
     Progressive bitonic merge for top-k selection.
