@@ -329,9 +329,51 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
 def max_arrays(operands, num_keys, axis):
     """Compute max over several operands along specified axis.
 
-    Uses legacy implementation which is simpler and more reliable for k=1.
+    Uses tree reduction approach optimized for k=1 (finding max).
     """
-    return legacy_max_arrays(operands, num_keys, axis)
+    if axis == 1:
+        # Transpose and run on axis 0
+        operands = jax.tree.map(lambda x: x.T, operands)
+        axis = 0
+    assert axis == 0
+
+    unpadded_shape = operands[0].shape
+    padded_dim0 = max(2**log2(unpadded_shape[0]), NUM_SUBLANES)
+    operands = [pad(x, (padded_dim0, NUM_LANES), val='min') for x in operands]
+
+    shape = operands[0].shape
+    # Tree reduction along axis 0
+    for _ in range(log2(shape[0] // NUM_SUBLANES)):
+        lefts, rights = transpose_list_of_lists([jnp.split(arr, 2, axis=0) for arr in operands])
+        operands = transpose_list_of_lists(compare_and_swap(lefts, rights, num_keys=num_keys, is_descending=True))[0]
+
+    assert operands[0].shape[0] == NUM_SUBLANES
+    assert shape[1] % NUM_LANES == 0
+
+    # Split into tiles and do sublane permutation merges
+    arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
+    for stage in range(log2(NUM_SUBLANES))[::-1]:
+        permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
+
+        arrs_tiles_permuted = jax.tree.map(
+            lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
+            arrs_tiles
+        )
+
+        outs_tiles = [[] for _ in arrs_tiles]
+        for _, (lefts, rights) in enumerate(zip(
+            *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+            strict=True
+        )):
+            for j, (o, _) in enumerate(compare_and_swap(
+                lefts, rights,
+                is_descending=True,
+                num_keys=num_keys
+            )):
+                outs_tiles[j].append(o)
+        arrs_tiles = outs_tiles
+
+    return [jnp.concatenate(tiles, axis=1)[0, :unpadded_shape[1]] for tiles in arrs_tiles]
 
 
 def bitonic_topk_refs(
