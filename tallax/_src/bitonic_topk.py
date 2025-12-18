@@ -44,7 +44,7 @@ from tallax._src.sort import (
     compute_pair_slice_start_index,
 )
 
-def max_arrays(operands, num_keys, axis):
+def legacy_max_arrays(operands, num_keys, axis):
   """Compute max over several operands, sorting using num_keys.
 
   This function computes the maximum element along the specified axis for multiple
@@ -216,7 +216,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     if k > unpadded_sort_dim:
         raise ValueError
     if axis == 1:
-        padded_shape = _compute_padded_shape(*shape)
+        padded_shape = _compute_padded_shape(*shape, k=k)
     elif axis == 0:
         padded_shape = (
             ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
@@ -315,14 +315,20 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
     batch_axis = 1 - axis
     arrs = [
-      jnp.concatenate(arr_slices, axis=batch_axis)[:shape[0],:unpadded_k]
+      jnp.concatenate(arr_slices, axis=batch_axis)
       for arr_slices in transpose_list_of_lists(
         [_topk_arrays(arrs)
         for arrs in transpose_list_of_lists([
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
     return [(arr[:shape[batch_axis],:unpadded_k] if axis==1 else arr[:unpadded_k, :shape[batch_axis]]) for arr in arrs]
-  
+
+
+def max_arrays(operands, num_keys, axis):
+    arrs = bitonic_topk_arrays(operands, num_keys=num_keys, k=1, axis=axis)
+    return [x.squeeze(axis) for x in arrs]
+
+
 def bitonic_topk_refs(
     in_refs,
     out_refs,
