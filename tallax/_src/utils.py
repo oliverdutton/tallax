@@ -280,13 +280,12 @@ def create_bit_indicator(bit_position: int, index=None):
 
 def to_compressed_transpose_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
-  nelems = arr.shape[0] * arr.shape[1]
+  dim0, dim1 = arr.shape
+  nelems = dim0 * dim1
   assert (nelems % NUM_LANES**2) == 0
-  arrs = [
-      arr[:, i * NUM_LANES:(i + 1) * NUM_LANES]
-      for i in range(pl.cdiv(arr.shape[1], NUM_LANES))
-  ]
-  arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
+  n_splits = NUM_LANES // dim0
+  arrs = jnp.split(arr, n_splits, axis=1)
+  arr = jnp.concatenate(arrs, axis=0).T
   tiles = split_array_to_tiles(arr)
   return tiles
 
@@ -294,14 +293,10 @@ def to_compressed_transpose_format(arr):
 def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout."""
   dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
-  arr = join_tiles_to_array(
-      (NUM_LANES, (dim0 * dim1) // NUM_LANES),
-      tiles) # (128, n*b)
-  arr = arr.T
-  return jnp.concatenate(
-      [arr[i * dim0:(i + 1) * dim0] for i in range(arr.shape[0] // dim0)],
-      axis=1
-  )
+  arr = join_tiles_to_array(((dim0 * dim1) // NUM_LANES, NUM_LANES), tiles).T
+  n_splits = NUM_LANES // dim0
+  arrs = jnp.split(arr, n_splits, axis=0)
+  return jnp.concatenate(arrs, axis=1)
 
 
 ### Loop Utilities

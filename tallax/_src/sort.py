@@ -102,12 +102,7 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
   )
 
 
-### Within-Tile Substages
-
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
-  """Perform substage using sublane permutation or cross-tile comparison."""
-
-  def _compute_pair_slice_start_index(i, separation, slice_length=1):
+def compute_pair_slice_start_index(i, separation, slice_length=1):
     """Compute start index for pair-wise array slicing."""
     if slice_length > separation:
       raise ValueError(
@@ -118,27 +113,29 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
     slice_idx = i % slices_per_pair
     return pair_idx * 2 * separation + slice_idx * slice_length
 
-  assert dim0 <= NUM_LANES
-  global_base_index = iota_tile(0) + (((iota_tile(1) // dim0) * NUM_LANES))
+
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
+  """Perform substage using sublane permutation or cross-tile comparison."""
+  assert dim0 <= NUM_LANES and dim0 == 2**log2(dim0)
   num_tiles = len(arrs_tiles[0])
-  tile_rows = NUM_LANES // NUM_SUBLANES
-  tile_cols = num_tiles // tile_rows
+  tile_local_offset = iota_tile(0) + (iota_tile(1) // dim0) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
-    tile_offset = ((idx // tile_cols) * NUM_SUBLANES +
-                   (idx % tile_cols) * (NUM_LANES * (NUM_LANES // dim0)))
-    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
+    tile_offset = idx * NUM_SUBLANES
+    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
-        return create_bit_indicator(stage, global_base_index)
-      elif stage < log2(NUM_LANES):
+        # every tile has same value
+        return create_bit_indicator(stage, tile_local_offset)
+      elif stage < log2(num_tiles * NUM_SUBLANES):
+        # value constant across tile
         return create_bit_indicator(stage, tile_offset)
     return is_desc
 
   outs_tiles = [[None for _ in t] for t in arrs_tiles]
 
   if substage < log2(NUM_SUBLANES):
-    # Sublane permutation
+    # Comparison within tile
     permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
     arrs_tiles_permuted = jax.tree.map(
         lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
@@ -153,10 +150,10 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
       )):
         outs_tiles[arr_idx][idx] = out
   else:
-    # Compare tiles
-    separation = (2**substage // NUM_SUBLANES) * tile_cols
+    # Comparison between tiles
+    separation = 2**substage // NUM_SUBLANES
     for i in range(num_tiles // 2):
-      idx = _compute_pair_slice_start_index(i, separation=separation)
+      idx = compute_pair_slice_start_index(i, separation=separation)
       lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
       for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
           lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
@@ -614,15 +611,10 @@ def _run_array_substage_on_hbm_refs(
   pair_length = 2 ** (substage + 1)
   slices_per_pair = (pair_length // 2) // slice_length
 
-  def _compute_pair_slice_start_index(i):
-    pair_idx = i // slices_per_pair
-    pair_subslice_idx = i % slices_per_pair
-    return pair_idx * pair_length + pair_subslice_idx * slice_length
-
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = _compute_pair_slice_start_index(i)
+    left_start = _compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
