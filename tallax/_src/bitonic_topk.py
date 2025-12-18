@@ -209,13 +209,13 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     batch_axis = 1 - axis
     if k > NUM_LANES:
       raise NotImplementedError
-    unpadded_k = k
-    k = 2**log2(k)
-    # Compute padded shape that satisfies alignment requirements
+    # Check k before rounding
     shape = operands[0].shape
     unpadded_sort_dim = shape[axis]
     if k > unpadded_sort_dim:
-        raise ValueError
+        raise ValueError(f"k={k} exceeds dimension size {unpadded_sort_dim} along axis {axis}")
+    unpadded_k = k
+    k = 2**log2(k)  # Round up to power of 2
     if axis == 1:
         padded_shape = _compute_padded_shape(*shape, k=k)
     elif axis == 0:
@@ -292,8 +292,9 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         )
   
       # Progressive merge tiles together as far as possible
+      # Compare at distance ceil_multiple(k, NUM_SUBLANES) as per algorithm design
       for _ in range(num_tile_merges):
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=k, dim0=dim0)
+        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=ceil_multiple(k, NUM_SUBLANES), dim0=dim0)
       num_tiles = len(arrs_tiles[0])
       assert num_tiles == pl.cdiv(k, NUM_SUBLANES), f'{num_tiles=}, should be {pl.cdiv(k, NUM_SUBLANES)}'
       for i in range(num_lane_merges)[::-1]:
@@ -326,8 +327,11 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
 
 
 def max_arrays(operands, num_keys, axis):
-    arrs = bitonic_topk_arrays(operands, num_keys=num_keys, k=1, axis=axis)
-    return [x.squeeze(axis) for x in arrs]
+    """Compute max over several operands along specified axis.
+
+    Uses legacy implementation which is simpler and more reliable for k=1.
+    """
+    return legacy_max_arrays(operands, num_keys, axis)
 
 
 def bitonic_topk_refs(
