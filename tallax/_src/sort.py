@@ -120,22 +120,10 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
 
   assert dim0 <= NUM_LANES
   num_tiles = len(arrs_tiles[0])
-  # New format: final shape is (n*dim0, NUM_LANES) instead of (NUM_LANES, n*dim0)
-  # Tiles are laid out as num_tiles rows x 1 col
-  tile_rows = num_tiles
-  tile_cols = 1
-
-  # Compute n*dim0 from num_tiles
   n_times_dim0 = num_tiles * NUM_SUBLANES
-
-  # Global base index within tile (maps to original column j)
-  # j = (iota_tile(1) // dim0) * (n*dim0) + (transposed_col component from tile_offset)
   global_base_index = (iota_tile(1) // dim0) * n_times_dim0 + iota_tile(0)
 
   def compute_is_descending(idx):
-    # Tile offset: base j for element (0,0) in this tile
-    # tile_row = idx (since tile_cols = 1)
-    # tile_offset = tile_row * NUM_SUBLANES = idx * NUM_SUBLANES
     tile_offset = idx * NUM_SUBLANES
     is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
     if type(stage) == int:
@@ -164,7 +152,6 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
         outs_tiles[arr_idx][idx] = out
   else:
     # Compare tiles
-    # New format: tile_cols = 1, so separation is just the number of tile rows apart
     separation = 2**substage // NUM_SUBLANES
     for i in range(num_tiles // 2):
       idx = _compute_pair_slice_start_index(i, separation=separation)

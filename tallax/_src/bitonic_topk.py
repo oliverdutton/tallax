@@ -97,24 +97,11 @@ def max_arrays(operands, num_keys, axis):
   return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
-def _split_rows(tiles):
-  # New format: tiles are in a (num_tiles x 1) grid, so no actual splitting needed
-  # Just return each tile as its own "row"
-  return [[tile] for tile in tiles]
-
-
 def _split_actives(tiles):
-  # New format: tiles are in a column, take an even number of tiles
-  # This leaves the odd tile (if any) as remainder
-  num_tiles = len(tiles)
-  num_active_tiles = 2 * (num_tiles // 2)  # Round down to even number
-  active = tiles[:num_active_tiles]
-  remainder = tiles[num_active_tiles:]
-  return [active, remainder]
+  num_active = 2 * (len(tiles) // 2)
+  return [tiles[:num_active], tiles[num_active:]]
 
 def _merge_remainder(merged, remainder):
-  # New format: simply concatenate merged and remainder
-  # (they're both flat lists of tiles in new format)
   return merged + remainder
 
 
@@ -225,9 +212,6 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       # Cross-tile merging: reduce tile count by half each iteration
       # Keep merging until we hit target tile count
       for _ in range(num_merges - num_intra_merges):
-        # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
-        # so different tile sets have different orders.
-        # New format: tiles are in a column, so just check if total count is odd
         has_remainder = ((len(arrs_tiles[0]) % 2) != 0)
         if has_remainder:
           remainder_arrs_tiles = [
