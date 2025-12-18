@@ -102,12 +102,7 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
   )
 
 
-### Within-Tile Substages
-
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
-  """Perform substage using sublane permutation or cross-tile comparison."""
-
-  def _compute_pair_slice_start_index(i, separation, slice_length=1):
+def compute_pair_slice_start_index(i, separation, slice_length=1):
     """Compute start index for pair-wise array slicing."""
     if slice_length > separation:
       raise ValueError(
@@ -118,6 +113,9 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
     slice_idx = i % slices_per_pair
     return pair_idx * 2 * separation + slice_idx * slice_length
 
+
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
+  """Perform substage using sublane permutation or cross-tile comparison."""
   assert dim0 <= NUM_LANES and dim0 == 2**log2(dim0)
   num_tiles = len(arrs_tiles[0])
   tile_local_offset = iota_tile(0) + (iota_tile(1) // dim0) * num_tiles * NUM_SUBLANES
@@ -155,7 +153,7 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
     # Comparison between tiles
     separation = 2**substage // NUM_SUBLANES
     for i in range(num_tiles // 2):
-      idx = _compute_pair_slice_start_index(i, separation=separation)
+      idx = compute_pair_slice_start_index(i, separation=separation)
       lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
       for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
           lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
@@ -613,15 +611,10 @@ def _run_array_substage_on_hbm_refs(
   pair_length = 2 ** (substage + 1)
   slices_per_pair = (pair_length // 2) // slice_length
 
-  def _compute_pair_slice_start_index(i):
-    pair_idx = i // slices_per_pair
-    pair_subslice_idx = i % slices_per_pair
-    return pair_idx * pair_length + pair_subslice_idx * slice_length
-
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = _compute_pair_slice_start_index(i)
+    left_start = _compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
