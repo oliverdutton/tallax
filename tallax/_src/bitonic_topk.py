@@ -97,14 +97,6 @@ def max_arrays(operands, num_keys, axis):
   return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
-def _split_actives(tiles):
-  num_active = 2 * (len(tiles) // 2)
-  return [tiles[:num_active], tiles[num_active:]]
-
-def _merge_remainder(merged, remainder):
-  return merged + remainder
-
-
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
 
@@ -133,7 +125,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 def _merge_max_crosstile(
-    arrs_tiles, dim0, num_keys: int = 1
+    arrs_tiles, separation, num_keys: int = 1
 ):
   """Perform crosstile comparison keeping max values.
 
@@ -147,10 +139,11 @@ def _merge_max_crosstile(
   """
   num_tiles = len(arrs_tiles[0])
   outs_tiles = [[] for t in arrs_tiles]
-  for idx in range(0, num_tiles, 2):
+  for i in range(num_tiles // 2):
+    idx = compute_pair_slice_start_index(i, separation)
     lefts, rights = (
         transpose_list_of_lists(arrs_tiles)[j]
-        for j in (idx, idx + 1)
+        for j in (idx, idx + separation)
     )
     # Keep only max (left) values, discard min (right)
     for j, (o_left, _) in enumerate(compare_and_swap(
@@ -180,6 +173,8 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     """
     if k > NUM_LANES:
       raise NotImplementedError
+    unpadded_k = k
+    k = 2**log2(k)
     # Compute padded shape that satisfies alignment requirements
     shape = operands[0].shape
     padded_shape = _compute_padded_shape(*shape)
@@ -194,13 +189,13 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       dim0 = arrs[0].shape[0]
       assert dim0 <= NUM_LANES
       log_lanes = log2(NUM_LANES)
-      num_merges = log2(shape[1]) - log_lanes
+      num_merges = log2(shape[1]) - log2(k)
       num_intra_merges = min(
       log2(pl.cdiv(NUM_LANES, dim0)), num_merges)
       # are intra permutations
   
-      # Build bitonic sequences up to length 64 (stage 6)
-      for stage in range(1, log_lanes):  # stages 1-6 inclusive
+      # Build bitonic sequences up to length k/2
+      for stage in range(1, log2(k)):
         arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=stage,
@@ -212,17 +207,17 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       # Cross-tile merging: reduce tile count by half each iteration
       # Keep merging until we hit target tile count
       for _ in range(num_merges - num_intra_merges):
-        has_remainder = ((len(arrs_tiles[0]) % 2) != 0)
-        if has_remainder:
+        remainder_length = len(arrs_tiles[0]) % (2 * k // NUM_SUBLANES)
+        if remainder_length:
           remainder_arrs_tiles = [
-          _split_actives(x)[1] for x in arrs_tiles]
+          x[-remainder_length:] for x in arrs_tiles]
           arrs_tiles = [
-          _split_actives(x)[0] for x in arrs_tiles]
+          x[:-remainder_length] for x in arrs_tiles]
         arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
-          num_substages=log_lanes,
+          num_substages=log2(k),
           # tile i is different order to tile i+1, so they can be max merged
-          stage=log2(NUM_LANES * NUM_LANES // dim0),
+          stage=log2(k),
           dim0=dim0,
           num_keys=num_keys,
         )
@@ -230,21 +225,20 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         # Cross-tile comparison: keep max half, discard min half
         arrs_tiles = _merge_max_crosstile(
             arrs_tiles,
-            dim0=dim0,
+            separation=k//NUM_SUBLANES,
             num_keys=num_keys
         )
-        if has_remainder:
-          arrs_tiles = [_merge_remainder(*vs) for vs in zip(arrs_tiles, remainder_arrs_tiles)]
+        if remainder_length:
+          arrs_tiles = [x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)]
   
       # Progressive intra-tile merging with lane permute
       for i in range(num_intra_merges)[::-1]:
         distance = dim0 * (2**i)
-        # Calculate stage based on current merge size
-        # Stage = log2(2 * distance * dim0 / NUM_LANES * NUM_LANES) = log2(2 * distance)
+        # Calculate stage based on current merge distance
         arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
-          num_substages=log_lanes,
-          stage=log_lanes+i,
+          num_substages=log2(k),
+          stage=log2(len(arrs_tiles[0]) * NUM_SUBLANES)+i,
           dim0=dim0,
           num_keys=num_keys,
         )
@@ -276,8 +270,8 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       # Use dim1_offset=2**7 to ensure descending direction
       arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
-        num_substages=log_lanes,
-        stage=log_lanes,
+        num_substages=log2(k),
+        stage=log2(k),
         dim1_offset=NUM_LANES,
         dim0=dim0,
         num_keys=num_keys,
@@ -287,7 +281,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         tiles, dim0=dim0) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
     return [
-      jnp.concatenate(arr_slices, axis=0)[:shape[0],:k]
+      jnp.concatenate(arr_slices, axis=0)[:shape[0],:unpadded_k]
       for arr_slices in transpose_list_of_lists(
         [_topk_arrays(arrs)
         for arrs in transpose_list_of_lists([
