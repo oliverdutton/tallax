@@ -279,29 +279,52 @@ def create_bit_indicator(bit_position: int, index=None):
 
 
 def to_compressed_transpose_format(arr):
-  """Convert array to sublane-oriented format for faster permutes."""
-  nelems = arr.shape[0] * arr.shape[1]
+  """Convert array to sublane-oriented format for faster permutes.
+
+  New format: Instead of concat then transpose, we split along dim1 and concat along dim0.
+
+  (b, n*128) -> split along dim1 into (128//b) chunks -> concat along dim0 -> (128, n*b)
+
+  For element at (i, j) in input (b, n*128):
+    - chunk_idx = j // (n*b)
+    - Output position: row = chunk_idx * b + i, col = j % (n*b)
+  """
+  dim0, dim1 = arr.shape
+  nelems = dim0 * dim1
   assert (nelems % NUM_LANES**2) == 0
-  arrs = [
-      arr[:, i * NUM_LANES:(i + 1) * NUM_LANES]
-      for i in range(pl.cdiv(arr.shape[1], NUM_LANES))
-  ]
-  arr = jnp.concatenate(arrs, axis=0).T # (128, n*b)
+
+  # Split along dim1 into NUM_LANES//dim0 chunks
+  n_splits = NUM_LANES // dim0
+  arrs = jnp.split(arr, n_splits, axis=1)  # Each chunk: (dim0, n*dim0)
+
+  # Concat along dim0 to get (NUM_LANES, n*dim0)
+  arr = jnp.concatenate(arrs, axis=0)
+
   tiles = split_array_to_tiles(arr)
   return tiles
 
 
 def from_compressed_transpose_format(tiles, dim0):
-  """Convert from compressed transpose format back to original layout."""
+  """Convert from compressed transpose format back to original layout.
+
+  New format reverse: (128, n*b) -> split into (128//b) row chunks -> concat along dim1 -> (b, n*128)
+
+  For element at (row, col) in compressed format (128, n*b):
+    - chunk_idx = row // b
+    - i = row % b
+    - Output position: (i, chunk_idx * (n*b) + col)
+  """
   dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
   arr = join_tiles_to_array(
       (NUM_LANES, (dim0 * dim1) // NUM_LANES),
-      tiles) # (128, n*b)
-  arr = arr.T
-  return jnp.concatenate(
-      [arr[i * dim0:(i + 1) * dim0] for i in range(arr.shape[0] // dim0)],
-      axis=1
-  )
+      tiles) # (128, n*dim0)
+
+  # Split into NUM_LANES//dim0 chunks of size (dim0, n*dim0) each
+  n_splits = NUM_LANES // dim0
+  arrs = jnp.split(arr, n_splits, axis=0)  # Each chunk: (dim0, n*dim0)
+
+  # Concat along dim1 to get (dim0, n*128)
+  return jnp.concatenate(arrs, axis=1)
 
 
 ### Loop Utilities
