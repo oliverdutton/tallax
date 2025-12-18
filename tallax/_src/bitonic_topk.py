@@ -34,6 +34,9 @@ from tallax._src.utils import (
     to_compressed_transpose_format,
     from_compressed_transpose_format,
     to_32bit_dtype,
+    join_tiles_to_array,
+    split_array_to_tiles,
+    
 )
 from tallax._src.sort import (
     run_compressed_transpose_format_substages_on_tiles,
@@ -185,7 +188,7 @@ def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
 # now the number of tiles is set. 
 # then compare cross lane min(log2(pl.cdiv(NUM_LANES, dim0)), num_merges) times. 
 # then compare cross sublane log2(pl.cdiv(NUM_SUBLANES, k)) times
-def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1):
+def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1, axis: int = 1):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -209,10 +212,18 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     k = 2**log2(k)
     # Compute padded shape that satisfies alignment requirements
     shape = operands[0].shape
-    unpadded_dim1 = shape[1]
-    if k > unpadded_dim1:
+    unpadded_sort_dim = shape[axis]
+    if k > unpadded_sort_dim:
         raise ValueError
-    padded_shape = _compute_padded_shape(*shape)
+    if axis == 1:
+        padded_shape = _compute_padded_shape(*shape)
+    elif axis == 0:
+        padded_shape = (
+            ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
+            ceil_multiple(shape[1], NUM_LANES)
+        )
+    else:
+        raise ValueError
     # Pad both dimensions if needed
     arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
@@ -258,15 +269,14 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
 
     def _topk_arrays(arrs):
       # Convert to compressed transpose format
-      arrs_tiles = [to_compressed_transpose_format(arr) for arr in arrs]
-
+      arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
       dim0 = arrs[0].shape[0]
       assert dim0 <= NUM_LANES
       log_lanes = log2(NUM_LANES)
       num_tiles = len(arrs_tiles[0])
-      num_merges = log2(unpadded_dim1) - log2(k)
+      num_merges = log2(unpadded_sort_dim) - log2(k)
       num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
-      num_lane_merges = log2(pl.cdiv(unpadded_dim1, num_tiles * NUM_SUBLANES))
+      num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
       num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
       # are intra permutations
   
@@ -300,17 +310,18 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         dim0=dim0,
         num_keys=num_keys,
       )
-  
-      return [from_compressed_transpose_format(
+      return [(from_compressed_transpose_format if axis==1 else join_tiles_to_array)(
         tiles, dim0=dim0) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
-    return [
-      jnp.concatenate(arr_slices, axis=0)[:shape[0],:unpadded_k]
+    batch_axis = 1 - axis
+    arrs = [
+      jnp.concatenate(arr_slices, axis=batch_axis)[:shape[0],:unpadded_k]
       for arr_slices in transpose_list_of_lists(
         [_topk_arrays(arrs)
         for arrs in transpose_list_of_lists([
-        jnp.split(arr, pl.cdiv(padded_shape[0], NUM_LANES), axis=0) for arr in arrs])
+        jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
+    return [(arr[:shape[batch_axis],:unpadded_k] if axis==1 else arr[:unpadded_k, :shape[batch_axis]]) for arr in arrs]
   
 def bitonic_topk_refs(
     in_refs,
