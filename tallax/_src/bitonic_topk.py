@@ -98,13 +98,15 @@ def max_arrays(operands, num_keys, axis):
   return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
 
 
-def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
+def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
 
-  The compressed transpose format requires the total number of elements (dim0 * dim1)
-  to be a multiple of NUM_LANES^2 (128^2 = 16384). This function finds the minimal
-  padded shape that satisfies this constraint while keeping dim0 as a power of 2 between NUM_SUBLANES and NUM_LANES.
-
+  This function finds the minimal
+  padded shape that satisfies the constraints:
+  - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
+  - dim1 is a multiple of k
+  - must be possible to split into tiles so num_elems must be divisible by NUM_SUBLANES * NUM_LANES
+  
   Args:
     unpadded_dim0: Original first dimension size
     unpadded_dim1: Original second dimension size
@@ -114,15 +116,16 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
   """
   if unpadded_dim0 >= NUM_LANES:
     dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
-    dim1 = ceil_multiple(unpadded_dim1, NUM_LANES)
+    dim1 = ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES))
     return (dim0, dim1)
 
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
     if 2**i >= unpadded_dim0]
   shapes = [
-    (dim0, ceil_multiple(unpadded_dim1, (NUM_LANES ** 2) // dim0))
+    (dim0, ceil_multiple(unpadded_dim1,
+      (max(k, NUM_SUBLANES) * NUM_LANES) // dim0))
     for dim0 in dim0s]
-  # take minimal num elements, larger dim0 on ties
+  # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 def _max_reduce_bitonic_inter_tile(
