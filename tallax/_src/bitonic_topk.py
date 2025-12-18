@@ -247,7 +247,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
             reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=1, separation=lane_separation)
         
         # special handling for cross tile as tile to compare to may not exist
-        remainder_length = len(arrs_tiles[0]) % (2 * k // NUM_SUBLANES)
+        remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
         if cross_tile and remainder_length:
           remainder_arrs_tiles = [
           x[-remainder_length:] for x in arrs_tiles]
