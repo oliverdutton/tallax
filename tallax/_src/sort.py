@@ -118,25 +118,26 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
     slice_idx = i % slices_per_pair
     return pair_idx * 2 * separation + slice_idx * slice_length
 
-  assert dim0 <= NUM_LANES
+  assert dim0 <= NUM_LANES and dim0 == 2**log2(dim0)
   num_tiles = len(arrs_tiles[0])
-  n_times_dim0 = num_tiles * NUM_SUBLANES
-  global_base_index = (iota_tile(1) // dim0) * n_times_dim0 + iota_tile(0)
+  tile_local_offset = iota_tile(0) + (iota_tile(1) // dim0) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
     tile_offset = idx * NUM_SUBLANES
-    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + global_base_index)
+    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
-        return create_bit_indicator(stage, global_base_index)
-      elif stage < log2(NUM_LANES):
+        # every tile has same value
+        return create_bit_indicator(stage, tile_local_offset)
+      elif stage < log2(num_tiles * NUM_SUBLANES):
+        # value constant across tile
         return create_bit_indicator(stage, tile_offset)
     return is_desc
 
   outs_tiles = [[None for _ in t] for t in arrs_tiles]
 
   if substage < log2(NUM_SUBLANES):
-    # Sublane permutation
+    # Comparison within tile
     permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
     arrs_tiles_permuted = jax.tree.map(
         lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
@@ -151,7 +152,7 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
       )):
         outs_tiles[arr_idx][idx] = out
   else:
-    # Compare tiles
+    # Comparison between tiles
     separation = 2**substage // NUM_SUBLANES
     for i in range(num_tiles // 2):
       idx = _compute_pair_slice_start_index(i, separation=separation)
