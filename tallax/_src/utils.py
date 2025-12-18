@@ -281,13 +281,15 @@ def create_bit_indicator(bit_position: int, index=None):
 def to_compressed_transpose_format(arr):
   """Convert array to sublane-oriented format for faster permutes.
 
-  New format: Instead of concat then transpose, we split along dim1 and concat along dim0.
+  New format: Make NUM_LANES in dim0 BEFORE transpose (instead of dim1).
 
-  (b, n*128) -> split along dim1 into (128//b) chunks -> concat along dim0 -> (128, n*b)
+  Old: (b, n*128) -> chunks of 128 in dim1 -> concat dim0 -> (n*b, 128) -> T -> (128, n*b)
+  New: (b, n*128) -> chunks -> concat dim0 -> (128, n*b) -> T -> (n*b, 128)
 
   For element at (i, j) in input (b, n*128):
     - chunk_idx = j // (n*b)
-    - Output position: row = chunk_idx * b + i, col = j % (n*b)
+    - Pre-transpose: (chunk_idx * b + i, j % (n*b))
+    - Post-transpose: (j % (n*b), chunk_idx * b + i)
   """
   dim0, dim1 = arr.shape
   nelems = dim0 * dim1
@@ -300,6 +302,9 @@ def to_compressed_transpose_format(arr):
   # Concat along dim0 to get (NUM_LANES, n*dim0)
   arr = jnp.concatenate(arrs, axis=0)
 
+  # Transpose: (NUM_LANES, n*dim0) -> (n*dim0, NUM_LANES)
+  arr = arr.T
+
   tiles = split_array_to_tiles(arr)
   return tiles
 
@@ -307,17 +312,21 @@ def to_compressed_transpose_format(arr):
 def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout.
 
-  New format reverse: (128, n*b) -> split into (128//b) row chunks -> concat along dim1 -> (b, n*128)
+  New format reverse: (n*b, 128) -> T -> (128, n*b) -> split rows -> concat dim1 -> (b, n*128)
 
-  For element at (row, col) in compressed format (128, n*b):
-    - chunk_idx = row // b
-    - i = row % b
-    - Output position: (i, chunk_idx * (n*b) + col)
+  For element at (row, col) in compressed format (n*b, 128):
+    - After transpose: (col, row)
+    - chunk_idx = col // b
+    - i = col % b
+    - Output position: (i, chunk_idx * (n*b) + row)
   """
   dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
   arr = join_tiles_to_array(
-      (NUM_LANES, (dim0 * dim1) // NUM_LANES),
-      tiles) # (128, n*dim0)
+      ((dim0 * dim1) // NUM_LANES, NUM_LANES),
+      tiles) # (n*dim0, 128)
+
+  # Transpose: (n*dim0, 128) -> (128, n*dim0)
+  arr = arr.T
 
   # Split into NUM_LANES//dim0 chunks of size (dim0, n*dim0) each
   n_splits = NUM_LANES // dim0

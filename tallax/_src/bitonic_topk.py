@@ -98,25 +98,24 @@ def max_arrays(operands, num_keys, axis):
 
 
 def _split_rows(tiles):
-  num_rows = NUM_LANES // NUM_SUBLANES
-  num_cols = len(tiles) // num_rows
-  return [tiles[row*num_cols:(row+1)*num_cols] for row in range(num_rows)]
+  # New format: tiles are in a (num_tiles x 1) grid, so no actual splitting needed
+  # Just return each tile as its own "row"
+  return [[tile] for tile in tiles]
 
 
 def _split_actives(tiles):
-  num_rows = NUM_LANES // NUM_SUBLANES
-  num_cols = len(tiles) // num_rows
-  num_active_cols = 2 * (num_cols // 2)
-  active = flatten((
-    x[:num_active_cols] for x in _split_rows(tiles)
-  ))
-  remainder = flatten((
-    x[num_active_cols:] for x in _split_rows(tiles)
-  ))
+  # New format: tiles are in a column, take an even number of tiles
+  # This leaves the odd tile (if any) as remainder
+  num_tiles = len(tiles)
+  num_active_tiles = 2 * (num_tiles // 2)  # Round down to even number
+  active = tiles[:num_active_tiles]
+  remainder = tiles[num_active_tiles:]
   return [active, remainder]
 
 def _merge_remainder(merged, remainder):
-  return flatten(map(flatten, zip(*map(_split_rows, (merged, remainder)))))
+  # New format: simply concatenate merged and remainder
+  # (they're both flat lists of tiles in new format)
+  return merged + remainder
 
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
@@ -228,7 +227,8 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       for _ in range(num_merges - num_intra_merges):
         # Run substages sorting NUM_LANES but with stage for merging bitonic sequences
         # so different tile sets have different orders.
-        has_remainder = ((len(arrs_tiles[0][::16])%2) != 0)
+        # New format: tiles are in a column, so just check if total count is odd
+        has_remainder = ((len(arrs_tiles[0]) % 2) != 0)
         if has_remainder:
           remainder_arrs_tiles = [
           _split_actives(x)[1] for x in arrs_tiles]
