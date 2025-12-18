@@ -206,6 +206,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     Returns:
         List of JAX arrays of shape (original_dim0, k) with top-k elements
     """
+    batch_axis = 1 - axis
     if k > NUM_LANES:
       raise NotImplementedError
     unpadded_k = k
@@ -270,7 +271,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     def _topk_arrays(arrs):
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-      dim0 = arrs[0].shape[0]
+      dim0 = arrs[0].shape[batch_axis]
       assert dim0 <= NUM_LANES
       log_lanes = log2(NUM_LANES)
       num_tiles = len(arrs_tiles[0])
@@ -314,7 +315,6 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       return [(from_compressed_transpose_format if axis==1 else join_tiles_to_array)(
         tiles, dim0=dim0) for tiles in arrs_tiles]
     # wrapping to act on dim0 <= NUM_LANES in the kernel 
-    batch_axis = 1 - axis
     arrs = [
       jnp.concatenate(arr_slices, axis=batch_axis)
       for arr_slices in transpose_list_of_lists(
