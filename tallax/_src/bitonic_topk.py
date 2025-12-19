@@ -228,7 +228,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       num_tiles = len(arrs_tiles[0])
       num_merges = log2(unpadded_sort_dim) - log2(k)
       num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
-      num_lane_merges = log2(pl.cdiv(padded_shape[axis], num_tiles * NUM_SUBLANES))
+      num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
       num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
       # are intra permutations
   
