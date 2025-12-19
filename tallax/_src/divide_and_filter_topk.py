@@ -1,4 +1,3 @@
-
 import functools
 import jax
 import jax.numpy as jnp
@@ -279,7 +278,9 @@ def dynamic_topk_refs(
         bins_topm_idxs_ref[
             token_slice, pl.dslice(i * num_bins, num_bins)
         ] = bins_topm_idxs[i].astype(bins_topm_idxs_ref.dtype)
-
+      if m >= max_k:
+        # it's converged so no need for check
+        return
       # Termination criterion:
       # If top-(m-1) bins contain >= k vals larger than
       # the largest m-th largest value, then top-k is guaranteed to be in bins
@@ -316,21 +317,22 @@ def dynamic_topk_refs(
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
-  @pl.when(guarantee_convergence & (m_final != max_k) & (termination_flag_ref[0] == 0))
-  def _():
-    # This optimization applies when guarantee_convergence is enabled but
-    # we haven't fully converged (m_final != max_k) and termination criterion not met.
-    # Packs the most active bins to help converge.
-    _merge_unconverged_bins_topk(
-        logits_ref,
-        bins_topm_vals_ref.at[token_slice],
-        bins_topm_idxs_ref.at[token_slice],
-        num_bins=num_bins,
-        m=m_final,
-        max_k=max_k
-    )
+  if guarantee_convergence and (m_final < max_k):
+    @pl.when(termination_flag_ref[0] == 0)
+    def _():
+      # This optimization applies when guarantee_convergence is enabled but
+      # we haven't fully converged (m_final != max_k) and termination criterion not met.
+      # Packs the most active bins to help converge.
+      _merge_unconverged_bins_topk(
+          logits_ref,
+          bins_topm_vals_ref.at[token_slice],
+          bins_topm_idxs_ref.at[token_slice],
+          num_bins=num_bins,
+          m=m_final,
+          max_k=max_k
+      )
 
-  global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
+  global_topk_schedule = tuple(sorted(set(x-1 if x>1 else x for x in bins_topm_schedule)))
 
   # Final top-k extraction (done by last program)
   @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
@@ -340,9 +342,9 @@ def dynamic_topk_refs(
     for i in range(max_depth_ref.shape[0]):
       global_max_depth = jnp.maximum(global_max_depth, max_depth_ref[i])
 
-    valid_ref[0] = ((
-    global_max_depth < bins_topm_schedule[-1]
-    ) | (bins_topm_schedule[-1] == max_k)
+    valid_ref[0] = (
+    (global_max_depth < bins_topm_schedule[-1]
+    ) | (bins_topm_schedule[-1] >= max_k)
     ).astype(jnp.int32)
 
     # Use appropriate sorting depth based on global_max_depth
@@ -361,6 +363,7 @@ def dynamic_topk_refs(
           [topk_vals_ref, topk_idxs_ref],
           num_keys=1,
           descending=True,
+          k=max_k,
         )
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
@@ -446,7 +449,7 @@ def top_dynamic_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.98, 0.9999))
-    bins_topm_schedule = tuple(t + 1 for t in thresholds)
+    bins_topm_schedule = tuple(sorted(set(min(t + 1, max_k) for t in thresholds)))
     print(f"Auto-computed schedules for max_k={max_k}, num_bins={num_bins}:")
     print(f"  bins_topm_schedule: {bins_topm_schedule}")
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
@@ -456,12 +459,9 @@ def top_dynamic_k(
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
 
-  # Updated padded size calculation using num_bins
-  padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
-
   output_shapes = (
-      jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens, max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),

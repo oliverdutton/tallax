@@ -8,10 +8,11 @@ from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("shape", [(8, 64), (24, 32), (8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
+@pytest.mark.parametrize("shape", [(8, 64), (17, 37), (8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
+@pytest.mark.parametrize("k", [1, 5, 23, 128])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [1])
-def test_bitonic_topk(shape, dtype, axis):
+def test_bitonic_topk(shape, dtype, axis, k):
     """Test bitonic_topk for both axes with k values."""
     interpret = is_cpu_platform()
     if interpret and (shape[1] > 256):
@@ -26,7 +27,7 @@ def test_bitonic_topk(shape, dtype, axis):
 
     indices = jax.lax.broadcasted_iota(jnp.int32, shape, axis)
 
-    k = min(128, shape[axis])
+    k = min(k, shape[axis])
     # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
     # On TPU/GPU, use the full bitonic_topk with Pallas
     # Note: bitonic_topk_arrays only works on axis=1, so we only test axis=1
@@ -39,7 +40,7 @@ def test_bitonic_topk(shape, dtype, axis):
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}, axis {axis}"
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195), (8, 1024)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_top1_pallas(shape, dtype, axis):

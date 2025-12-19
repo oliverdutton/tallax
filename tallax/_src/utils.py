@@ -20,6 +20,8 @@ def is_cpu_platform():
 
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
+  if x==0:
+    return 0
   return math.ceil(math.log2(x))
 
 
@@ -231,9 +233,10 @@ def unpack_bf16_u16_from_i32(packed):
 
 def split_array_to_tiles(arr):
   """Split 2D array into flat list of (NUM_SUBLANES, NUM_LANES) tiles."""
-  num_rows, num_cols = arr.shape
-  tile_rows = num_rows // NUM_SUBLANES
-  tile_cols = num_cols // NUM_LANES
+  tile_rows = arr.shape[0] // NUM_SUBLANES
+  tile_cols = arr.shape[1] // NUM_LANES
+  assert (arr.shape[0] % NUM_SUBLANES == 0)
+  assert (arr.shape[1] % NUM_LANES == 0)
 
   tiles = []
   for row in range(tile_rows):
@@ -246,10 +249,12 @@ def split_array_to_tiles(arr):
   return tiles
 
 
-def join_tiles_to_array(target_shape, tiles):
+def join_tiles_to_array(tiles, dim0):
   """Reconstruct 2D array from flat list of tiles."""
-  num_rows, num_cols = target_shape
+  num_tiles = len(tiles)
   tile_rows, tile_cols = tiles[0].shape
+  num_rows = dim0
+  num_cols = (num_tiles*tile_rows*tile_cols)//dim0
   grid_cols = num_cols // tile_cols
 
   rows = []
@@ -280,22 +285,18 @@ def create_bit_indicator(bit_position: int, index=None):
 
 def to_compressed_transpose_format(arr):
   """Convert array to sublane-oriented format for faster permutes."""
-  dim0, dim1 = arr.shape
-  nelems = dim0 * dim1
-  assert (nelems % NUM_LANES**2) == 0
-  n_splits = NUM_LANES // dim0
-  arrs = jnp.split(arr, n_splits, axis=1)
+  dim0 = arr.shape[0]
+  assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
+  arrs = jnp.split(arr, NUM_LANES // dim0, axis=1)
   arr = jnp.concatenate(arrs, axis=0).T
-  tiles = split_array_to_tiles(arr)
-  return tiles
+  return split_array_to_tiles(arr)
 
 
 def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout."""
-  dim1 = (len(tiles) * NUM_SUBLANES * NUM_LANES) // dim0
-  arr = join_tiles_to_array(((dim0 * dim1) // NUM_LANES, NUM_LANES), tiles).T
-  n_splits = NUM_LANES // dim0
-  arrs = jnp.split(arr, n_splits, axis=0)
+  assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
+  arr = join_tiles_to_array(tiles, dim0=len(tiles) * NUM_SUBLANES).T
+  arrs = jnp.split(arr, arr.shape[0] // dim0, axis=0)
   return jnp.concatenate(arrs, axis=1)
 
 
