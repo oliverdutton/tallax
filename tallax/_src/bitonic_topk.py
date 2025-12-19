@@ -204,7 +204,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         num_keys: Number of sort keys (default: 1)
 
     Returns:
-        List of JAX arrays of shape (original_dim0, k) with top-k elements
+        List of JAX arrays of shape (original_batch_size, k) with top-k elements
     """
     batch_axis = 1 - axis
     if k > NUM_LANES:
@@ -229,7 +229,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    def _max_reduce_bitonic(arrs_tiles, separation, dim0):
+    def _max_reduce_bitonic(arrs_tiles, separation, batch_size):
         # separation is comparison distance
         assert separation == 2**log2(separation)
         num_tiles = len(arrs_tiles[0])
@@ -244,7 +244,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
             reduce_fn = functools.partial(_max_reduce_bitonic_inter_tile, separation=tile_separation)
         else:
             # cross lane (due to compressed transpose format)
-            lane_separation = dim0 * (separation // (num_tiles * NUM_SUBLANES))
+            lane_separation = batch_size * (separation // (num_tiles * NUM_SUBLANES))
             reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=1, separation=lane_separation)
         
         # special handling for cross tile as tile to compare to may not exist
@@ -259,7 +259,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           arrs_tiles,
           num_substages=log2(k),
           stage=log2(separation),
-          dim0=dim0,
+          dim0=batch_size,
           num_keys=num_keys,
         )
         arrs_tiles = reduce_fn(arrs_tiles, num_keys=num_keys)
@@ -271,8 +271,8 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     def _topk_arrays(arrs):
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-      dim0 = arrs[0].shape[batch_axis]
-      assert dim0 <= NUM_LANES
+      batch_size = arrs[0].shape[batch_axis]
+      assert batch_size <= NUM_LANES
       log_lanes = log2(NUM_LANES)
       num_tiles = len(arrs_tiles[0])
       num_merges = log2(unpadded_sort_dim) - log2(k)
@@ -287,21 +287,21 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           arrs_tiles,
           num_substages=stage,
           stage=stage,
-          dim0=dim0,
+          dim0=batch_size,
           num_keys=num_keys,
         )
   
       # Progressive merge tiles together as far as possible
       for _ in range(num_tile_merges):
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=ceil_multiple(k, NUM_SUBLANES), dim0=dim0)
+        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=ceil_multiple(k, NUM_SUBLANES), batch_size=batch_size)
       num_tiles = len(arrs_tiles[0])
       assert num_tiles == pl.cdiv(k, NUM_SUBLANES), f'{num_tiles=}, should be {pl.cdiv(k, NUM_SUBLANES)}'
       for i in range(num_lane_merges)[::-1]:
         separation = num_tiles * NUM_SUBLANES * 2**i
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, dim0=dim0)
+        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       for i in range(num_sublane_merges)[::-1]:
         separation = 2**i
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, dim0=dim0)
+        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=k to ensure descending direction
       arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
@@ -309,12 +309,12 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         num_substages=log2(k),
         stage=log2(k),
         dim1_offset=k,
-        dim0=dim0,
+        dim0=batch_size,
         num_keys=num_keys,
       )
       return [(from_compressed_transpose_format if axis==1 else join_tiles_to_array)(
-        tiles, dim0=(dim0 if axis==1 else ceil_multiple(k, NUM_SUBLANES))) for tiles in arrs_tiles]
-    # wrapping to act on dim0 <= NUM_LANES in the kernel 
+        tiles, dim0=(batch_size if axis==1 else ceil_multiple(k, NUM_SUBLANES))) for tiles in arrs_tiles]
+    # wrapping to act on batch_size <= NUM_LANES in the kernel 
     arrs = [
       jnp.concatenate(arr_slices, axis=batch_axis)
       for arr_slices in transpose_list_of_lists(
