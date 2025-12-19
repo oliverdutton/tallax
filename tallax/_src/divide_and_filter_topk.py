@@ -1,4 +1,3 @@
-
 import functools
 import jax
 import jax.numpy as jnp
@@ -279,7 +278,9 @@ def dynamic_topk_refs(
         bins_topm_idxs_ref[
             token_slice, pl.dslice(i * num_bins, num_bins)
         ] = bins_topm_idxs[i].astype(bins_topm_idxs_ref.dtype)
-
+      if m >= max_k:
+        # it's converged so no need for check
+        return
       # Termination criterion:
       # If top-(m-1) bins contain >= k vals larger than
       # the largest m-th largest value, then top-k is guaranteed to be in bins
@@ -316,7 +317,7 @@ def dynamic_topk_refs(
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
-  @pl.when(guarantee_convergence & (m_final != max_k) & (termination_flag_ref[0] == 0))
+  @pl.when(guarantee_convergence & (m_final < max_k) & (termination_flag_ref[0] == 0))
   def _():
     # This optimization applies when guarantee_convergence is enabled but
     # we haven't fully converged (m_final != max_k) and termination criterion not met.
@@ -340,9 +341,9 @@ def dynamic_topk_refs(
     for i in range(max_depth_ref.shape[0]):
       global_max_depth = jnp.maximum(global_max_depth, max_depth_ref[i])
 
-    valid_ref[0] = ((
-    global_max_depth < bins_topm_schedule[-1]
-    ) | (bins_topm_schedule[-1] == max_k)
+    valid_ref[0] = (
+    (global_max_depth < bins_topm_schedule[-1]
+    ) | (bins_topm_schedule[-1] >= max_k)
     ).astype(jnp.int32)
 
     # Use appropriate sorting depth based on global_max_depth
@@ -446,7 +447,7 @@ def top_dynamic_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.98, 0.9999))
-    bins_topm_schedule = tuple(t + 1 for t in thresholds)
+    bins_topm_schedule = tuple(min(t + 1, max_k) for t in thresholds)
     print(f"Auto-computed schedules for max_k={max_k}, num_bins={num_bins}:")
     print(f"  bins_topm_schedule: {bins_topm_schedule}")
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
