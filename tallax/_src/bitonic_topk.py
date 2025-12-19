@@ -220,7 +220,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     if axis == 1:
         if min_padded_dim0 is None:
             min_padded_dim0 = shape[0]
-        padded_shape = _compute_padded_shape(min_padded_dim[0], shape[1], k=k)
+        padded_shape = _compute_padded_shape(min_padded_dim0, shape[1], k=k)
     elif axis == 0:
         padded_shape = (
             ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
