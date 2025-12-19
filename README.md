@@ -1,55 +1,50 @@
 # tallax
+`tallax` provides high-performance top-k, sort and gather operations for JAX, optimized for TPUs using Pallas.
 
-# 🔥 Top-K Optimization: Performance Wins
+Built on lightning fast top-k a highly optimized vLLM top-k top-p logit sampler is provided.
 
-## 🎯 Scenario 1: Speculative Decoding top-k setup
+# 🔥 Performance Wins
 
-```
-📊 Setup: Top-5 | Batch=16 | Vocab=32K | bf16
-
-BEFORE  ████████████████████ 85μs
-AFTER   █ 5.5μs
-
-        🔥 15× FASTER
-```
-
------
-
-## 🎯 Scenario 2: Gemini 3 Pro Decoding Setup
+## 🎯 Scenario 1: Logit sampling
 
 ```
-📊 Setup: Top-k=64 | Top-p=0.95 | Vocab=262K* | bf16
+📊 Setup: Gemini 3 Pro decoding
+  Top-k=64 | Top-p=0.95 | Vocab=262K | bf16*
 ```
 
 ### 📦 Small Batch (16)
 
 ```
-CURRENT  ████████████████████████ 388μs
-NEW      ██ 34μs
+vLLM    ████████████████████████ 390μs
+tallax  ██ 35μs
          
-         🔥 10× AVERAGE SPEEDUP
-         ⚡ 6× WORST-CASE SPEEDUP (<70μs)
+     🔥 10× AVERAGE SPEEDUP
+     ⚡ 6× WORST-CASE SPEEDUP (70μs)
 ```
 
 ### 📦📦📦 Large Batch (128)
 
 ```
-CURRENT  ████████████████████████████████ 11,800μs
-NEW      █ 250μs
+vLLM    ████████████████████████████████ 11,800μs
+tallax  █ 250μs
 
-         🔥 45× AVERAGE SPEEDUP
-         ⚡ 23× WORST-CASE SPEEDUP (500μs)
+     🔥 45× AVERAGE SPEEDUP
+     ⚡ 23× WORST-CASE SPEEDUP (500μs)
 ```
 
------
+## 🎯 Scenario 2: Speculative Decoding Top-k
+```
+📊 Setup: Top-5 | Batch=16 | Vocab=32K | bf16
 
-* Using Gemma 3 vocab size (262K) as proxy since Gemini 3 Pro vocab size is not publicly known
+XLA     ████████████████████ 85μs
+tallax  █ 5.5μs
+
+     🔥 15× FASTER
+```
+
+** Gemini 3 Pro uses fixed top-k=64 and default top-p=0.95. Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
 
 
-# Intro
-
-
-`tallax` provides high-performance sorting and top-k operations for JAX, optimized for TPUs using Pallas.
 
 ## Installation
 
@@ -75,11 +70,11 @@ pip install .
 If you installed `jax[tpu]`, the `tallax` installation will automatically use it. Otherwise, it will use the CPU version of JAX.
 
 
-# Divide and Filter Top-K Algorithm
+# Divide and Filter Top-k Algorithm
 
-A TPU-optimized algorithm for efficiently finding top-k elements through partitioning, parallel local top-m computation, and opportunistic early stopping.
+Tallax provides a TPU-optimized algorithm for efficiently finding top-k elements through partitioning, parallel local top-m computation, and opportunistic early stopping.
 
----
+----
 
 ## Overview
 
@@ -157,10 +152,8 @@ Currently implemented: **k ≤ 128** (covers most typical LLM top-k usage)
 Theoretically extensible to larger k with larger sort dimensions with low batch size while still avoiding excessive lane permutations/transposes with compressed transpose format:
 - k = 256 with `(8, 4096)` or `(16, 2048)`
 
----
-
-## Why Use Bitonic Top-k in the Algorithm
+## Why Use Bitonic Top-k in the Algorithm and not alternatives?
 
 For computing top-128 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 256 bins, we expect a 99.9999% chance of convergence by bins-top-8. This produces a filtered subset size of only 256 × 8 = 2,048 elements.
 
-At this reduced size, the choice of final top-k algorithm (Bitonic vs. RadixSelect, etc.) contributes negligibly to overall runtime, so alternatives to bitonic top-k were not explored.​​​​​​​​​​​​​​​​
+At this reduced size, the choice of final top-k algorithm (Bitonic vs RadixSelect vs ...) contributes negligibly to overall runtime , so alternatives to bitonic top-k were not explored.​​​​​​​​​​​​​​​​
