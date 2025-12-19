@@ -106,24 +106,28 @@ def _max_reduce_bitonic_inter_tile(
 def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
     # Create permutation indices for tiles using iota_tile
     permutation = jnp.bitwise_xor(iota_tile(axis), separation)
-  
+    is_right_half = create_bit_indicator(log2(separation), iota_tile(axis))
+
     # Apply permutation to all tiles
     arrs_tiles_permuted = jax.tree.map(
       lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
       arrs_tiles
     )
+
     # Compare and merge with permuted values
-    outs_tiles = [[] for _ in arrs_tiles]
+    outs_tiles = [[None for _ in t] for t in arrs_tiles]
     for _, (lefts, rights) in enumerate(zip(
           *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
           strict=True
       )):
-        for j, (o, _) in enumerate(compare_and_swap(
+        for arr_idx, out in enumerate(compare_and_swap(
             lefts, rights,
             is_descending=True,
+            is_right_half=is_right_half,
             num_keys=num_keys
         )):
-          outs_tiles[j].append(o)
+          outs_tiles[arr_idx][idx] = out
+    assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
     return outs_tiles
     
     
