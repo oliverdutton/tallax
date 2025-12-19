@@ -226,9 +226,9 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       assert batch_size <= NUM_LANES
       log_lanes = log2(NUM_LANES)
       num_tiles = len(arrs_tiles[0])
-      num_merges = log2(unpadded_sort_dim) - log2(k)
+      num_merges = log2(padded_shape[axis]) - log2(k)
       num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
-      num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
+      num_lane_merges = log2(pl.cdiv(padded_shape[axis], num_tiles * NUM_SUBLANES))
       num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
       # are intra permutations
   
@@ -251,14 +251,14 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         separation = num_tiles * NUM_SUBLANES * 2**i
         arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       for i in range(num_sublane_merges)[::-1]:
-        separation = 2**i
+        separation = 2**(i + log2(k))
         arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=k to ensure descending direction
       arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
         num_substages=log2(k),
-        stage=log2(k),
+        stage=None,
         dim1_offset=k,
         dim0=batch_size,
         num_keys=num_keys,
