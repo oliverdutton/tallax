@@ -124,9 +124,9 @@ To recover efficiency:
 1. **Distribute** `sort_dim` across both dimensions
 2. **Example:** `(8, 2048)` → split into 16 tiles of `(8, 128)` → concatenate to `(128, 128)` → transpose
 
-For **k ≤ 128**, top-k can be computed in this format without the compression adding lane permute operations.
+For **k ≤ 128**, top-k can be computed in this format with at most 4 sequential lane permute operations.
 
-**Result:** This Pallas implementation is significantly faster than XLA's top-k and the naive transpose implementation which uses excessive padding for small batch sizes.
+**Result:** This Pallas implementation is significantly faster than XLA's top-k.
 
 ### Supported Configurations
 
