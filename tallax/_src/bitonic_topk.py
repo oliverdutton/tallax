@@ -336,6 +336,7 @@ def bitonic_topk_refs(
     *,
     num_keys: int,
     descending: bool,
+    k: int,
 ):
     """
     Pallas kernel for bitonic top-k with k=128 in compressed transpose format.
@@ -351,7 +352,7 @@ def bitonic_topk_refs(
       raise NotImplementedError
     outs = bitonic_topk_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
-      num_keys=num_keys)
+      num_keys=num_keys, k=k)
     for out, out_ref in zip(outs, out_refs, strict=True):
       out_ref[...] = out.astype(out_ref.dtype)
 
@@ -412,6 +413,7 @@ def bitonic_topk(
             bitonic_topk_refs,
             num_keys=num_keys,
             descending=descending,
+            k=k,
         ),
         out_shape=(output_shapes,),
         compiler_params=pltpu.CompilerParams(
