@@ -44,37 +44,24 @@ tallax  █ 5.5μs
 
 **Gemini 3 Pro uses fixed top-k=64 and default top-p=0.95. Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
 
+----
 
 
 ## Installation
 
-The installation process for `tallax` depends on your JAX backend (CPU or TPU). For `tallax` to function correctly, you must first install the appropriate version of JAX for your hardware.
-
-### 1. Install JAX
-
-Follow the [official JAX installation guide](https://github.com/google/jax#installation) to install `jax` and `jaxlib` for your specific accelerator (CPU, GPU, or TPU).
-
-For example, to install JAX for a TPU environment, you might run:
-```bash
-pip install --upgrade "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-```
-
-### 2. Install tallax
-
-Once JAX is installed, you can install `tallax` using pip:
+You can install `tallax` using pip:
 
 ```bash
-pip install .
+pip install .[tpu]
 ```
 
-If you installed `jax[tpu]`, the `tallax` installation will automatically use it. Otherwise, it will use the CPU version of JAX.
-
+----
 
 # Divide and Filter Top-k Algorithm
 
 Tallax provides a TPU-optimized algorithm for efficiently finding top-k elements through partitioning, parallel local top-m computation, and opportunistic early stopping.
 
-----
+
 
 ## Overview
 
@@ -88,8 +75,6 @@ The algorithm finds top-k elements by:
 This divide-and-filter approach dramatically reduces the amount of elements to compute top-k on.
 
 [^0]: The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
-
----
 
 ## Early Stopping
 
@@ -109,8 +94,6 @@ Rather than running larger m values unconditionally, the algorithm checks for co
 4. If **count ≥ k**, then bins-top-m contains the entire top-k
 
 This check adds minimal overhead: just a single max and a single sum across bins — no top-k operation on the bins-top-m required.
-
----
 
 ## TPU Optimization
 
@@ -157,3 +140,5 @@ Theoretically extensible to larger k with larger sort dimensions with low batch 
 For computing top-128 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 256 bins, we expect a 99.9999% chance of convergence by bins-top-8. This produces a filtered subset size of only 256 × 8 = 2,048 elements.
 
 At this reduced size, the choice of final top-k algorithm (Bitonic vs RadixSelect vs ...) contributes negligibly to overall runtime , so alternatives to bitonic top-k were not explored.​​​​​​​​​​​​​​​​
+
+----
