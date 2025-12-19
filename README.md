@@ -43,7 +43,7 @@ NEW      █ 250μs
 
 -----
 
-** Using Gemma 3 vocab size (262K) as proxy since Gemini 3 Pro vocab size is not publicly known*
+* Using Gemma 3 vocab size (262K) as proxy since Gemini 3 Pro vocab size is not publicly known
 
 
 # Intro
