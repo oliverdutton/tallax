@@ -126,7 +126,7 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
         # every tile has same value
-        return create_bit_indicator(stage, tile_local_offset)
+        return create_bit_indicator(stage, tile_local_offset + dim1_offset)
       elif stage < log2(num_tiles * NUM_SUBLANES):
         # value constant across tile
         return create_bit_indicator(stage, tile_offset)

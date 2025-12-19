@@ -251,7 +251,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         separation = num_tiles * NUM_SUBLANES * 2**i
         arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       for i in range(num_sublane_merges)[::-1]:
-        separation = 2**i
+        separation = k * (2**i)
         arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       # Final sort: convert bitonic sequence to fully descending order
       # Use dim1_offset=k to ensure descending direction
