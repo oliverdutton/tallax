@@ -3,16 +3,16 @@
 
 Built on lightning fast top-k a highly optimized vLLM top-k top-p logit sampler is provided.
 
-# 🔥 Performance Wins
+## 🔥 Performance Wins
 
-## 🎯 Scenario 1: Logit sampling
+### 🎯 Scenario 1: Logit sampling
 
 ```
 📊 Setup: Gemini 3 Pro decoding
   Top-k=64 | Top-p=0.95 | Vocab=262K | bf16*
 ```
 
-### 📦 Small Batch (16)
+#### 📦 Small Batch (16)
 
 ```
 vLLM    ████████████████████████ 390μs
@@ -22,7 +22,7 @@ tallax  ██ 35μs
      ⚡ 6× WORST-CASE SPEEDUP (70μs)
 ```
 
-### 📦📦📦 Large Batch (128)
+#### 📦📦📦 Large Batch (128)
 
 ```
 vLLM    ████████████████████████████████ 11,800μs
@@ -32,7 +32,7 @@ tallax  █ 250μs
      ⚡ 23× WORST-CASE SPEEDUP (500μs)
 ```
 
-## 🎯 Scenario 2: Speculative Decoding Top-k
+### 🎯 Scenario 2: Speculative Decoding Top-k
 ```
 📊 Setup: Top-5 | Batch=16 | Vocab=32K | bf16
 
@@ -42,7 +42,7 @@ tallax  █ 5.5μs
      🔥 15× FASTER
 ```
 
-** Gemini 3 Pro uses fixed top-k=64 and default top-p=0.95. Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
+**Gemini 3 Pro uses fixed top-k=64 and default top-p=0.95. Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
 
 
 
