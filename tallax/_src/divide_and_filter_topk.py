@@ -449,7 +449,7 @@ def top_dynamic_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.98, 0.9999))
-    bins_topm_schedule = tuple(min(t + 1, max_k) for t in thresholds)
+    bins_topm_schedule = tuple(sorted(set(min(t + 1, max_k) for t in thresholds)))
     print(f"Auto-computed schedules for max_k={max_k}, num_bins={num_bins}:")
     print(f"  bins_topm_schedule: {bins_topm_schedule}")
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
