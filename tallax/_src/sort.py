@@ -45,7 +45,7 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
     rights: Tuple of right arrays to compare
     num_keys: Number of arrays to use as sort keys
     is_descending: Boolean mask for sort direction (None implies ascending)
-    is_right_half: Mask for subtile comparisons, needed for stable sort
+    is_right_half: Mask for subtile comparisons. Needed for handling ties in values correctly.
     has_unique_key: Whether first key is guaranteed unique (optimizes sort)
 
   Returns:
@@ -114,13 +114,13 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
     return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None):
   """Perform substage using sublane permutation or cross-tile comparison.
 
   Args:
     arrs_tiles: Tuple of lists of tile arrays
     substage: Substage index
-    dim0: First dimension size (padded)
+    batch_size: Batch size (padded, must be power of 2 <= NUM_LANES)
     num_keys: Number of sort keys
     dim1_offset: Offset for bitonic order calculation
     stage: Current sorting stage (if single stage)
@@ -128,9 +128,9 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim
   Returns:
     Tuple of lists of tiles with updated values
   """
-  assert dim0 <= NUM_LANES and dim0 == 2**log2(dim0)
+  assert batch_size <= NUM_LANES and batch_size == 2**log2(batch_size)
   num_tiles = len(arrs_tiles[0])
-  tile_local_offset = iota_tile(0) + (iota_tile(1) // dim0) * num_tiles * NUM_SUBLANES
+  tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
     tile_offset = idx * NUM_SUBLANES
@@ -181,7 +181,7 @@ def run_compressed_transpose_format_substages_on_tiles(
     arrs_tiles,
     num_substages: int,
     stage: int,
-    dim0: int,
+    batch_size: int,
     num_keys: int,
     dim1_offset: int = 0,
 ):
@@ -191,7 +191,7 @@ def run_compressed_transpose_format_substages_on_tiles(
   def _sort_tile_stage(arrs_tiles, stage, num_substages):
     for substage in range(num_substages)[::-1]:
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
-          arrs_tiles, substage=substage, dim0=dim0, dim1_offset=dim1_offset,
+          arrs_tiles, substage=substage, batch_size=batch_size, dim1_offset=dim1_offset,
           stage=stage, num_keys=num_keys
       )
     return arrs_tiles
@@ -256,7 +256,7 @@ def _run_compressed_transpose_format_substages_on_refs(
     # pad in dim0 (if needed)
     arrs = [pad(ref_slice[...], block_shape=(
         pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
-    dim0 = arrs[0].shape[0]
+    batch_size = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
 
     arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
@@ -264,12 +264,12 @@ def _run_compressed_transpose_format_substages_on_refs(
         stage=stage,
         num_substages=num_substages,
         dim1_offset=dim1_offset + (block_col * slice_dim1),
-        dim0=dim0,
+        batch_size=batch_size,
         num_keys=num_keys,
     )
 
     outs = [
-        from_compressed_transpose_format(tiles, dim0=dim0)[:slice_shape[0]]
+        from_compressed_transpose_format(tiles, dim0=batch_size)[:slice_shape[0]]
         for tiles in arrs_tiles
     ]
 

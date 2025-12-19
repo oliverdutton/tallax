@@ -228,7 +228,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           arrs_tiles,
           num_substages=log2(k),
           stage=log2(separation),
-          dim0=batch_size,
+          batch_size=batch_size,
           num_keys=num_keys,
         )
         arrs_tiles = reduce_fn(arrs_tiles, num_keys=num_keys)
@@ -256,7 +256,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           arrs_tiles,
           num_substages=stage,
           stage=stage,
-          dim0=batch_size,
+          batch_size=batch_size,
           num_keys=num_keys,
         )
   
@@ -278,7 +278,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         num_substages=log2(k),
         stage=log2(k),
         dim1_offset=k,
-        dim0=batch_size,
+        batch_size=batch_size,
         num_keys=num_keys,
       )
       
