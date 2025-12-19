@@ -9,7 +9,7 @@ Built on the lightning fast top-k a highly optimized vLLM top-k top-p logit samp
 
 ```
 📊 Setup: Gemini 3 Pro decoding
-  Top-k=64 | Top-p=0.95 | Vocab=262K | bf16*
+  Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16*
 ```
 
 #### 📦 Small Batch (16)
@@ -34,7 +34,7 @@ tallax  █ 250μs
 
 ### 🎯 Scenario 2: Speculative Decoding Top-k
 ```
-📊 Setup: Top-5 | Batch=16 | Vocab=32K | bf16
+📊 Setup: Top-5 | Batch=16 | Draft-Vocab=32K | bfloat16
 
 XLA     ████████████████████ 85μs
 tallax  █ 5.5μs
