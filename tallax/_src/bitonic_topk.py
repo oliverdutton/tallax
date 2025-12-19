@@ -108,7 +108,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
   padded shape that satisfies the constraints:
   - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
   - dim1 is a multiple of k
-  - must be possible to split into tiles so num_elems must be divisible by NUM_SUBLANES * NUM_LANES
+  - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and concat on full tiles, subtile concat not supported
   
   Args:
     unpadded_dim0: Original first dimension size
@@ -126,7 +126,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
     if 2**i >= unpadded_dim0]
   shapes = [
     (dim0, ceil_multiple(unpadded_dim1,
-      (max(k, NUM_SUBLANES) * NUM_LANES) // dim0))
+      NUM_LANES * NUM_LANES // dim0))
     for dim0 in dim0s]
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
