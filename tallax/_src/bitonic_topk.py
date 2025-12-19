@@ -44,62 +44,6 @@ from tallax._src.sort import (
     compute_pair_slice_start_index,
 )
 
-def legacy_max_arrays(operands, num_keys, axis):
-  """Compute max over several operands, sorting using num_keys.
-
-  This function computes the maximum element along the specified axis for multiple
-  operands (e.g., values and indices). When comparing elements, it uses the first
-  num_keys operands as sort keys to determine which element is "larger".
-
-  Args:
-    operands: List of JAX arrays of the same shape
-    num_keys: Number of operands to use as sort keys for comparison
-    axis: Axis along which to find the maximum (0 or 1)
-
-  Returns:
-    List of 1D arrays containing the maximum element for each operand
-  """
-  if axis == 1:
-    # transpose and run on axis 0
-    operands = jax.tree.map(lambda x: x.T, operands)
-    axis = 0
-  assert axis == 0
-  unpadded_shape = operands[0].shape
-  padded_dim0 = max(2**log2(unpadded_shape[0]), NUM_SUBLANES)
-  operands = [pad(x, (padded_dim0, NUM_LANES), val='min') for x in operands]
-  
-  shape = operands[0].shape
-  for _ in range(log2(shape[0] // NUM_SUBLANES)):
-    lefts, rights = transpose_list_of_lists([jnp.split(arr,2,axis=0) for arr in operands])
-    operands = transpose_list_of_lists(compare_and_swap(lefts, rights, num_keys=num_keys, is_descending=True))[0]
-  assert operands[0].shape[0] == NUM_SUBLANES
-  assert shape[1] % NUM_LANES == 0
-
-  arrs_tiles = [jnp.split(x, shape[1] // NUM_LANES, axis=1) for x in operands]
-  for stage in range(log2(NUM_SUBLANES))[::-1]:  
-    permutation = jnp.bitwise_xor(iota_tile(0), 2**stage)
-  
-    # Apply permutation to all tiles
-    arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=0),
-      arrs_tiles
-    )
-  
-    # Compare and merge with permuted values
-    outs_tiles = [[] for _ in arrs_tiles]
-    for _, (lefts, rights) in enumerate(zip(
-          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-          strict=True
-      )):
-        for j, (o, _) in enumerate(compare_and_swap(
-            lefts, rights,
-            is_descending=True,
-            num_keys=num_keys
-        )):
-          outs_tiles[j].append(o)
-    arrs_tiles = outs_tiles
-  return [jnp.concatenate(tiles, axis=1)[0,:unpadded_shape[1]] for tiles in arrs_tiles]
-
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
