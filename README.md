@@ -1,7 +1,7 @@
 # tallax
 `tallax` provides high-performance top-k, sort and gather operations for JAX, optimized for TPUs using Pallas.
 
-Built on lightning fast top-k a highly optimized vLLM top-k top-p logit sampler is provided.
+Built on the lightning fast top-k a highly optimized vLLM top-k top-p logit sampler is provided.
 
 ## 🔥 Performance Wins
 
