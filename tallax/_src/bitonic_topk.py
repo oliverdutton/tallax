@@ -344,7 +344,7 @@ def bitonic_topk_refs(
     num_keys: int,
     descending: bool,
     k: int,
-    min_padded_dim0: int | None,
+    min_padded_dim0: int | None = None,
 ):
     """
     Pallas kernel for bitonic top-k with k=128 in compressed transpose format.
