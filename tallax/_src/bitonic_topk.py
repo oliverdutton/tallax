@@ -352,7 +352,7 @@ def bitonic_topk_refs(
       raise NotImplementedError
     outs = bitonic_topk_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
-      num_keys=num_keys, k=k)
+      num_keys=num_keys)
     for out, out_ref in zip(outs, out_refs, strict=True):
       out_ref[...] = out.astype(out_ref.dtype)
 
@@ -405,7 +405,7 @@ def bitonic_topk(
     num_tokens, vocab_size = operands[0].shape
     # Define output shapes
     output_shapes = [
-        jax.ShapeDtypeStruct((num_tokens, NUM_LANES), op.dtype)
+        jax.ShapeDtypeStruct((num_tokens, k), op.dtype)
         for op in operands
     ]
     outputs = pl.pallas_call(
