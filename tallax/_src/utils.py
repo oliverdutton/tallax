@@ -20,6 +20,8 @@ def is_cpu_platform():
 
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
+  if x==0:
+    return 0
   return math.ceil(math.log2(x))
 
 
