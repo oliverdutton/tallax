@@ -317,19 +317,20 @@ def dynamic_topk_refs(
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
-  @pl.when(guarantee_convergence & (m_final < max_k) & (termination_flag_ref[0] == 0))
-  def _():
-    # This optimization applies when guarantee_convergence is enabled but
-    # we haven't fully converged (m_final != max_k) and termination criterion not met.
-    # Packs the most active bins to help converge.
-    _merge_unconverged_bins_topk(
-        logits_ref,
-        bins_topm_vals_ref.at[token_slice],
-        bins_topm_idxs_ref.at[token_slice],
-        num_bins=num_bins,
-        m=m_final,
-        max_k=max_k
-    )
+  if guarantee_convergence and (m_final < max_k):
+    @pl.when(termination_flag_ref[0] == 0)
+    def _():
+      # This optimization applies when guarantee_convergence is enabled but
+      # we haven't fully converged (m_final != max_k) and termination criterion not met.
+      # Packs the most active bins to help converge.
+      _merge_unconverged_bins_topk(
+          logits_ref,
+          bins_topm_vals_ref.at[token_slice],
+          bins_topm_idxs_ref.at[token_slice],
+          num_bins=num_bins,
+          m=m_final,
+          max_k=max_k
+      )
 
   global_topk_schedule = tuple(sorted(set(2**log2(x - 1) if x >1 else x for x in bins_topm_schedule)))
 
