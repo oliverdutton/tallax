@@ -1,5 +1,54 @@
 # tallax
 
+# 🔥 Top-K Optimization: Performance Wins
+
+## 🎯 Scenario 1: Speculative Decoding top-k setup
+
+```
+📊 Setup: Top-5 | Batch=16 | Vocab=32K | bf16
+
+BEFORE  ████████████████████ 85μs
+AFTER   █ 5.5μs
+
+        🔥 15× FASTER
+```
+
+-----
+
+## 🎯 Scenario 2: Gemini 3 Pro Decoding Setup
+
+```
+📊 Setup: Top-k=64 | Top-p=0.95 | Vocab=262K* | bf16
+```
+
+### 📦 Small Batch (16)
+
+```
+CURRENT  ████████████████████████ 388μs
+NEW      ██ 34μs
+         
+         🔥 10× AVERAGE SPEEDUP
+         ⚡ 6× WORST-CASE SPEEDUP (<70μs)
+```
+
+### 📦📦📦 Large Batch (128)
+
+```
+CURRENT  ████████████████████████████████ 11,800μs
+NEW      █ 250μs
+
+         🔥 45× AVERAGE SPEEDUP
+         ⚡ 23× WORST-CASE SPEEDUP (500μs)
+```
+
+-----
+
+** Using Gemma 3 vocab size (262K) as proxy since Gemini 3 Pro vocab size is not publicly known*
+
+
+# Intro
+
+
 `tallax` provides high-performance sorting and top-k operations for JAX, optimized for TPUs using Pallas.
 
 ## Installation
