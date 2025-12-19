@@ -39,7 +39,7 @@ def test_bitonic_topk(shape, dtype, axis):
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}, axis {axis}"
 
 
-@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195)])
+@pytest.mark.parametrize("shape", [(8, 128), (16, 256), (128, 8), (256, 16), (256, 256), (173, 195), (8, 1024)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [0, 1])
 def test_top1_pallas(shape, dtype, axis):

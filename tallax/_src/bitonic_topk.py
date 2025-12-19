@@ -165,7 +165,7 @@ def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
   
     # Apply permutation to all tiles
     arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
       arrs_tiles
     )
     # Compare and merge with permuted values
@@ -214,7 +214,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     # Compute padded shape that satisfies alignment requirements
     shape = operands[0].shape
     unpadded_sort_dim = shape[axis]
-    if k > unpadded_sort_dim:
+    if unpadded_k > unpadded_sort_dim:
         raise ValueError
     if axis == 1:
         padded_shape = _compute_padded_shape(*shape, k=k)
