@@ -188,7 +188,7 @@ def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
 # now the number of tiles is set. 
 # then compare cross lane min(log2(pl.cdiv(NUM_LANES, dim0)), num_merges) times. 
 # then compare cross sublane log2(pl.cdiv(NUM_SUBLANES, k)) times
-def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1, axis: int = 1):
+def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1, axis: int = 1, min_padded_dim0: int | None = None):
     """
     Progressive bitonic merge for top-k selection.
 
@@ -202,6 +202,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         operands: List of JAX arrays of shape (dim0, dim1)
         k: Number of top elements to return (default: NUM_LANES)
         num_keys: Number of sort keys (default: 1)
+        min_padded_dim0: Can be used to tradeoff ALU vs lane permute intensity, e.g. (8, 2048) can be put into compressed format of 16 (8, 128) tiles which induces 4 lane permute ops at the end which have high latency. Alterntively padding to (128, 2048) leads to an uncompressed transpose of 256 (8, 128) tiles and avoid lane permutes but greatly increases ALU work. Can be tuned.
 
     Returns:
         List of JAX arrays of shape (original_batch_size, k) with top-k elements
@@ -217,7 +218,9 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     if unpadded_k > unpadded_sort_dim:
         raise ValueError
     if axis == 1:
-        padded_shape = _compute_padded_shape(*shape, k=k)
+        if min_padded_dim0 is None:
+            min_padded_dim0 = shape[0]
+        padded_shape = _compute_padded_shape(min_padded_dim[0], shape[1], k=k)
     elif axis == 0:
         padded_shape = (
             ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
@@ -341,6 +344,7 @@ def bitonic_topk_refs(
     num_keys: int,
     descending: bool,
     k: int,
+    min_padded_dim0: int | None,
 ):
     """
     Pallas kernel for bitonic top-k with k=128 in compressed transpose format.
@@ -356,14 +360,16 @@ def bitonic_topk_refs(
       raise NotImplementedError
     outs = bitonic_topk_arrays(
       [ref[...] for ref in in_refs], k=out_refs[0].shape[1],
-      num_keys=num_keys)
+      num_keys=num_keys,
+      min_padded_dim0=min_padded_dim0,
+    )
     for out, out_ref in zip(outs, out_refs, strict=True):
       out_ref[...] = out.astype(out_ref.dtype)
 
 
 @functools.partial(
     jit,
-    static_argnames=("k", "num_keys", "descending", "interpret"),
+    static_argnames=("k", "num_keys", "descending", "interpret", "min_padded_dim0"),
 )
 def bitonic_topk(
     operand: jax.Array | Sequence[jax.Array],
@@ -371,6 +377,7 @@ def bitonic_topk(
     num_keys: int = 1,
     descending: bool = True,
     interpret: bool = False,
+    min_padded_dim0: int | None = None,
 ) -> tuple[jax.Array, ...]:
     """
     Compute top-k using bitonic sort in compressed transpose format.
@@ -418,6 +425,7 @@ def bitonic_topk(
             num_keys=num_keys,
             descending=descending,
             k=k,
+            min_padded_dim0=min_padded_dim0,
         ),
         out_shape=(output_shapes,),
         compiler_params=pltpu.CompilerParams(
