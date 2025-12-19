@@ -86,7 +86,7 @@ The algorithm exploits probabilistic convergence for significant speedups. For r
 
 ### Convergence Check
 
-Rather than running larger m values unconditionally, the algorithm checks for convergence at each step:
+We run a convergence check to see if bins-top-m covers top-k using bounds from bins-top-(m+1):
 
 1. Compute **bins-top-(m+1)** instead of just bins-top-m
 2. Take the **maximum (m+1)th value** across all bins — this is the largest possible value *not* in bins-top-m
