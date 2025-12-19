@@ -27,7 +27,7 @@ def binned_topk(
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
-      k: Number of top elements to find.
+      k: Number of top elements to find per bin.
       bins_topk_vals: List of k arrays, each of shape [num_tokens, num_bins],
           containing current top-k values per bin.
       bins_topk_idxs: List of k arrays, each of shape [num_tokens, num_bins],

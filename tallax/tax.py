@@ -2,10 +2,15 @@
 
 Public API for TPU-optimized operations.
 
-This module provides JAX.lax-compatible operations optimized for TPU:
-- sort: jax.lax.sort counterpart
-- top_k: jax.lax.top_k counterpart
-- cumsum: jax.lax.cumsum counterpart
+This module provides JAX.lax-compatible operations optimized for TPU.
+The goal is to provide drop-in replacements for JAX operations where
+the TPU-optimized implementation offers significant performance benefits.
+
+Exports:
+  sort: TPU-optimized sort (jax.lax.sort counterpart).
+  top_k: TPU-optimized top-k with guaranteed convergence (jax.lax.top_k counterpart).
+  top_dynamic_k: Top-k supporting per-token (dynamic) k values.
+  cumsum: TPU-optimized cumulative sum (jax.lax.cumsum counterpart).
 """
 from tallax._src.sort import sort
 from tallax._src.divide_and_filter_topk import topk as top_k

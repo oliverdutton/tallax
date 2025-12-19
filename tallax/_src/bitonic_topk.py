@@ -1,7 +1,7 @@
 """
-Bitonic Top-K for k=NUM_LANES=128 using compressed transpose format.
+Bitonic Top-K for k<=NUM_LANES (128) using compressed transpose format.
 
-This implementation is optimized for TPU with k=128 and works entirely in
+This implementation is optimized for TPU and works entirely in
 compressed transpose format to maximize efficiency of permutation operations.
 
 Algorithm:
@@ -48,15 +48,16 @@ from tallax._src.sort import (
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
 
-  This function finds the minimal
-  padded shape that satisfies the constraints:
+  This function finds the minimal padded shape that satisfies the constraints:
   - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
   - dim1 is a multiple of k
-  - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and concat on full tiles, subtile concat not supported
-  
+  - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and
+    concat on full tiles, subtile concat not supported
+
   Args:
     unpadded_dim0: Original first dimension size
     unpadded_dim1: Original second dimension size
+    k: Target top-k size (must be power of 2 for padding calculation purposes)
 
   Returns:
     Tuple of (padded_dim0, padded_dim1) compatible with compressed transpose format
@@ -82,7 +83,7 @@ def _max_reduce_bitonic_inter_tile(
 
   Args:
     arrs_tiles: Tuple of lists of tile arrays
-    dim0: First dimension size (padded)
+    separation: Distance between tiles to compare
     num_keys: Number of sort keys
 
   Returns:
@@ -104,6 +105,17 @@ def _max_reduce_bitonic_inter_tile(
   return outs_tiles
 
 def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
+    """Perform intra-tile comparison keeping max values.
+
+    Args:
+      arrs_tiles: Tuple of lists of tile arrays
+      axis: Axis along which to apply permutation (0 or 1)
+      separation: Distance between elements to compare within tile
+      num_keys: Number of sort keys
+
+    Returns:
+      Tuple of lists of tiles with updated values
+    """
     # Create permutation indices for tiles using iota_tile
     permutation = jnp.bitwise_xor(iota_tile(axis), separation)
     is_right_half = create_bit_indicator(log2(separation), iota_tile(axis))
@@ -150,7 +162,13 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         operands: List of JAX arrays of shape (dim0, dim1)
         k: Number of top elements to return (default: NUM_LANES)
         num_keys: Number of sort keys (default: 1)
-        min_padded_dim0: Can be used to tradeoff ALU vs lane permute intensity, e.g. (8, 2048) can be put into compressed format of 16 (8, 128) tiles which induces 4 lane permute ops at the end which have high latency. Alterntively padding to (128, 2048) leads to an uncompressed transpose of 256 (8, 128) tiles and avoid lane permutes but greatly increases ALU work. Can be tuned.
+        axis: Axis along which to perform top-k (0 or 1)
+        min_padded_dim0: Can be used to tradeoff ALU vs lane permute intensity.
+          E.g. (8, 2048) can be put into compressed format of 16 (8, 128) tiles
+          which induces 4 lane permute ops at the end which have high latency.
+          Alternatively padding to (128, 2048) leads to an uncompressed transpose
+          of 256 (8, 128) tiles and avoids lane permutes but greatly increases
+          ALU work. Can be tuned.
 
     Returns:
         List of JAX arrays of shape (original_batch_size, k) with top-k elements
@@ -295,14 +313,14 @@ def bitonic_topk_refs(
     min_padded_dim0: int | None = None,
 ):
     """
-    Pallas kernel for bitonic top-k with k=128 in compressed transpose format.
+    Pallas kernel for bitonic top-k in compressed transpose format.
 
     Algorithm:
     1. Pad input to satisfy alignment requirements
     2. Convert to compressed transpose format: (num_tokens, vocab) -> (128, num_tokens*chunks)
-    3. Run bitonic top-k stages to select top 128 values per token
+    3. Run bitonic top-k stages to select top k values per token
     4. Convert back from compressed transpose format
-    5. Unpad and extract top-128 per token
+    5. Unpad and extract top-k per token
     """
     if not descending:
       raise NotImplementedError
@@ -330,28 +348,30 @@ def bitonic_topk(
     """
     Compute top-k using bitonic sort in compressed transpose format.
 
-    Optimized for k=NUM_LANES=128 only. Works entirely in compressed transpose
+    Optimized for k <= NUM_LANES (128). Works entirely in compressed transpose
     format for maximum TPU efficiency. Supports multiple operands like sort().
 
     Supports arbitrary input shapes - padding is handled automatically:
-    - For small inputs (prod < NUM_LANES2): pads dim0 to make prod = NUM_LANES2
+    - For small inputs (prod < NUM_LANES^2): pads dim0 to make prod = NUM_LANES^2
     - For larger inputs: pads both dims minimally to satisfy alignment
 
     Args:
         operand: Input array(s) of shape [num_tokens, vocab_size].
                 Can be a single array or sequence of arrays.
                 Any vocab_size is supported (will be padded automatically).
-        k: Number of top elements (must be NUM_LANES=128).
+        k: Number of top elements (must be <= NUM_LANES=128).
         num_keys: Number of arrays to use as sort keys.
         descending: If True, sort in descending order (default for top-k).
         interpret: If True, run in CPU interpret mode.
+        min_padded_dim0: Optional minimum padding for dimension 0 to tune
+            performance (ALU vs. permute latency trade-off).
 
     Returns:
         Tuple of arrays (same length as input operands):
             - Each array has shape [num_tokens, k]
 
     Raises:
-        ValueError: If k != NUM_LANES
+        ValueError: If k > NUM_LANES
     """
     if k > NUM_LANES:
       raise ValueError(

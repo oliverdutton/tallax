@@ -44,9 +44,9 @@ def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | No
     lefts: Tuple of left arrays to compare
     rights: Tuple of right arrays to compare
     num_keys: Number of arrays to use as sort keys
-    is_descending: Boolean mask for sort direction
-    is_right_half: Mask for subtile comparisons
-    has_unique_key: Whether first key is guaranteed unique
+    is_descending: Boolean mask for sort direction (None implies ascending)
+    is_right_half: Mask for subtile comparisons, needed for stable sort
+    has_unique_key: Whether first key is guaranteed unique (optimizes sort)
 
   Returns:
     Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
@@ -115,7 +115,19 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
 
 
 def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, dim0, num_keys: int, dim1_offset=0, stage=None):
-  """Perform substage using sublane permutation or cross-tile comparison."""
+  """Perform substage using sublane permutation or cross-tile comparison.
+
+  Args:
+    arrs_tiles: Tuple of lists of tile arrays
+    substage: Substage index
+    dim0: First dimension size (padded)
+    num_keys: Number of sort keys
+    dim1_offset: Offset for bitonic order calculation
+    stage: Current sorting stage (if single stage)
+
+  Returns:
+    Tuple of lists of tiles with updated values
+  """
   assert dim0 <= NUM_LANES and dim0 == 2**log2(dim0)
   num_tiles = len(arrs_tiles[0])
   tile_local_offset = iota_tile(0) + (iota_tile(1) // dim0) * num_tiles * NUM_SUBLANES
@@ -936,7 +948,21 @@ def xla_equivalent_sort(
     block_token: int | None = None,
     interpret: bool | None = None,
 ) -> tuple[jax.Array, ...]:
-  """Reference implementation using XLA sort for correctness testing."""
+  """Reference implementation using XLA sort for correctness testing.
+
+  Args:
+    operand: Input array(s) to sort
+    num_keys: Number of sort keys
+    is_stable: Whether to perform stable sort
+    return_argsort: Whether to return argsort indices
+    descending: Sort in descending order
+    num_vmem_substages: Ignored (compatibility arg)
+    block_token: Ignored (compatibility arg)
+    interpret: Ignored (compatibility arg)
+
+  Returns:
+    Tuple of sorted arrays (and optionally argsort indices)
+  """
   del num_vmem_substages, block_token, interpret
   operands = jax.tree.leaves(operand)
 

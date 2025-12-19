@@ -49,8 +49,8 @@ def take_along_axis_refs(values_ref, indices_ref, output_ref, *, axis: int):
   """Gather values by indexing in to all of value with a mask.
 
   This kernel processes multiple tiles of output (NUM_SUBLANES x K).
-  It scans across the entire values_ref (which contains full vocab for the corresponding tokens)
-  once, updating all output tiles.
+  It scans across the entire values_ref (which contains full vocab for the
+  corresponding tokens) once, updating all output tiles.
   """
   output_ref[...] = take_along_axis_arrays(values_ref[...], indices_ref[...], axis=axis)
   

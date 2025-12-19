@@ -67,6 +67,12 @@ def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
   """Cumulative sum kernel.
 
   Computes the cumulative sum of the input array along the specified axis.
+
+  Args:
+    input_ref: Input array reference.
+    output_ref: Output array reference.
+    axis: Axis along which to compute cumsum.
+    reverse: If True, compute cumsum in reverse order.
   """
   output_ref[...] = cumsum_arrays(input_ref[...], axis=axis, reverse=reverse)
 
