@@ -296,7 +296,7 @@ def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout."""
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
   arr = join_tiles_to_array(tiles, dim0=len(tiles) * NUM_SUBLANES).T
-  arrs = jnp.split(arr, NUM_LANES // dim0, axis=0)
+  arrs = jnp.split(arr, arr.shape[0] // dim0, axis=0)
   return jnp.concatenate(arrs, axis=1)
 
 
