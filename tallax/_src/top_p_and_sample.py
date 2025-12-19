@@ -225,6 +225,19 @@ def top_p_and_sample(
     Sharded wrapper for top-p sampling with custom partitioning.
 
     Requires all axes except batch dim to be replicated. Batch dim can be sharded.
+
+    Args:
+        topk_logits: Sorted logits of shape (batch_size, k).
+        topk_idx: Indices corresponding to sorted logits of shape (batch_size, k).
+        rng_key: RNG key for sampling.
+        top_p: Top-p threshold values.
+        temperature: Temperature values.
+        vocab_size: Total vocabulary size.
+        replace_val: Value to replace filtered logits with.
+        interpret: If True, run in CPU interpret mode (default: False).
+
+    Returns:
+        Sampled tokens of shape (batch_size,).
     """
     @custom_partitioning
     def sharded_top_p_and_sample(topk_logits, topk_idx, rng_key, top_p, temperature):

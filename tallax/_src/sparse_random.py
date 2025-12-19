@@ -41,6 +41,23 @@ def _bits_to_uniform(bits, dtype):
     return floats - jnp.ones((), dtype=dtype)
 
 def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval=0., maxval=1.):
+  """
+  Generate uniform random numbers for sparse indices.
+
+  Generates random values deterministically based on the indices, similar to
+  stateless PRNGs but for specific sparse locations.
+
+  Args:
+      key_ref: RNG key.
+      indices: Tuple of index arrays (dim0_idx, dim1_idx).
+      dim1_size: Size of the second dimension (for linearizing indices).
+      dtype: Output data type (default: float32).
+      minval: Minimum value (inclusive).
+      maxval: Maximum value (exclusive).
+
+  Returns:
+      Array of uniform random values with same shape as indices[0].
+  """
   assert len(indices)==2
   # Handle JAX key format - if scalar key, extract data; if already (1,2), use as-is
   if key_ref.ndim == 0:
@@ -66,6 +83,20 @@ def sparse_random_uniform(key_ref, indices, dim1_size, dtype=jnp.float32, minval
 
 
 def sparse_random_categorical(key_ref, logits, indices, dim1_size, axis=-1, dtype=jnp.float32):
+    """
+    Perform Gumbel-max sampling on sparse logits.
+
+    Args:
+        key_ref: RNG key.
+        logits: Logits array.
+        indices: Tuple of index arrays corresponding to logits location.
+        dim1_size: Size of dimension 1 (for RNG seeding).
+        axis: Axis along which to perform max reduction (default: -1).
+        dtype: Dtype for computation (must be float32).
+
+    Returns:
+        Sampled indices.
+    """
     if dtype != jnp.float32:
         raise NotImplementedError
 
