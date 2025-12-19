@@ -36,7 +36,7 @@ from tallax._src.utils import (
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
-    
+    create_bit_indicator,
 )
 from tallax._src.sort import (
     run_compressed_transpose_format_substages_on_tiles,
