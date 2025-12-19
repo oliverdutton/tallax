@@ -116,7 +116,7 @@ def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
 
     # Compare and merge with permuted values
     outs_tiles = [[None for _ in t] for t in arrs_tiles]
-    for _, (lefts, rights) in enumerate(zip(
+    for idx, (lefts, rights) in enumerate(zip(
           *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
           strict=True
       )):
