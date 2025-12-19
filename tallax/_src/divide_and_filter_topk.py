@@ -363,6 +363,7 @@ def dynamic_topk_refs(
           [topk_vals_ref, topk_idxs_ref],
           num_keys=1,
           descending=True,
+          k=max_k,
         )
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
@@ -458,12 +459,9 @@ def top_dynamic_k(
   max_m = bins_topm_schedule[-1]
   buffer_size = max(max_m, 2**log2(max_m - 1)) * num_bins
 
-  # Updated padded size calculation using num_bins
-  padded_max_k = pl.cdiv(max_k, NUM_LANES) * NUM_LANES
-
   output_shapes = (
-      jax.ShapeDtypeStruct((num_tokens, padded_max_k), logits.dtype),
-      jax.ShapeDtypeStruct((num_tokens, padded_max_k), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),
+      jax.ShapeDtypeStruct((num_tokens, max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
       jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),
