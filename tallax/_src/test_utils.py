@@ -135,18 +135,19 @@ def verify_topk_output(x, outs, axis=1, approximate=False):
         k = len(vals_slice)
         n = len(x_slice)
 
+        true_topk_vals = jax.lax.top_k(x_slice, k)[0]
+
         indices_mapping_valid = (x_slice[idxs_slice] == vals_slice).all()
         i = jnp.unique(idxs_slice, size=k, fill_value=-1)
         indices_bounds_valid = ((i >= 0) & (i < n)).all()
         indices_valid = indices_mapping_valid & indices_bounds_valid
 
         if approximate:
-            threshold = jax.lax.top_k(x_slice, k)[0][-1]
+            threshold = true_topk_vals[-1]
             vals_recall = jnp.mean((vals_slice >= threshold).astype(jnp.float32))
             return jnp.where(indices_valid, vals_recall, 0.0)
         else:
-            x_sorted = jnp.sort(x_slice, descending=True)
-            vals_valid = (vals_slice == x_sorted[:k]).all()
+            vals_valid = (vals_slice == true_topk_vals).all()
             return vals_valid & indices_valid
 
     return verify_slice(x, out_vals, out_indexs)
