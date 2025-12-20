@@ -11,10 +11,11 @@ from tallax._src.test_utils import verify_topk_output
 @pytest.mark.parametrize("recall_target", [0.5, 0.8, 0.95, 0.99])
 @pytest.mark.parametrize("shape", [(128, 8192)])
 @pytest.mark.parametrize("use_lax_approx_max_k_algorithm", [False, True])
+@pytest.mark.parametrize("seed", [0, 42, 467])
 @pytest.mark.skipif(is_cpu_platform(), reason="approx_max_k tests require TPU/GPU")
-def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algorithm):
+def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algorithm, seed):
     """Test approx_max_k with iota reshaped."""
-    key = jax.random.key(0)
+    key = jax.random.key(seed)
     if dtype == jnp.float32:
         operand = jax.random.normal(key, shape, dtype=dtype)
     else:
