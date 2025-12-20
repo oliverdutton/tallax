@@ -30,7 +30,7 @@ def approx_max_k(
     recall_target: float = 0.95,
     reduction_input_size_override: int = -1,
     aggregate_to_topk: bool = True,
-    use_lax_approx_max_k_algorithm: bool = True,
+    use_lax_approx_max_k_algorithm: bool = False,
     block_token: int = NUM_SUBLANES,
     bins_topm_unroll: int = 32,
 ):
@@ -62,7 +62,7 @@ def approx_max_k(
             returns approximate results which may be unsorted (default: True).
             Note: Currently ignored, always returns sorted results.
         use_lax_approx_max_k_algorithm: If True, use TPU-KNN single-pass algorithm.
-            If False, use adaptive multi-pass with convergence checks (default: True).
+            If False, use adaptive (possibly) multi-pass algorithm (default: False).
         block_token: Tokens per program block, must divide batch size (default: 8).
         bins_topm_unroll: Loop unroll factor for performance (default: 32).
 
