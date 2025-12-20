@@ -52,15 +52,18 @@ def approx_max_k(
     top-k algorithm. Uses a single bin-pass (bins_topm_schedule=(1,)) without
     guaranteed convergence for maximum speed.
 
-    Note: Currently limited to k <= 128 due to bitonic top-k implementation constraints.
+    Note: Currently limited to:
+      - k <= 128 due to bitonic top-k implementation constraints
+      - 2D input only
+      - reduction_dimension = -1 only
 
     Args:
-        operand: Input array to find top-k elements from.
+        operand: Input array of shape [batch, vocab] to find top-k elements from.
         k: Number of top elements to retrieve.
-        reduction_dimension: Axis along which to find top-k (default: -1).
+        reduction_dimension: Axis along which to find top-k. Must be -1 (default: -1).
         recall_target: Expected recall quality in range (0, 1) (default: 0.95).
         reduction_input_size_override: Override for input size in recall calculation.
-            When positive, uses this value instead of operand.shape[reduction_dimension].
+            When positive, uses this value instead of operand.shape[-1].
             Useful for SPMD/distributed settings (default: -1).
         aggregate_to_topk: When True, returns sorted top-k results. When False,
             returns approximate results which may be unsorted (default: True).
@@ -70,15 +73,20 @@ def approx_max_k(
 
     Returns:
         Tuple of (values, indices):
-            - values: Top-k values of shape operand.shape with reduction_dimension
-                replaced by k.
-            - indices: Top-k indices of shape matching values.
+            - values: Top-k values of shape [batch, k].
+            - indices: Top-k indices of shape [batch, k].
 
     Raises:
-        NotImplementedError: If k > 128.
+        NotImplementedError: If k > 128, operand is not 2D, or reduction_dimension != -1.
     """
     if k > NUM_LANES:
         raise NotImplementedError(f"k={k} > {NUM_LANES} not yet supported")
+
+    if operand.ndim != 2:
+        raise NotImplementedError(f"Only 2D input supported, got {operand.ndim}D")
+
+    if reduction_dimension != -1:
+        raise NotImplementedError(f"Only reduction_dimension=-1 supported, got {reduction_dimension}")
 
     # Calculate number of bins using recall formula from TPU-KNN paper
     # E[Recall] = ((L-1)/L)^(K-1)
@@ -87,7 +95,7 @@ def approx_max_k(
     if reduction_input_size_override > 0:
         input_size = reduction_input_size_override
     else:
-        input_size = operand.shape[reduction_dimension]
+        input_size = operand.shape[-1]
 
     if k == 1:
         # Special case: k=1 means 100% recall with any L >= 1
@@ -99,18 +107,6 @@ def approx_max_k(
         num_bins = ceil_multiple(math.ceil(num_bins_exact), NUM_LANES)
         # Ensure num_bins doesn't exceed input size
         num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
-
-    # Normalize reduction dimension
-    ndim = operand.ndim
-    if reduction_dimension < 0:
-        reduction_dimension = ndim + reduction_dimension
-
-    # Move reduction dimension to last position if needed
-    needs_transpose = reduction_dimension != ndim - 1
-    if needs_transpose:
-        perm = list(range(ndim))
-        perm[reduction_dimension], perm[-1] = perm[-1], perm[reduction_dimension]
-        operand = jnp.transpose(operand, perm)
 
     # Call top_dynamic_k with single-pass schedule and no convergence guarantee
     vals, idxs, valid, depths, cutoff = top_dynamic_k(
@@ -125,11 +121,6 @@ def approx_max_k(
         replace_val=None,
         interpret=False,
     )
-
-    # Restore original dimension order if transposed
-    if needs_transpose:
-        vals = jnp.transpose(vals, perm)
-        idxs = jnp.transpose(idxs, perm)
 
     return vals, idxs
 
