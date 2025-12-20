@@ -123,20 +123,14 @@ def approx_max_k(
         num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
 
         # Compute schedule based on recall target
-        if recall_target <= 0.95:
-            # Single threshold for lower recall targets
-            thresholds = calculate_depth_thresholds(
-                k, num_bins, block_size=1, target_yields=(recall_target,)
-            )
-            # Add 1 to enable convergence check (requires m >= 2)
-            bins_topm_schedule = (thresholds[0] + 1,)
-        else:
-            # Two thresholds for higher recall targets
-            thresholds = calculate_depth_thresholds(
-                k, num_bins, block_size=1, target_yields=(0.9, recall_target)
-            )
-            # Add 1 to each threshold to enable convergence checks
-            bins_topm_schedule = tuple(t + 1 for t in thresholds)
+        target_yields = (recall_target,) if recall_target <= 0.95 else (0.9, recall_target)
+        thresholds = calculate_depth_thresholds(
+            k, num_bins, block_size=1, target_yields=target_yields
+        )
+
+        # Add 1 to all except last to enable convergence checks (requires m >= 2)
+        # Last depth doesn't need +1 since no convergence check follows it
+        bins_topm_schedule = tuple(t + 1 for t in thresholds[:-1]) + (thresholds[-1],)
 
     # Call top_dynamic_k with computed parameters
     vals, idxs, valid, depths, cutoff = top_dynamic_k(
