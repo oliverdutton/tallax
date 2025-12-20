@@ -40,7 +40,6 @@ def calculate_num_bins_top_1_required(k, r):
         "recall_target",
         "reduction_input_size_override",
         "aggregate_to_topk",
-        "use_lax_approx_max_k_algorithm",
         "block_token",
         "bins_topm_unroll",
     ),
@@ -52,20 +51,13 @@ def approx_max_k(
     recall_target: float = 0.95,
     reduction_input_size_override: int = -1,
     aggregate_to_topk: bool = True,
-    use_lax_approx_max_k_algorithm: bool = False,
     block_token: int = NUM_SUBLANES,
     bins_topm_unroll: int = 32,
 ):
-    """TPU-optimized approximate top-k using divide-and-filter algorithm.
+    """TPU-optimized approximate top-k using divide-and-filter algorithm taking max of bins.
 
     Approximates jax.lax.approx_max_k interface using Tallax's divide-and-filter
     top-k algorithm without guaranteed convergence for maximum speed.
-
-    Two algorithm modes available:
-      - use_lax_approx_max_k_algorithm=True: Single-pass using TPU-KNN paper's
-        recall formula to calculate num_bins.
-      - use_lax_approx_max_k_algorithm=False: Adaptive schedule using convergence
-        probability thresholds (faster on average).
 
     Note: Currently limited to:
       - k <= 128 due to bitonic top-k implementation constraints
@@ -83,8 +75,6 @@ def approx_max_k(
         aggregate_to_topk: When True, returns sorted top-k results. When False,
             returns approximate results which may be unsorted (default: True).
             Note: Currently ignored, always returns sorted results.
-        use_lax_approx_max_k_algorithm: If True, use TPU-KNN single-pass algorithm.
-            If False, use adaptive (possibly) multi-pass algorithm (default: False).
         block_token: Tokens per program block, must divide batch size (default: 8).
         bins_topm_unroll: Loop unroll factor for performance (default: 32).
 
@@ -106,20 +96,10 @@ def approx_max_k(
 
     input_size = reduction_input_size_override if reduction_input_size_override > 0 else operand.shape[-1]
 
-    if use_lax_approx_max_k_algorithm:
-        # Uses TPU-KNN paper's (unapproximated) recall formula 
-        num_bins = calculate_num_bins_top_1_required(k, recall_target)
-        bins_topm_schedule = (1,)
-    else:
-        # Tallax top-2 approach
-        # find min num_bins to hit recall target (we actually use a higher target of when >recall target% chance of all top-k being correct, rather than expectation of top-k being >recall target
-        # top-2 seems pretty efficient for most cases of k<=128 so we hard code it as the m
-        num_bins = 0
-        depth = 1000 # placeholder
-        while depth > 2:
-            num_bins += NUM_LANES
-            depth = calculate_depth_thresholds(k=k, block_size=1, target_yields=(recall_target,), num_bins=num_bins)[0]
-        bins_topm_schedule = (depth,)
+    # Uses TPU-KNN paper's (unapproximated) recall formula 
+    num_bins = calculate_num_bins_top_1_required(k, recall_target)
+    bins_topm_schedule = (1,)
+
     num_bins = ceil_multiple(num_bins, NUM_LANES)
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
     return top_dynamic_k(
