@@ -75,7 +75,7 @@ def approx_max_k(
     input_size = reduction_input_size_override if reduction_input_size_override > 0 else operand.shape[-1]
 
     # Uses TPU-KNN paper's recall formula 
-    num_bins = math.ceil((k-1)/(1-recall_target))
+    num_bins = math.ceil((k-1)/(1-recall_target)) if k>1 else 1
     bins_topm_schedule = (1,)
     num_bins = ceil_multiple(num_bins, NUM_LANES)
     # incase whole input needs top-k 
