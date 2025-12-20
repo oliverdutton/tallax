@@ -42,7 +42,7 @@ tallax  █ 5.5μs
      🔥 15× FASTER
 ```
 
-**Gemini 3 Pro uses fixed top-k=64 and default top-p=0.95. Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
+**Gemini 3 Pro uses [fixed top-k=64 and default top-p=0.95](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro). Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
 
 ----
 
