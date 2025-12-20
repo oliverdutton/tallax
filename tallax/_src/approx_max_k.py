@@ -29,7 +29,7 @@ def calculate_num_bins_top_1_required(k, r):
     # Safe Formula: -1 / expm1(ln(r) / (k-1)) 
     # math.log(r) is safe for r >= 0.1 (lowest recall you could reasonably expect someone to use)
     # math.expm1(x) computes e^x - 1 accurately for small x
-    return -1.0 / math.expm1(math.log(r) / (k - 1))
+    return math.ceil(-1.0 / math.expm1(math.log(r) / (k - 1)))
 
 
 @functools.partial(
