@@ -106,19 +106,19 @@ def verify_sort_output(
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 
-def verify_topk_output(x, outs, axis=1):
+def verify_topk_output(x, outs, axis=1, approximate=False):
     """Validate top-k outputs for correctness.
 
     Args:
         x: Input array (must be 2D)
         outs: Tuple of (values, indices) from top-k (both must be 2D)
         axis: Axis along which top-k was computed (0 or 1, default 1)
+        approximate: If True, return float % of vals >= threshold (0.0 if indices invalid).
+                     If False, return boolean exact match (default False)
 
     Returns:
-        Boolean array indicating if the top-k output is valid for each batch element
-
-    Raises:
-        ValueError: If x or outputs are not 2D
+        If approximate=False: Boolean array indicating validity for each batch element
+        If approximate=True: Float array with % of values of top-k present (0.0 if indices fail)
     """
     if x.ndim != 2:
         raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
@@ -132,23 +132,28 @@ def verify_topk_output(x, outs, axis=1):
 
     @functools.partial(jax.vmap, in_axes=batch_axis)
     def verify_slice(x_slice, vals_slice, idxs_slice):
-        """Verify a single slice."""
-        x_sorted = jnp.sort(x_slice, descending=True)
-
         k = len(vals_slice)
         n = len(x_slice)
-        valid = True
 
-        # actual values must match
-        valid &= (vals_slice == x_sorted[:k]).all()
+        true_topk_vals = jax.lax.top_k(x_slice, k)[0]
 
-        # indices map to values correctly
-        valid &= (x_slice[idxs_slice] == vals_slice).all()
-
-        # indices are all in bounds and unique
+        indices_mapping_valid = (x_slice[idxs_slice] == vals_slice).all()
         i = jnp.unique(idxs_slice, size=k, fill_value=-1)
-        valid &= ((i >= 0) & (i < n)).all()
-        return valid
+        indices_bounds_valid = ((i >= 0) & (i < n)).all()
+        indices_valid = indices_mapping_valid & indices_bounds_valid
+
+        if approximate:
+            threshold = true_topk_vals[-1]
+            # due to ties at the topk boundary we have to be careful here
+            vals_recall = (
+            # how many values definitely in topk, with a max topk inclusion number at the threshold
+            (vals_slice > threshold).sum() + jnp.minimum(
+            (true_topk_vals == threshold).sum(), (vals_slice == threshold).sum())
+            ) / k
+            return jnp.where(indices_valid, vals_recall, 0.0)
+        else:
+            vals_valid = (vals_slice == true_topk_vals).all()
+            return vals_valid & indices_valid
 
     return verify_slice(x, out_vals, out_indexs)
 

@@ -1,0 +1,25 @@
+import pytest
+import jax
+import jax.numpy as jnp
+from tallax import tax
+from tallax._src.utils import is_cpu_platform
+from tallax._src.test_utils import verify_topk_output
+
+
+@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
+@pytest.mark.parametrize("k", [1, 2, 3, 17, 32, 64, 128])
+@pytest.mark.parametrize("recall_target", [0.5, 0.8, 0.95, 0.99])
+@pytest.mark.parametrize("shape", [(128, 8192])
+@pytest.mark.skipif(is_cpu_platform(), reason="approx_max_k tests require TPU/GPU")
+def test_approx_max_k(dtype, k, recall_target, shape):
+    """Test approx_max_k with iota reshaped."""
+    operand = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape).astype(dtype)
+
+    outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target)
+    recall = verify_topk_output(operand, outputs, axis=1, approximate=True)
+    # double the aim, to allow for noise. Maxmimum recall check for noise as well.
+    test_recall_threshold = min(0.95, 1 - 2*(1-recall_target))
+    assert (recall.mean() > test_recall_threshold), (
+        f"approx_max_k validation failed for dtype {dtype}, k={k}: "
+        f"recall={recall.mean():.3f}"
+    )
