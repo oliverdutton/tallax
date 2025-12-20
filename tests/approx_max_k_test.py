@@ -8,7 +8,7 @@ from tallax._src.test_utils import verify_topk_output
 
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("k", [1, 2, 3, 17, 32, 64, 128])
-@pytest.mark.parametrize("recall_target", [0.5, 0.8, 0.95, 0.99])
+@pytest.mark.parametrize("recall_target", [0.2, 0.5, 0.8, 0.95, 0.99])
 @pytest.mark.parametrize("shape", [(128, 8192)])
 @pytest.mark.parametrize("use_lax_approx_max_k_algorithm", [False, True])
 @pytest.mark.parametrize("seed", [0, 42, 467])
@@ -23,8 +23,8 @@ def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algor
 
     outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target, use_lax_approx_max_k_algorithm=use_lax_approx_max_k_algorithm)
     recall = verify_topk_output(operand, outputs, axis=1, approximate=True).mean()
-    # double the aim, to allow for noise. Maxmimum recall check for noise as well.
-    test_recall_threshold = min(0.95, 1 - 2*(1-recall_target))
+    # you'd expect checking against recall target to fail 50% of the time, but in practice the approximation bounds are quite strong so this passes 100% of current tests happily
+    test_recall_threshold = recall_target
     print(f'recall of {recall:.3f} for target {recall_target:.3f}')
     assert (recall > test_recall_threshold), (
         f"approx_max_k validation failed for dtype {dtype}, k={k}: "
