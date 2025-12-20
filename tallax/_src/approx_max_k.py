@@ -111,10 +111,15 @@ def approx_max_k(
         num_bins = calculate_num_bins_top_1_required(k, recall_target)
         bins_topm_schedule = (1,)
     else:
-        # Tallax convergence probability approach
-        num_bins = 128 if k <= 16 else 256
-        bins_topm_schedule = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=(recall_target,))
-
+        # Tallax top-2 approach
+        # find min num_bins to hit recall target (we actually use a higher target of when >recall target% chance of all top-k being correct, rather than expectation of top-k being >recall target
+        # top-2 seems pretty efficient for most cases of k<=128 so we hard code it as the m
+        num_bins = 0
+        depth = 1000 # placeholder
+        while depth > 2:
+            num_bins += NUM_LANES
+            depth = calculate_depth_thresholds(k=k, block_size=1, target_yields=(recall_target,), num_bins=num_bins)[0]
+        bins_topm_schedule = (depth,)
     num_bins = ceil_multiple(num_bins, NUM_LANES)
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
     return top_dynamic_k(
