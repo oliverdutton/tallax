@@ -106,19 +106,20 @@ def verify_sort_output(
     print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
 
 
-def verify_topk_output(x, outs, axis=1):
+def verify_topk_output(x, outs, axis=1, reduced=True, approximate=False, recall_target=0.95):
     """Validate top-k outputs for correctness.
 
     Args:
         x: Input array (must be 2D)
         outs: Tuple of (values, indices) from top-k (both must be 2D)
         axis: Axis along which top-k was computed (0 or 1, default 1)
+        reduced: If True, return single boolean validity. If False, return (vals_validity, indices_validity) as floats
+        approximate: If True, use recall-based validation. If False, use exact match (default False)
+        recall_target: For approximate top-k, minimum fraction of values >= threshold (default 0.95)
 
     Returns:
-        Boolean array indicating if the top-k output is valid for each batch element
-
-    Raises:
-        ValueError: If x or outputs are not 2D
+        If reduced=True: Boolean array indicating validity for each batch element
+        If reduced=False: Tuple of (vals_validity, indices_validity) float arrays
     """
     if x.ndim != 2:
         raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
@@ -132,25 +133,29 @@ def verify_topk_output(x, outs, axis=1):
 
     @functools.partial(jax.vmap, in_axes=batch_axis)
     def verify_slice(x_slice, vals_slice, idxs_slice):
-        """Verify a single slice."""
-        x_sorted = jnp.sort(x_slice, descending=True)
-
         k = len(vals_slice)
         n = len(x_slice)
-        valid = True
 
-        # actual values must match
-        valid &= (vals_slice == x_sorted[:k]).all()
+        if approximate:
+            threshold = jax.lax.top_k(x_slice, k)[0][-1]
+            vals_valid = jnp.mean((vals_slice >= threshold).astype(jnp.float32))
+        else:
+            x_sorted = jnp.sort(x_slice, descending=True)
+            vals_valid = jnp.mean((vals_slice == x_sorted[:k]).astype(jnp.float32))
 
-        # indices map to values correctly
-        valid &= (x_slice[idxs_slice] == vals_slice).all()
-
-        # indices are all in bounds and unique
+        indices_mapping_valid = (x_slice[idxs_slice] == vals_slice).all()
         i = jnp.unique(idxs_slice, size=k, fill_value=-1)
-        valid &= ((i >= 0) & (i < n)).all()
-        return valid
+        indices_bounds_valid = ((i >= 0) & (i < n)).all()
+        indices_valid = indices_mapping_valid & indices_bounds_valid
 
-    return verify_slice(x, out_vals, out_indexs)
+        if reduced:
+            valid = (vals_valid >= recall_target if approximate else vals_valid == 1.0) & indices_valid
+            return valid
+        else:
+            return vals_valid, jnp.float32(indices_valid)
+
+    result = verify_slice(x, out_vals, out_indexs)
+    return result if reduced else (result[0], result[1])
 
 
 def benchmark(_run):
