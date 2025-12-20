@@ -26,7 +26,9 @@ def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algor
     # you'd expect checking against recall target to fail 50% of the time, but in practice the approximation bounds are quite strong so this passes 100% of current tests happily
     test_recall_threshold = recall_target
     print(f'recall of {recall:.3f} for target {recall_target:.3f}')
+    if k==1:
+        assert recall==1., f"For k=1 recall must be perfect, but found {recall:.3f}"
     assert (recall > test_recall_threshold), (
         f"approx_max_k validation failed for dtype {dtype}, k={k}: "
-        f"recall={recall.mean():.3f}"
+        f"recall={recall:.3f}"
     )
