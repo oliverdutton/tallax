@@ -10,7 +10,6 @@ from tallax._src.test_utils import verify_topk_output
 @pytest.mark.parametrize("k", [1, 2, 3, 17, 32, 64, 128])
 @pytest.mark.parametrize("recall_target", [0.2, 0.5, 0.8, 0.95, 0.99])
 @pytest.mark.parametrize("shape", [(128, 8192)])
-@pytest.mark.parametrize("use_lax_approx_max_k_algorithm", [False, True])
 @pytest.mark.parametrize("seed", [0, 42, 467])
 @pytest.mark.skipif(is_cpu_platform(), reason="approx_max_k tests require TPU/GPU")
 def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algorithm, seed):
@@ -21,7 +20,7 @@ def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algor
     else:
         operand = jax.random.randint(key, shape, 0, 2**24, dtype=dtype)
 
-    outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target, use_lax_approx_max_k_algorithm=use_lax_approx_max_k_algorithm)
+    outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target)
     recall = verify_topk_output(operand, outputs, axis=1, approximate=True).mean()
     # you'd expect checking against recall target to fail 50% of the time, but in practice the approximation bounds are quite strong so this passes 100% of current tests happily
     test_recall_threshold = recall_target
