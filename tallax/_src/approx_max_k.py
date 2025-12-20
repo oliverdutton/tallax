@@ -93,18 +93,16 @@ def approx_max_k(
     else:
         # Tallax convergence probability approach
         num_bins = 128 if k < 16 else 256
-        num_bins = ceil_multiple(num_bins, NUM_LANES)
-        num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
-
         target_yields = (recall_target,)
         # Add early stopping path
         if recall_target > 0.95:
             target_yields = (0.9, recall_target)
-
         depths = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=target_yields)
-        # Add 1 to all except last to enable convergence checks (requires m >= 2)
+        # Add 1 to all except last to enable convergence checks
         bins_topm_schedule = tuple(d + 1 for d in depths[:-1]) + (depths[-1],)
 
+    num_bins = ceil_multiple(num_bins, NUM_LANES)
+    num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
     return top_dynamic_k(
         operand,
         k=k,
