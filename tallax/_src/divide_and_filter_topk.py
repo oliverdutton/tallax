@@ -334,8 +334,10 @@ def dynamic_topk_refs(
           m=m_final,
           max_k=max_k
       )
-
-  global_topk_schedule = tuple(sorted(set(x-1 if x>1 else x for x in bins_topm_schedule)))
+  # early on bins_topm_schedule are convergence checks so we go to bins-top-(m-1). For final bins-top-(m_max) for convergence guaranteed we only need to consider top-(m_max-1), if not must cover bins-top-(m_max)
+  global_topk_schedule = [max(x-1, 0) for x in bins_topm_schedule[:-1]] + [
+  bins_topm_schedule[-1] - (1 if guarantee_convergence else 0)]
+  global_topk_schedule = tuple(sorted(set(bins_topm_schedule)))
 
   # Final top-k extraction (done by last program)
   @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
