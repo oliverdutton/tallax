@@ -16,10 +16,11 @@ def test_approx_max_k(dtype, k, recall_target, shape):
     operand = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape).astype(dtype)
 
     outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target)
-    recall = verify_topk_output(operand, outputs, axis=1, approximate=True)
+    recall = verify_topk_output(operand, outputs, axis=1, approximate=True).mean()
     # double the aim, to allow for noise. Maxmimum recall check for noise as well.
     test_recall_threshold = min(0.95, 1 - 2*(1-recall_target))
-    assert (recall.mean() > test_recall_threshold), (
+    print(f'recall of {recall:.3f} for target {recall_target:.3f}')
+    assert (recall > test_recall_threshold), (
         f"approx_max_k validation failed for dtype {dtype}, k={k}: "
         f"recall={recall.mean():.3f}"
     )
