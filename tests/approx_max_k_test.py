@@ -19,11 +19,11 @@ def test_approx_max_k_2d(shape, dtype, k):
     operand = jax.random.normal(key, shape, dtype=dtype) if dtype == jnp.float32 else jax.random.randint(key, shape, 0, 1000, dtype=dtype)
 
     outputs = tax.approx_max_k(operand, k=k, reduction_dimension=-1)
-    vals_validity, indices_validity = verify_topk_output(operand, outputs, axis=1, reduced=False, approximate=True)
+    recall = verify_topk_output(operand, outputs, axis=1, approximate=True)
 
-    assert (vals_validity > 0.95).all() and indices_validity.all(), (
+    assert (recall > 0.95).all(), (
         f"approx_max_k validation failed for shape {shape}, dtype {dtype}, k={k}: "
-        f"vals_validity={vals_validity.mean():.3f}, indices_validity={indices_validity.mean():.3f}"
+        f"recall={recall.mean():.3f}"
     )
 
 
@@ -39,9 +39,9 @@ def test_approx_max_k_large_vocab(dtype, k):
         operand = operand + jax.random.normal(jax.random.key(123), shape, dtype=dtype) * 0.1
 
     outputs = tax.approx_max_k(operand, k=k, reduction_dimension=-1)
-    vals_validity, indices_validity = verify_topk_output(operand, outputs, axis=1, reduced=False, approximate=True, recall_target=0.9)
+    recall = verify_topk_output(operand, outputs, axis=1, approximate=True)
 
-    assert (vals_validity > 0.9).all() and indices_validity.all(), (
+    assert (recall > 0.9).all(), (
         f"approx_max_k large vocab validation failed for dtype {dtype}, k={k}: "
-        f"vals_validity={vals_validity.mean():.3f}, indices_validity={indices_validity.mean():.3f}"
+        f"recall={recall.mean():.3f}"
     )
