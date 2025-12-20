@@ -118,7 +118,7 @@ def verify_topk_output(x, outs, axis=1, approximate=False):
 
     Returns:
         If approximate=False: Boolean array indicating validity for each batch element
-        If approximate=True: Float array with % of values >= topk threshold (0.0 if indices fail)
+        If approximate=True: Float array with % of values of top-k present (0.0 if indices fail)
     """
     if x.ndim != 2:
         raise ValueError(f"verify_topk_output only supports 2D inputs, got {x.ndim}D")
@@ -144,7 +144,12 @@ def verify_topk_output(x, outs, axis=1, approximate=False):
 
         if approximate:
             threshold = true_topk_vals[-1]
-            vals_recall = jnp.mean((vals_slice >= threshold).astype(jnp.float32))
+            # due to ties at the topk boundary we have to be careful here
+            vals_recall = (
+            # how many values definitely in topk, with a max topk inclusion number at the threshold
+            (vals_slice > threshold).sum() + jnp.minimum(
+            (true_topk_vals == threshold).sum(), (vals_slice == threshold).sum())
+            ) / k
             return jnp.where(indices_valid, vals_recall, 0.0)
         else:
             vals_valid = (vals_slice == true_topk_vals).all()
