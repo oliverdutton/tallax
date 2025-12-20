@@ -10,28 +10,6 @@ from tallax._src.utils import NUM_LANES, NUM_SUBLANES, ceil_multiple
 from tallax.divide_and_filter_topk_convergence_theory import calculate_depth_thresholds
 
 
-def calculate_num_bins_top_1_required(k, r):
-    """
-    Calculates the numerically safe lower bound for L in lax.approx_max_k paper (num_bins in tallax).
-    
-    Args:
-        k (int): Top-k values
-        r (float): Target recall, range [0.1, 1.0) expected
-    
-    Returns:
-        float: The lower bound for L.
-    """
-    if k == 1:
-        return 1
-    if r >= 1.0:
-        raise ValueError
-    # Standard Formula (Unsafe): 1 / (1 - r**(1/(k-1)))
-    # Safe Formula: -1 / expm1(ln(r) / (k-1)) 
-    # math.log(r) is safe for r >= 0.1 (lowest recall you could reasonably expect someone to use)
-    # math.expm1(x) computes e^x - 1 accurately for small x
-    return math.ceil(-1.0 / math.expm1(math.log(r) / (k - 1)))
-
-
 @functools.partial(
     jit,
     static_argnames=(
@@ -96,11 +74,11 @@ def approx_max_k(
 
     input_size = reduction_input_size_override if reduction_input_size_override > 0 else operand.shape[-1]
 
-    # Uses TPU-KNN paper's (unapproximated) recall formula 
-    num_bins = calculate_num_bins_top_1_required(k, recall_target)
+    # Uses TPU-KNN paper's recall formula 
+    num_bins = math.ceil((k-1)/(1-recall_target))
     bins_topm_schedule = (1,)
-
     num_bins = ceil_multiple(num_bins, NUM_LANES)
+    # incase whole input needs top-k 
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
     return top_dynamic_k(
         operand,
