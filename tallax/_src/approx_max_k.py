@@ -88,7 +88,7 @@ def approx_max_k(
     else:
         input_size = operand.shape[-1]
 
-    # Algorithm selection: compute num_bins and target_yields
+    # Algorithm selection: compute num_bins_unclamped
     if use_lax_approx_max_k_algorithm:
         # TPU-KNN paper's recall formula approach
         # E[Recall] = ((L-1)/L)^(K-1) => L ≈ (k-1) / (1 - recall_target)
@@ -97,29 +97,29 @@ def approx_max_k(
         else:
             num_bins_exact = (k - 1) / (1 - recall_target)
             num_bins_unclamped = math.ceil(num_bins_exact)
-
-        # Single-pass schedule
-        target_yields = (1,)
     else:
         # Tallax convergence probability approach
         # Auto-select num_bins based on k
         num_bins_unclamped = 128 if k < 16 else 256
 
-        # Compute target yields based on recall target
-        target_yields = (recall_target,) if recall_target <= 0.95 else (0.9, recall_target)
-
     # Shared: clamp and align num_bins to tile boundaries
     num_bins = ceil_multiple(num_bins_unclamped, NUM_LANES)
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
 
-    # Compute depth thresholds and build schedule
-    depths = calculate_depth_thresholds(
-        k, num_bins, block_size=1, target_yields=target_yields
-    )
+    # Build bins_topm_schedule based on algorithm
+    if use_lax_approx_max_k_algorithm:
+        # TPU-KNN: single-pass schedule
+        bins_topm_schedule = (1,)
+    else:
+        # Tallax: compute schedule from convergence probability thresholds
+        target_yields = (recall_target,) if recall_target <= 0.95 else (0.9, recall_target)
+        depths = calculate_depth_thresholds(
+            k, num_bins, block_size=1, target_yields=target_yields
+        )
 
-    # Add 1 to all except last to enable convergence checks (requires m >= 2)
-    # Last depth doesn't need +1 since no convergence check follows it
-    bins_topm_schedule = tuple(d + 1 for d in depths[:-1]) + (depths[-1],)
+        # Add 1 to all except last to enable convergence checks (requires m >= 2)
+        # Last depth doesn't need +1 since no convergence check follows it
+        bins_topm_schedule = tuple(d + 1 for d in depths[:-1]) + (depths[-1],)
 
     # Call top_dynamic_k with computed parameters
     vals, idxs, valid, depths_out, cutoff = top_dynamic_k(
