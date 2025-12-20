@@ -109,19 +109,11 @@ def approx_max_k(
     if use_lax_approx_max_k_algorithm:
         # Uses TPU-KNN paper's (unapproximated) recall formula 
         num_bins = calculate_num_bins_top_1_required(k, recall_target)
-        num_bins = ceil_multiple(num_bins, NUM_LANES)
-        num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
         bins_topm_schedule = (1,)
     else:
         # Tallax convergence probability approach
         num_bins = 128 if k < 16 else 256
-        target_yields = (recall_target,)
-        # Add early stopping path
-        if recall_target > 0.95:
-            target_yields = (0.9, recall_target)
-        depths = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=target_yields)
-        # Add 1 to all except last to enable convergence checks
-        bins_topm_schedule = tuple(d + 1 for d in depths[:-1]) + (depths[-1],)
+        bins_topm_schedule = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=(recall_target,))
 
     num_bins = ceil_multiple(num_bins, NUM_LANES)
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
