@@ -145,24 +145,13 @@ At this reduced size, the choice of final top-k algorithm (Bitonic vs RadixSelec
 - As the name says, approx_max_k is just an approximation of top-k, it can miss the 2nd largest element. While tallax top-k guarantees exactness.
 - The underlying tallax top-k is a generalization of the approx_max_k algorithm. In approx_max_k the input is split into bins which are top-1'd, before a top-k on the aggregate. Tallax generalizes this to top-m instead of top-1, adding early stopping with convergence checks and an efficient convergence bounds based method for reducing worst case runtime.
 - As tallax is a generalization, we provide tallax.tax.approx_max_k using the jax.lax.approx_max_k algorithm. Our implementation can be up to 5x faster than jax.lax.approx_max_k due to a more efficient bitonic top-k on the aggregated top-1's. See table below:
-| Shape | k | XLA | tallax | Speedup |
-|---|---|---|---|---|
-| (16, 1024) | 128 | 6.9 | 2.5 | 2.80x |
-| (16, 1024) | 64 | 6.9 | 2.1 | 3.28x |
-| (16, 1024) | 16 | 5.3 | 1.8 | 2.97x |
-| (16, 32768) | 128 | 29.1 | 5.6 | 5.20x |
-| (16, 32768) | 64 | 13.5 | 4.4 | 3.08x |
-| (16, 32768) | 16 | 7.2 | 3.3 | 2.17x |
-| (16, 262144) | 128 | 39.3 | 18.5 | 2.13x |
-| (16, 262144) | 64 | 23.7 | 15.6 | 1.52x |
-| (16, 262144) | 16 | 17.2 | 14.7 | 1.17x |
-| (128, 32768) | 128 | 83.8 | 29.6 | 2.83x |
-| (128, 32768) | 64 | 42.5 | 19.6 | 2.16x |
-| (128, 32768) | 16 | 18.7 | 15.0 | 1.25x |
-| (128, 262144) | 128 | 161.0 | 108.7 | 1.48x |
-| (128, 262144) | 64 | 119.7 | 98.4 | 1.22x |
-| (128, 262144) | 16 | 96.3 | 93.7 | 1.03x |
-Runtimes are in microseconds with recall target kept at it's default value of 0.95. All inputs are bfloat16 and runtimes on v5e.
+
+| Shape | k=128 (b=16) | k=64 (b=16) | k=16 (b=16) | k=128 (b=128) | k=64 (b=128) | k=16 (b=128) |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| (b, 1024) | **2.80x** | **3.28x** | **2.97x** | - | - | - |
+| (b, 32768) | **5.20x** | **3.08x** | **2.17x** | **2.83x** | **2.16x** | 1.25x |
+| (b, 262144) | **2.13x** | **1.52x** | 1.17x | 1.48x | 1.22x | 1.03x |
+**Note: Recall target kept at it's default value of 0.95. All inputs are bfloat16 and runtimes on v5e.*
 - Our implementation is open source so external users can inspect and debug the code. [The Anthropic team found a significant bug in approx_max_k](https://www.anthropic.com/engineering/a-postmortem-of-three-recent-issues) where for k=256, N=12000 with all zeros except a single 1 that if the 1 was beyond index 10240 it would be missed. The XLA-TPU code is closed source so could not be investigated. The bug is caused by the algorithms calculation of number of bins to top-k, (k-1)/(1-recall_target=0.95)=5100, this gets rounded to hardware aligned multiple of 128 to 5120. Splitting the input to three parts: 0:5120, 5120:10240, 10240:12000, of which that sublength remainder of 1760 elements does not appear to be getting compared. Having access to the source code makes this bug far more easier to spot. tallax binned topk you can see [here](https://github.com/oliverdutton/tallax/blob/f6805bfccd23613129a864381fda3feaa6f05230/tallax/_src/divide_and_filter_topk.py#L96-L104) does handle this remainder portion correctly, padding the final remainder to the number of bins and comparing.
 
 [^8]: [TPU-KNN
