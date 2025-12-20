@@ -7,7 +7,10 @@ from jax import jit
 
 from tallax._src.divide_and_filter_topk import top_dynamic_k
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, ceil_multiple
-from tallax.divide_and_filter_topk_convergence_theory import calculate_depth_thresholds
+from tallax.divide_and_filter_topk_convergence_theory import (
+    calculate_depth_thresholds,
+    compute_required_depth_for_recall_target,
+)
 
 
 @functools.partial(
@@ -91,13 +94,24 @@ def approx_max_k(
         num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
         bins_topm_schedule = (1,)
     else:
-        # Tallax convergence probability approach
+        # Tallax expected recall approach
         num_bins = 128 if k < 16 else 256
-        target_yields = (recall_target,)
-        # Add early stopping path
+
+        # Compute required depth for recall target using expected recall
+        target_depth = compute_required_depth_for_recall_target(k, num_bins, recall_target)
+
+        # Add early stopping path for high recall targets
+        depths = []
         if recall_target > 0.95:
-            target_yields = (0.9, recall_target)
-        depths = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=target_yields)
+            # Use probability-based depth for 0.9 as early stopping point
+            early_depths = calculate_depth_thresholds(k, num_bins, block_size=1, target_yields=(0.9,))
+            early_depth = early_depths[0] if early_depths else target_depth
+            # Only add if it's less than the target depth
+            if early_depth < target_depth:
+                depths.append(early_depth)
+
+        depths.append(target_depth)
+
         # Add 1 to all except last to enable convergence checks
         bins_topm_schedule = tuple(d + 1 for d in depths[:-1]) + (depths[-1],)
 
