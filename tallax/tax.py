@@ -10,16 +10,19 @@ Exports:
   sort: TPU-optimized sort (jax.lax.sort counterpart).
   top_k: TPU-optimized top-k with guaranteed convergence (jax.lax.top_k counterpart).
   top_dynamic_k: Top-k supporting per-token (dynamic) k values.
+  approx_max_k: TPU-optimized approximate top-k (jax.lax.approx_max_k counterpart).
   cumsum: TPU-optimized cumulative sum (jax.lax.cumsum counterpart).
 """
 from tallax._src.sort import sort
 from tallax._src.divide_and_filter_topk import topk as top_k
 from tallax._src.divide_and_filter_topk import top_dynamic_k
 from tallax._src.cumsum import cumsum
+from tallax._src.approx_max_k import approx_max_k
 
 __all__ = [
     "sort",
     "top_k",
     "top_dynamic_k",
+    "approx_max_k",
     "cumsum",
 ]
