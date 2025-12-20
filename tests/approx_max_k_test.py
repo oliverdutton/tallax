@@ -9,7 +9,7 @@ from tallax._src.test_utils import verify_topk_output
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
 @pytest.mark.parametrize("k", [1, 2, 3, 17, 32, 64, 128])
 @pytest.mark.parametrize("recall_target", [0.5, 0.8, 0.95, 0.99])
-@pytest.mark.parametrize("shape", [(128, 8192])
+@pytest.mark.parametrize("shape", [(128, 8192)])
 @pytest.mark.skipif(is_cpu_platform(), reason="approx_max_k tests require TPU/GPU")
 def test_approx_max_k(dtype, k, recall_target, shape):
     """Test approx_max_k with iota reshaped."""
