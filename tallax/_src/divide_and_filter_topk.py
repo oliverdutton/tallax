@@ -281,6 +281,9 @@ def dynamic_topk_refs(
       if m >= max_k:
         # it's converged so no need for check
         return
+      if m==1:
+        # Check not possible
+        return
       # Termination criterion:
       # If top-(m-1) bins contain >= k vals larger than
       # the largest m-th largest value, then top-k is guaranteed to be in bins
