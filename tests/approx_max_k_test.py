@@ -14,7 +14,11 @@ from tallax._src.test_utils import verify_topk_output
 @pytest.mark.skipif(is_cpu_platform(), reason="approx_max_k tests require TPU/GPU")
 def test_approx_max_k(dtype, k, recall_target, shape, use_lax_approx_max_k_algorithm):
     """Test approx_max_k with iota reshaped."""
-    operand = jnp.arange(shape[0] * shape[1], dtype=dtype).reshape(shape).astype(dtype)
+    key = jax.random.key(0)
+    if dtype == jnp.float32:
+        operand = jax.random.normal(key, shape, dtype=dtype)
+    else:
+        operand = jax.random.randint(key, shape, 0, 2**24, dtype=dtype)
 
     outputs = tax.approx_max_k(operand, k=k, recall_target=recall_target, use_lax_approx_max_k_algorithm=use_lax_approx_max_k_algorithm)
     recall = verify_topk_output(operand, outputs, axis=1, approximate=True).mean()
