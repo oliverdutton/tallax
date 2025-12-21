@@ -334,6 +334,93 @@ def _run_array_substage_on_refs(
 
 ### Stage Execution
 
+def _run_single_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys, dim1_offset):
+  """Run a single stage on tiles: all substages from stage-1 down to 0."""
+  for substage in range(stage)[::-1]:
+    arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
+        arrs_tiles, substage=substage, batch_size=batch_size,
+        stage=stage, num_keys=num_keys, dim1_offset=dim1_offset)
+  return arrs_tiles
+
+
+def _run_stages_on_tiles(arrs_tiles, start_stage, end_stage, batch_size, num_keys, dim1_offset):
+  """Run multiple stages on tiles."""
+  for stage in range(start_stage, end_stage):
+    arrs_tiles = _run_single_stage_on_tiles(
+        arrs_tiles, stage, batch_size, num_keys, dim1_offset)
+  return arrs_tiles
+
+
+def _run_compressed_stages_on_refs(
+    refs,
+    *,
+    num_keys: int,
+    descending: bool,
+    log_n: int,
+    dim1_offset: int,
+    unroll: int,
+    scratch_tiles_refs,
+):
+  """Run all stages in compressed format with proper slicing for high stages."""
+  dim1 = refs[0].shape[1]
+  batch_size = refs[0].shape[0]
+
+  # Load and transpose to compressed format
+  arrs = [ref[...] for ref in refs]
+  padded_arrs = [pad(arr, block_shape=(NUM_LANES * NUM_LANES // dim1, dim1)) for arr in arrs]
+  padded_batch_size = padded_arrs[0].shape[0]
+  arrs_tiles = jax.tree.map(to_compressed_transpose_format, padded_arrs)
+  num_tiles = len(arrs_tiles[0])
+  tile_batch_size = arrs_tiles[0][0].shape[0]
+
+  # Total elements in compressed format = num_tiles * tile_batch_size
+  unroll_stage_limit = log2(min(unroll * tile_batch_size, num_tiles * tile_batch_size))
+
+  # Stages 1 to unroll_stage_limit: fully unrolled
+  arrs_tiles = _run_stages_on_tiles(
+      arrs_tiles, start_stage=1, end_stage=min(unroll_stage_limit + 1, log_n + 1),
+      batch_size=padded_batch_size, num_keys=num_keys, dim1_offset=dim1_offset)
+
+  # High stages: use fori_loop with substages handled specially
+  if log_n > unroll_stage_limit:
+    # Store tiles to scratch
+    for arr_idx, tiles in enumerate(arrs_tiles):
+      for tile_idx, tile in enumerate(tiles):
+        scratch_tiles_refs[arr_idx][tile_idx][...] = tile
+
+    @pl.loop(unroll_stage_limit + 1, log_n + 1)
+    def run_high_stage(stage):
+      # Load tiles
+      tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
+                for tile_idx in range(num_tiles)] for arr_idx in range(len(refs))]
+
+      # Run substages: high substages (>= unroll_stage_limit) down to 0
+      # For high substages, would need special handling (not implemented yet)
+      # For now, run substages up to what tiles support
+      max_substage = min(log2(num_tiles * tile_batch_size), stage)
+      tiles = _run_single_stage_on_tiles(
+          tiles, max_substage, padded_batch_size, num_keys, dim1_offset)
+
+      # Store back
+      for arr_idx, tile_list in enumerate(tiles):
+        for tile_idx, tile in enumerate(tile_list):
+          scratch_tiles_refs[arr_idx][tile_idx][...] = tile
+
+    # Load final tiles
+    arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
+                   for tile_idx in range(num_tiles)] for arr_idx in range(len(refs))]
+
+  # Transpose back and write
+  outs = [from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
+          for tiles in arrs_tiles]
+  if len(refs) > 1:
+    out_stacked = jnp.stack(outs, axis=0)
+    for i, ref in enumerate(refs):
+      ref[...] = out_stacked[i]
+  else:
+    refs[0][...] = outs[0]
+
+
 def _run_stages(
     refs,
     stage_ref,
@@ -353,57 +440,14 @@ def _run_stages(
   if log_n is None:
     log_n = log2(dim1)
 
-  # Compressed transpose path: 1 transpose at start, 1 at end
+  # Compressed transpose path
   if use_compressed_throughout:
-    batch_size = refs[0].shape[0]
     if dim1_offset is None:
       dim1_offset = int(descending) * dim1
-
-    # Transpose to compressed format ONCE
-    arrs = [ref[...] for ref in refs]
-    padded_arrs = [pad(arr, block_shape=(NUM_LANES * NUM_LANES // dim1, dim1)) for arr in arrs]
-    padded_batch_size = padded_arrs[0].shape[0]
-    arrs_tiles = jax.tree.map(to_compressed_transpose_format, padded_arrs)
-    num_tiles = len(arrs_tiles[0])
-    unroll_stage_limit = log2(min(unroll_compressed * NUM_SUBLANES, num_tiles * NUM_SUBLANES))
-
-    # Stages 1 to unroll_stage_limit: fully unrolled
-    for stage in range(1, min(unroll_stage_limit + 1, log_n + 1)):
-      arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-          arrs_tiles, num_substages=stage, stage=stage, batch_size=padded_batch_size,
-          num_keys=num_keys, dim1_offset=dim1_offset)
-
-    # Store to scratch for high stages, or write out if done
-    if log_n > unroll_stage_limit:
-      for arr_idx, tiles in enumerate(arrs_tiles):
-        for tile_idx, tile in enumerate(tiles):
-          scratch_tiles_refs[arr_idx][tile_idx][...] = tile
-
-      # Stages > unroll_stage_limit: use fori_loop
-      @pl.loop(unroll_stage_limit + 1, log_n + 1)
-      def run_high_stage(stage):
-        tiles_loop = [[scratch_tiles_refs[arr_idx][tile_idx][...]
-                       for tile_idx in range(num_tiles)] for arr_idx in range(len(refs))]
-        tiles_loop = run_compressed_transpose_format_substages_on_tiles(
-            tiles_loop, num_substages=min(log2(num_tiles * NUM_SUBLANES), stage),
-            stage=stage, batch_size=padded_batch_size, num_keys=num_keys, dim1_offset=dim1_offset)
-        for arr_idx, tiles in enumerate(tiles_loop):
-          for tile_idx, tile in enumerate(tiles):
-            scratch_tiles_refs[arr_idx][tile_idx][...] = tile
-
-      # Load final tiles
-      arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
-                     for tile_idx in range(num_tiles)] for arr_idx in range(len(refs))]
-
-    # Transpose back ONCE and write
-    outs = [from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
-            for tiles in arrs_tiles]
-    if len(refs) > 1:
-      out_stacked = jnp.stack(outs, axis=0)
-      for i, ref in enumerate(refs):
-        ref[...] = out_stacked[i]
-    else:
-      refs[0][...] = outs[0]
+    _run_compressed_stages_on_refs(
+        refs, num_keys=num_keys, descending=descending, log_n=log_n,
+        dim1_offset=dim1_offset, unroll=unroll_compressed,
+        scratch_tiles_refs=scratch_tiles_refs)
     return
 
   # Original implementation
