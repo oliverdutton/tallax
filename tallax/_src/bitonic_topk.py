@@ -303,6 +303,329 @@ def max_arrays(operands, num_keys, axis):
     return [x.squeeze(axis) for x in arrs]
 
 
+### Bitonic Sort Implementation
+
+def _bitonic_reduce_inter_tile(
+    arrs_tiles, *, separation, stage, num_keys: int, dim1_offset: int = 0
+):
+  """Perform cross-tile bitonic comparison for sort.
+
+  Unlike _max_reduce_bitonic_inter_tile, this keeps both halves (no reduction).
+
+  Args:
+    arrs_tiles: Tuple of lists of tile arrays
+    separation: Distance between tiles to compare
+    stage: Current sorting stage
+    num_keys: Number of sort keys
+    dim1_offset: Offset for bitonic order calculation
+
+  Returns:
+    Tuple of lists with same number of tiles (both halves kept)
+  """
+  num_tiles = len(arrs_tiles[0])
+  outs_tiles = [[None for _ in range(num_tiles)] for t in arrs_tiles]
+  for i in range(num_tiles // 2):
+    idx = compute_pair_slice_start_index(i, separation)
+    tile_offset_left = idx * NUM_SUBLANES
+    tile_offset_right = (idx + separation) * NUM_SUBLANES
+
+    lefts, rights = (
+        transpose_list_of_lists(arrs_tiles)[j]
+        for j in (idx, idx + separation)
+    )
+
+    # Compute is_descending based on bitonic pattern
+    is_descending = create_bit_indicator(stage, dim1_offset + tile_offset_left)
+
+    # Keep both halves (no reduction), preserving tile order
+    for j, (o_left, o_right) in enumerate(compare_and_swap(
+        lefts, rights, is_descending=is_descending, num_keys=num_keys
+    )):
+      outs_tiles[j][idx] = o_left
+      outs_tiles[j][idx + separation] = o_right
+
+  assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
+  return outs_tiles
+
+
+def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys, dim1_offset: int = 0, batch_size: int):
+    """Perform intra-tile bitonic comparison for sort.
+
+    Args:
+      arrs_tiles: Tuple of lists of tile arrays
+      axis: Axis along which to apply permutation (0 or 1)
+      separation: Distance between elements to compare within tile
+      stage: Current sorting stage
+      num_keys: Number of sort keys
+      dim1_offset: Offset for bitonic order calculation
+      batch_size: Batch size for computing tile offsets
+
+    Returns:
+      Tuple of lists of tiles with updated values
+    """
+    # Create permutation indices for tiles using iota_tile
+    permutation = jnp.bitwise_xor(iota_tile(axis), separation)
+    is_right_half = create_bit_indicator(log2(separation), iota_tile(axis))
+
+    # Apply permutation to all tiles
+    arrs_tiles_permuted = jax.tree.map(
+      lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
+      arrs_tiles
+    )
+
+    # Compute is_descending for each tile based on bitonic pattern
+    num_tiles = len(arrs_tiles[0])
+    tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+
+    def compute_is_descending(idx):
+      if axis == 0:
+        # Cross-sublane
+        tile_offset = idx * NUM_SUBLANES
+        return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+      else:
+        # Cross-lane
+        lane_offset = idx * NUM_SUBLANES + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+        return create_bit_indicator(stage, dim1_offset + lane_offset * batch_size)
+
+    # Compare and merge with permuted values
+    outs_tiles = [[None for _ in t] for t in arrs_tiles]
+    for idx, (lefts, rights) in enumerate(zip(
+          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+          strict=True
+      )):
+        for arr_idx, out in enumerate(compare_and_swap(
+            lefts, rights,
+            is_descending=compute_is_descending(idx),
+            is_right_half=is_right_half,
+            num_keys=num_keys
+        )):
+          outs_tiles[arr_idx][idx] = out
+    assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
+    return outs_tiles
+
+
+def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0):
+    """Run a complete bitonic sort stage on tiles.
+
+    A stage consists of multiple substages that perform comparisons at
+    decreasing distances. This handles stages entirely within the
+    compressed transpose format (up to NUM_LANES elements).
+
+    Args:
+        arrs_tiles: Tuple of lists of tile arrays
+        stage: Current sorting stage (determines sequence length = 2^stage)
+        batch_size: Batch size
+        num_keys: Number of sort keys
+        dim1_offset: Offset for bitonic order calculation
+
+    Returns:
+        Tuple of lists of tiles with stage completed
+    """
+    num_tiles = len(arrs_tiles[0])
+    max_substage = log2(num_tiles * NUM_SUBLANES)
+
+    if stage <= max_substage:
+        # Entire stage fits within compressed transpose format
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+            arrs_tiles,
+            num_substages=stage,
+            stage=stage,
+            dim1_offset=dim1_offset,
+            batch_size=batch_size,
+            num_keys=num_keys,
+        )
+    else:
+        # Stage requires cross-lane operations
+        # First handle substages within compressed format
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+            arrs_tiles,
+            num_substages=max_substage,
+            stage=stage,
+            dim1_offset=dim1_offset,
+            batch_size=batch_size,
+            num_keys=num_keys,
+        )
+        # Then handle remaining substages with cross-lane permutations
+        for substage in range(max_substage, stage):
+            lane_separation = batch_size * (2 ** (substage - max_substage))
+            arrs_tiles = _bitonic_reduce_intra_tile(
+                arrs_tiles,
+                axis=1,
+                separation=lane_separation,
+                stage=stage,
+                dim1_offset=dim1_offset,
+                batch_size=batch_size,
+                num_keys=num_keys
+            )
+
+    return arrs_tiles
+
+
+def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False):
+    """
+    Bitonic sort using compressed transpose format with full tile unrolling.
+
+    Similar to bitonic_topk_arrays but performs full sort without reduction.
+    Uses the same tiling strategy and format conversion for efficient TPU execution.
+
+    Args:
+        operands: List of JAX arrays of shape (dim0, dim1)
+        num_keys: Number of sort keys (default: 1)
+        axis: Axis along which to perform sort (0 or 1)
+        descending: If True, sort in descending order
+
+    Returns:
+        List of JAX arrays of same shape as input, sorted along specified axis
+    """
+    batch_axis = 1 - axis
+    shape = operands[0].shape
+    unpadded_sort_dim = shape[axis]
+
+    if axis == 1:
+        padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
+    elif axis == 0:
+        padded_shape = (
+            ceil_multiple(shape[0], NUM_SUBLANES),
+            ceil_multiple(shape[1], NUM_LANES)
+        )
+    else:
+        raise ValueError
+
+    # Pad both dimensions if needed
+    arrs = [pad(op, block_shape=padded_shape, val='max' if descending else 'min') for op in operands]
+    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
+
+    def _sort_arrays(arrs):
+      # Convert to compressed transpose format
+      arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
+      batch_size = arrs[0].shape[batch_axis]
+      assert batch_size <= NUM_LANES
+      num_tiles = len(arrs_tiles[0])
+      sort_dim = arrs[0].shape[axis]
+      num_stages = log2(sort_dim)
+
+      # Offset to control ascending vs descending final order
+      dim1_offset = int(descending) * sort_dim
+
+      # Run all bitonic sort stages
+      for stage in range(1, num_stages + 1):
+        arrs_tiles = _run_bitonic_stage_on_tiles(
+            arrs_tiles,
+            stage=stage,
+            batch_size=batch_size,
+            num_keys=num_keys,
+            dim1_offset=dim1_offset
+        )
+
+      arrs = [join_tiles_to_array(
+        tiles, dim0=ceil_multiple(sort_dim if axis == 0 else batch_size, NUM_SUBLANES))
+        for tiles in arrs_tiles]
+      if axis == 1:
+        arrs = [x.T for x in arrs]
+      return arrs
+
+    # wrapping to act on batch_size <= NUM_LANES in the kernel
+    arrs = [
+      jnp.concatenate(arr_slices, axis=batch_axis)
+      for arr_slices in transpose_list_of_lists(
+        [_sort_arrays(arrs)
+        for arrs in transpose_list_of_lists([
+        jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
+    ])]
+    return [(arr[:shape[0],:shape[1]] if axis==1 else arr[:shape[0], :shape[1]]) for arr in arrs]
+
+
+def bitonic_sort_refs(
+    in_refs,
+    out_refs,
+    *,
+    num_keys: int,
+    descending: bool,
+):
+    """
+    Pallas kernel for bitonic sort in compressed transpose format.
+
+    Args:
+        in_refs: Input array references
+        out_refs: Output array references
+        num_keys: Number of sort keys
+        descending: Sort in descending order
+    """
+    outs = bitonic_sort_arrays(
+      [ref[...] for ref in in_refs],
+      num_keys=num_keys,
+      descending=descending,
+    )
+    for out, out_ref in zip(outs, out_refs, strict=True):
+      out_ref[...] = out.astype(out_ref.dtype)
+
+
+@functools.partial(
+    jit,
+    static_argnames=("num_keys", "descending", "interpret"),
+)
+def bitonic_sort(
+    operand: jax.Array | Sequence[jax.Array],
+    num_keys: int = 1,
+    descending: bool = False,
+    interpret: bool = False,
+) -> tuple[jax.Array, ...]:
+    """
+    Sort arrays using bitonic sort in compressed transpose format.
+
+    Optimized for sorting power-of-2 sized arrays on TPU. Works entirely in
+    compressed transpose format for maximum efficiency. Similar to bitonic_topk
+    but performs full sort.
+
+    Supports arbitrary input shapes - padding is handled automatically to
+    nearest power of 2.
+
+    Args:
+        operand: Input array(s) of shape [batch, sort_dim].
+                Can be a single array or sequence of arrays.
+                Any sort_dim is supported (will be padded automatically).
+        num_keys: Number of arrays to use as sort keys.
+        descending: If True, sort in descending order.
+        interpret: If True, run in CPU interpret mode.
+
+    Returns:
+        Tuple of arrays (same length as input operands):
+            - Each array has same shape as input, sorted along axis 1
+
+    Example:
+        >>> import jax.numpy as jnp
+        >>> from tallax._src.bitonic_topk import bitonic_sort
+        >>> x = jnp.array([[3, 1, 4, 2], [8, 5, 7, 6]], dtype=jnp.int32)
+        >>> result = bitonic_sort(x, descending=False)
+        >>> print(result[0])
+        [[1 2 3 4]
+         [5 6 7 8]]
+    """
+    operands, unpadded_shape = canonicalize_operand(operand)
+    operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
+      val='min' if descending else 'max') for x in operands]
+    batch_size, sort_dim = operands[0].shape
+
+    # Define output shapes
+    output_shapes = [
+        jax.ShapeDtypeStruct((batch_size, sort_dim), op.dtype)
+        for op in operands
+    ]
+    outputs = pl.pallas_call(
+        functools.partial(
+            bitonic_sort_refs,
+            num_keys=num_keys,
+            descending=descending,
+        ),
+        out_shape=(output_shapes,),
+        compiler_params=pltpu.CompilerParams(
+            vmem_limit_bytes=int(0.9 * 2**27)
+        ),
+        interpret=interpret,
+    )(operands)[0]
+    return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
+
+
 def bitonic_topk_refs(
     in_refs,
     out_refs,
