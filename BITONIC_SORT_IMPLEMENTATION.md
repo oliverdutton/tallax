@@ -159,12 +159,17 @@ tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NU
 is_descending = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 ```
 
-**Optimization:** The `_compute_is_descending_for_tile` function optimizes `is_descending` computation by detecting when the value is constant:
-- **SAME_ALL**: When bit at position `stage` is constant across all tiles, returns a single scalar value
-- **CONST_PER_TILE**: When bit is constant within each tile but differs between tiles, returns one scalar per tile
-- **VARIES**: When bit varies within a tile, computes the full (8, 128) array
+**Optimization:** The `_compute_is_descending_for_tile` function optimizes `is_descending` computation following the pattern from `sort.py`:
+- **SAME_2D_FOR_ALL_TILES**: When `stage < log2(NUM_SUBLANES)` (stage < 3), returns a (8,128) array based on `tile_local_offset` only, same for all tiles
+- **SCALAR_PER_TILE**: When `stage < log2(num_tiles * NUM_SUBLANES)`, returns one scalar boolean per tile
+- **FULL_ARRAY**: For larger stages, computes the full (8, 128) array per tile
 
-This optimization reduces computation and memory traffic for ~30-50% of stages in typical workloads. See `OPTIMIZATION_REPORT.md` for detailed analysis.
+This optimization provides significant benefits:
+- (8, 2048): 54% of stages optimized (6 of 11)
+- (128, 256): 87% of stages optimized (7 of 8)
+- Reduces memory traffic and computation
+
+See `OPTIMIZATION_REPORT.md` for detailed analysis.
 
 **Descending Sort:** Controlled by `dim1_offset`:
 ```python

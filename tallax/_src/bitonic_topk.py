@@ -404,13 +404,13 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
     return outs_tiles
 
 
-def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset):
+def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset, tile_local_offset):
     """Compute is_descending for a tile with optimizations.
 
-    Returns either:
-    - A scalar bool if is_descending is constant for all tiles
-    - A scalar bool if is_descending is constant for this tile
-    - A (8, 128) array if is_descending varies within the tile
+    Follows the pattern from sort.py with three optimization cases:
+    1. stage < log2(NUM_SUBLANES): Returns (8,128) array same for all tiles
+    2. stage < log2(num_tiles * NUM_SUBLANES): Returns scalar per tile
+    3. Otherwise: Returns full (8,128) array per tile
 
     Args:
         stage: Current sorting stage
@@ -418,36 +418,23 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
         batch_size: Batch size
         num_tiles: Total number of tiles
         dim1_offset: Offset for bitonic order calculation
+        tile_local_offset: Precomputed tile local offset array
 
     Returns:
         is_descending value (scalar or array)
     """
     tile_offset = tile_idx * NUM_SUBLANES
-    tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 
-    # Compute max value of tile_local_offset
-    max_local = int((NUM_SUBLANES - 1) + ((NUM_LANES - 1) // batch_size) * num_tiles * NUM_SUBLANES)
+    if type(stage) == int:
+        if stage < log2(NUM_SUBLANES):
+            # every tile has same (8,128) value
+            return create_bit_indicator(stage, tile_local_offset + dim1_offset)
+        elif stage < log2(num_tiles * NUM_SUBLANES):
+            # value constant across tile (scalar per tile)
+            return create_bit_indicator(stage, tile_offset + dim1_offset)
 
-    # Check if bit at position 'stage' varies within this tile
-    bit_mask = 1 << stage
-    min_in_tile = tile_offset
-    max_in_tile = tile_offset + max_local
-
-    if ((min_in_tile >> stage) & 1) != ((max_in_tile >> stage) & 1):
-        # VARIES: Bit toggles within tile, must compute full array
-        return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
-
-    # Bit is constant within this tile
-    # Check if it's the same across all tiles (optimization: check endpoints only)
-    if tile_idx == 0:
-        # First tile: check if same as last tile
-        last_tile_offset = (num_tiles - 1) * NUM_SUBLANES
-        if ((0 >> stage) & 1) == ((last_tile_offset >> stage) & 1):
-            # SAME_ALL: Return single scalar
-            return create_bit_indicator(stage, dim1_offset)
-
-    # CONST_PER_TILE: Return constant value for this tile
-    return create_bit_indicator(stage, dim1_offset + tile_offset)
+    return is_desc
 
 
 def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0):
@@ -507,24 +494,15 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
 
             # Compare and swap with optimized per-tile is_descending computation
             outs_tiles = [[None for _ in t] for t in arrs_tiles]
-            # Pre-compute is_descending if it's the same for all tiles (optimization)
-            is_descending_global = None
-            if num_tiles > 0:
-                is_descending_test = _compute_is_descending_for_tile(stage, 0, batch_size, num_tiles, dim1_offset)
-                # Check if it's a scalar (SAME_ALL case)
-                if jnp.ndim(is_descending_test) == 0:
-                    is_descending_global = is_descending_test
-
             for idx, (lefts, rights) in enumerate(zip(
                 *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
                 strict=True
             )):
                 # Compute is_descending with optimizations
                 # Use stage (not substage!) for the bitonic pattern - stage determines asc/desc
-                if is_descending_global is not None:
-                    is_descending_tile = is_descending_global
-                else:
-                    is_descending_tile = _compute_is_descending_for_tile(stage, idx, batch_size, num_tiles, dim1_offset)
+                is_descending_tile = _compute_is_descending_for_tile(
+                    stage, idx, batch_size, num_tiles, dim1_offset, tile_local_offset
+                )
 
                 for arr_idx, out in enumerate(compare_and_swap(
                     lefts, rights,
