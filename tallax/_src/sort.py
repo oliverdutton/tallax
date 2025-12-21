@@ -392,13 +392,8 @@ def _run_stages_compressed(
     # Run full sort: stages 1 to log_n
 
     # Stages 1 to unroll_stage_limit: fully unrolled (no loop)
+    # Work directly with tiles in memory, avoiding load/store between stages
     for stage in range(1, min(unroll_stage_limit + 1, log_n + 1)):
-      # Load tiles from scratch refs
-      arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
-                     for tile_idx in range(num_tiles)]
-                    for arr_idx in range(len(refs))]
-
-      # Run substages in compressed format
       arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
           arrs_tiles,
           num_substages=stage,
@@ -408,24 +403,34 @@ def _run_stages_compressed(
           dim1_offset=dim1_offset,
       )
 
-      # Store tiles back to scratch refs
+    # After unrolled stages, store tiles to scratch refs if there are higher stages
+    # Otherwise, transpose back and write out directly
+    if log_n > unroll_stage_limit:
+      # Store tiles for high stages to use
       for arr_idx, tiles in enumerate(arrs_tiles):
         for tile_idx, tile in enumerate(tiles):
           scratch_tiles_refs[arr_idx][tile_idx][...] = tile
+    else:
+      # No higher stages - transpose back and write out
+      outs = [
+          from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
+          for tiles in arrs_tiles
+      ]
+      for ref, out in zip(refs, outs, strict=True):
+        ref[...] = out
 
     # Stages > unroll_stage_limit: use fori_loop
+    # Work with tiles in scratch refs, avoiding transposes
     @pl.loop(max_int(unroll_stage_limit + 1, 1), log_n + 1)
     def run_high_stage(stage):
       # Load tiles from scratch refs
-      arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
-                     for tile_idx in range(num_tiles)]
-                    for arr_idx in range(len(refs))]
+      arrs_tiles_loop = [[scratch_tiles_refs[arr_idx][tile_idx][...]
+                          for tile_idx in range(num_tiles)]
+                         for arr_idx in range(len(refs))]
 
       # Run substages in compressed format
-      # Note: run_compressed_transpose_format_substages_on_tiles handles
-      # substages up to log2(num_tiles * NUM_SUBLANES)
-      arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-          arrs_tiles,
+      arrs_tiles_loop = run_compressed_transpose_format_substages_on_tiles(
+          arrs_tiles_loop,
           num_substages=min(log2(num_tiles * NUM_SUBLANES), stage),
           stage=stage,
           batch_size=padded_batch_size,
@@ -434,23 +439,24 @@ def _run_stages_compressed(
       )
 
       # Store tiles back to scratch refs
-      for arr_idx, tiles in enumerate(arrs_tiles):
+      for arr_idx, tiles in enumerate(arrs_tiles_loop):
         for tile_idx, tile in enumerate(tiles):
           scratch_tiles_refs[arr_idx][tile_idx][...] = tile
 
-  # Load final tiles and transpose back ONCE
-  arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
-                 for tile_idx in range(num_tiles)]
-                for arr_idx in range(len(refs))]
+  # If there were high stages, transpose back and write out now (only once at end)
+  if stage_ref is None and log_n > unroll_stage_limit:
+    # Load final tiles from scratch refs
+    arrs_tiles = [[scratch_tiles_refs[arr_idx][tile_idx][...]
+                   for tile_idx in range(num_tiles)]
+                  for arr_idx in range(len(refs))]
 
-  outs = [
-      from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
-      for tiles in arrs_tiles
-  ]
-
-  # Write back to refs
-  for ref, out in zip(refs, outs, strict=True):
-    ref[...] = out
+    # Transpose back ONCE at the end
+    outs = [
+        from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
+        for tiles in arrs_tiles
+    ]
+    for ref, out in zip(refs, outs, strict=True):
+      ref[...] = out
 
 
 def _run_stages(
