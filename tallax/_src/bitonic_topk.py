@@ -327,7 +327,6 @@ def _bitonic_reduce_inter_tile(
   for i in range(num_tiles // 2):
     idx = compute_pair_slice_start_index(i, separation)
     tile_offset_left = idx * NUM_SUBLANES
-    tile_offset_right = (idx + separation) * NUM_SUBLANES
 
     lefts, rights = (
         transpose_list_of_lists(arrs_tiles)[j]
@@ -617,7 +616,8 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         for arrs in transpose_list_of_lists([
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
-    return [(arr[:shape[0],:shape[1]] if axis==1 else arr[:shape[0], :shape[1]]) for arr in arrs]
+    # Unpad to original shape
+    return [arr[:shape[0], :shape[1]] for arr in arrs]
 
 
 def bitonic_sort_refs(
