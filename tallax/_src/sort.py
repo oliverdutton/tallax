@@ -256,9 +256,10 @@ def run_compressed_transpose_format_substages_on_tiles(
       separation = 2**substage
 
       # Determine target tile size for this substage
-      # Coarsen when: separation >= 2*tile_dim0 (tiles too small) and still in compressed format
-      # This reduces tile count while maintaining the ability to handle the substage
-      if separation >= 2 * tile_dim0 and separation < num_tiles * tile_dim0:
+      # Coarsen when: separation >= 2*tile_dim0 (tiles too small for this substage)
+      # Note: separation < num_tiles*tile_dim0 is guaranteed by the assertion in
+      # _run_compressed_transpose_format_substage_on_tiles, so no need to check here
+      if separation >= 2 * tile_dim0:
         # Coarsen to separation-sized tiles for efficiency
         # Cap to ensure we have at least 2 tiles after coarsening
         max_tile_dim0 = (num_tiles * tile_dim0) // 2
@@ -272,16 +273,16 @@ def run_compressed_transpose_format_substages_on_tiles(
       if target_tile_dim0 > tile_dim0:
         # Concatenate tiles
         factor = target_tile_dim0 // tile_dim0
-        arrs_tiles = jax.tree.map(
-            lambda tiles: _concatenate_tiles_along_dim0(tiles, factor),
-            arrs_tiles
+        arrs_tiles = tuple(
+            _concatenate_tiles_along_dim0(tiles, factor)
+            for tiles in arrs_tiles
         )
       elif target_tile_dim0 < tile_dim0:
         # Split tiles back down
         factor = tile_dim0 // target_tile_dim0
-        arrs_tiles = jax.tree.map(
-            lambda tiles: _split_tiles_along_dim0(tiles, factor),
-            arrs_tiles
+        arrs_tiles = tuple(
+            _split_tiles_along_dim0(tiles, factor)
+            for tiles in arrs_tiles
         )
 
       # Run the substage with current tile size
@@ -298,9 +299,9 @@ def run_compressed_transpose_format_substages_on_tiles(
     final_tile_dim0 = arrs_tiles[0][0].shape[0]
     if final_tile_dim0 != NUM_SUBLANES:
       factor = final_tile_dim0 // NUM_SUBLANES
-      arrs_tiles = jax.tree.map(
-          lambda tiles: _split_tiles_along_dim0(tiles, factor),
-          arrs_tiles
+      arrs_tiles = tuple(
+          _split_tiles_along_dim0(tiles, factor)
+          for tiles in arrs_tiles
       )
 
     return arrs_tiles
