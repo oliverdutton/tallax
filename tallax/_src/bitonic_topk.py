@@ -624,6 +624,8 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
 def _run_bitonic_stages_on_transpose_refs(
     transpose_refs,
     *,
+    batch_size: int,
+    sort_dim: int,
     num_keys: int,
     descending: bool,
     unroll: int = 128,
@@ -635,16 +637,17 @@ def _run_bitonic_stages_on_transpose_refs(
 
     Args:
         transpose_refs: References to arrays in compressed transpose format
-                       Shape: (sort_dim, NUM_LANES) where sort_dim = unroll * NUM_SUBLANES
+                       Shape: (sort_dim * batch_size / NUM_LANES, NUM_LANES)
+        batch_size: Original batch size (dim0 before transposing)
+        sort_dim: Original sort dimension (dim1 before transposing)
         num_keys: Number of sort keys
         descending: Sort in descending order
         unroll: Number of tiles to allow in dim0
     """
-    # transpose_refs shape: (sort_dim, NUM_LANES) where sort_dim = unroll * NUM_SUBLANES
-    shape = transpose_refs[0].shape
-    sort_dim = shape[0]
-    batch_size = shape[1]
-    num_tiles = sort_dim // NUM_SUBLANES
+    # transpose_refs shape: (transpose_dim0, NUM_LANES)
+    # where transpose_dim0 = (sort_dim * batch_size) / NUM_LANES
+    transpose_dim0 = transpose_refs[0].shape[0]
+    num_tiles = transpose_dim0 // NUM_SUBLANES
     num_stages = log2(sort_dim)
 
     # Offset to control ascending vs descending final order
@@ -727,8 +730,8 @@ def _run_bitonic_stages_on_transpose_refs(
                     num_keys=num_keys
                 )
 
-    # Write back to transpose refs
-    arrs = [join_tiles_to_array(tiles, dim0=sort_dim) for tiles in arrs_tiles]
+    # Write back to transpose refs (concatenate tiles along dim0)
+    arrs = [jnp.concatenate(tiles, axis=0) for tiles in arrs_tiles]
     for ref, arr in zip(transpose_refs, arrs, strict=True):
         ref[...] = arr
 
@@ -762,15 +765,18 @@ def bitonic_sort_refs(
     batch_size = shape[0]
     sort_dim = shape[1]
 
-    # Ensure sort_dim is compatible with unroll
-    assert sort_dim == unroll * NUM_SUBLANES, \
-        f"sort_dim {sort_dim} must equal unroll * NUM_SUBLANES = {unroll * NUM_SUBLANES}"
+    # Verify sort_dim is a power of 2 and compatible with compressed transpose format
+    assert sort_dim % NUM_SUBLANES == 0, \
+        f"sort_dim {sort_dim} must be divisible by NUM_SUBLANES {NUM_SUBLANES}"
+    assert sort_dim == 2**log2(sort_dim), \
+        f"sort_dim {sort_dim} must be a power of 2"
 
     # Read input refs, convert to compressed transpose format, write to transpose_scratch_refs
     arrs = [ref[...] for ref in in_refs]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
     arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
-    arrs_transposed = [join_tiles_to_array(tiles, dim0=batch_size) for tiles in arrs_tiles]
+    # In compressed transpose format, tiles are concatenated along dim0 -> (sort_dim, NUM_LANES)
+    arrs_transposed = [jnp.concatenate(tiles, axis=0) for tiles in arrs_tiles]
 
     for ref, arr in zip(transpose_scratch_refs, arrs_transposed, strict=True):
         ref[...] = arr
@@ -778,6 +784,8 @@ def bitonic_sort_refs(
     # Run all sorting stages on transpose_scratch_refs
     _run_bitonic_stages_on_transpose_refs(
         transpose_scratch_refs,
+        batch_size=batch_size,
+        sort_dim=sort_dim,
         num_keys=num_keys,
         descending=descending,
         unroll=unroll,
@@ -839,11 +847,14 @@ def bitonic_sort(
     # For ascending sort, pad with 'max' so padding values sort to the end
     # For descending sort, pad with 'min' so padding values sort to the end
 
-    # Pad to unroll * NUM_SUBLANES for ref slicing optimization
-    target_sort_dim = max(unroll * NUM_SUBLANES, 2**log2(max(unpadded_shape[1], NUM_SUBLANES)))
+    # Pad to power of 2 and calculate actual unroll based on padded size
+    target_sort_dim = 2**log2(max(unpadded_shape[1], NUM_SUBLANES))
     operands = [pad(x, (NUM_SUBLANES, target_sort_dim),
       val='min' if descending else 'max') for x in operands]
     batch_size, sort_dim = operands[0].shape
+
+    # Calculate actual unroll from padded sort_dim
+    actual_unroll = sort_dim // NUM_SUBLANES
 
     # Define output shapes
     output_shapes = [
@@ -852,8 +863,9 @@ def bitonic_sort(
     ]
 
     # Define scratch shapes for transpose format
-    # Shape is (sort_dim, NUM_LANES) when data is in compressed transpose format
-    transpose_shape = (sort_dim, NUM_LANES)
+    # In compressed transpose format: shape is (sort_dim * batch_size / NUM_LANES, NUM_LANES)
+    transpose_dim0 = (sort_dim * batch_size) // NUM_LANES
+    transpose_shape = (transpose_dim0, NUM_LANES)
     scratch_shapes = [
         pltpu.VMEM(transpose_shape, to_32bit_dtype(op.dtype))
         for op in operands
@@ -864,7 +876,7 @@ def bitonic_sort(
             bitonic_sort_refs,
             num_keys=num_keys,
             descending=descending,
-            unroll=unroll,
+            unroll=actual_unroll,
         ),
         out_shape=(output_shapes,),
         scratch_shapes=(scratch_shapes,),
