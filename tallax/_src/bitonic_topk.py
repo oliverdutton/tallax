@@ -407,10 +407,10 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
 def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset, tile_local_offset):
     """Compute is_descending for a tile with optimizations.
 
-    Follows the pattern from sort.py with three optimization cases:
+    Optimizes based on actual pattern analysis:
     1. stage < log2(NUM_SUBLANES): Returns (8,128) array same for all tiles
     2. stage < log2(num_tiles * NUM_SUBLANES): Returns scalar per tile
-    3. Otherwise: Returns full (8,128) array per tile
+    3. Otherwise: Checks if tile is actually constant, returns scalar if so
 
     Args:
         stage: Current sorting stage
@@ -424,9 +424,9 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
         is_descending value (scalar or array)
     """
     tile_offset = tile_idx * NUM_SUBLANES
-    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 
     if type(stage) == int:
+        # Threshold-based optimizations from sort.py
         if stage < log2(NUM_SUBLANES):
             # every tile has same (8,128) value
             return create_bit_indicator(stage, tile_local_offset + dim1_offset)
@@ -434,7 +434,20 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
             # value constant across tile (scalar per tile)
             return create_bit_indicator(stage, tile_offset + dim1_offset)
 
-    return is_desc
+        # For stages >= max_substage, check if pattern is actually constant
+        # This catches cases where tile_local_offset doesn't contribute variation
+        is_desc_full = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+
+        # Check if this tile's pattern is constant (all same value)
+        first_val = is_desc_full[0, 0]
+        if jnp.all(is_desc_full == first_val):
+            # Tile is constant - return scalar
+            return first_val
+
+        return is_desc_full
+
+    # Non-int stage (shouldn't happen in practice)
+    return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 
 
 def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0):

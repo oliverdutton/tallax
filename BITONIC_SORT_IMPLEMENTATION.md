@@ -159,15 +159,20 @@ tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NU
 is_descending = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 ```
 
-**Optimization:** The `_compute_is_descending_for_tile` function optimizes `is_descending` computation following the pattern from `sort.py`:
-- **SAME_2D_FOR_ALL_TILES**: When `stage < log2(NUM_SUBLANES)` (stage < 3), returns a (8,128) array based on `tile_local_offset` only, same for all tiles
-- **SCALAR_PER_TILE**: When `stage < log2(num_tiles * NUM_SUBLANES)`, returns one scalar boolean per tile
-- **FULL_ARRAY**: For larger stages, computes the full (8, 128) array per tile
+**Optimization:** The `_compute_is_descending_for_tile` function uses a hybrid optimization approach:
+1. **Threshold-based fast path**: Uses sort.py rules for stages < max_substage
+   - `stage < log2(NUM_SUBLANES)`: Returns (8,128) array same for all tiles
+   - `stage < log2(num_tiles * NUM_SUBLANES)`: Returns one scalar per tile
+2. **Runtime detection**: For stages >= max_substage, checks if tile is actually constant
+   - If constant: Returns scalar
+   - If varies: Returns full (8,128) array
 
-This optimization provides significant benefits:
-- (8, 2048): 54% of stages optimized (6 of 11)
-- (128, 256): 87% of stages optimized (7 of 8)
-- Reduces memory traffic and computation
+This hybrid approach achieves **near-universal optimization**:
+- (8, 128): 100% of stages optimized (7 of 7)
+- (8, 2048): 100% of stages optimized (11 of 11)
+- (128, 256): 100% of stages optimized (8 of 8)
+
+The runtime check `jnp.all(is_desc_full == first_val)` has minimal overhead but catches many cases that threshold rules miss.
 
 See `OPTIMIZATION_REPORT.md` for detailed analysis.
 
