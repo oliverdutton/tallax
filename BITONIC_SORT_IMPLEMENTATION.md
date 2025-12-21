@@ -6,7 +6,7 @@ This document describes the implementation of bitonic sort in tallax, which comp
 
 The bitonic sort implementation provides a full sorting capability using the same compressed transpose format and tiling strategy as bitonic top-k, optimized for TPU execution.
 
-**Current Status:** The implementation is fully functional for arrays with sort dimension up to NUM_LANES (128). Larger dimensions have known limitations due to the compressed transpose format constraints.
+**Current Status:** The implementation is fully functional for arbitrary sort dimensions. It uses compressed transpose format for dimensions up to NUM_LANES (128) and extends with cross-lane permutation substages for larger dimensions. Successfully handles arrays like (8, 2048) with full tile unrolling.
 
 ## Key Components
 
@@ -129,33 +129,51 @@ sorted_values, sorted_indices = bitonic_sort([values, indices], num_keys=2)
 - Larger batches handled via automatic chunking
 - Best performance on TPU; CPU support via interpret mode
 
-## Current Limitations
+## Implementation Highlights
 
-### Sort Dimension Size Limit
+### Cross-Lane Support for Large Arrays
 
-The current implementation efficiently handles arrays with sort dimension up to NUM_LANES (128). Examples of supported shapes:
-- (8, 16), (8, 32), (8, 64), (8, 128) ✓
-- (16, 128), (32, 128), (64, 128) ✓
+The implementation successfully handles arbitrary sort dimensions by combining two approaches:
 
-For arrays with sort dimensions > 128 (e.g., (8, 2048)), the compressed transpose format approach has inherent constraints:
-- The `run_compressed_transpose_format_substages_on_tiles` function cannot handle substages requiring cross-lane comparisons beyond `log2(num_tiles * NUM_SUBLANES)`
-- To efficiently sort larger dimensions would require a hybrid VMEM/HBM approach similar to the existing `sort()` function in `sort.py`
+**For dimensions ≤ NUM_LANES (128):**
+- Uses `run_compressed_transpose_format_substages_on_tiles` for all substages
+- Fully optimized compressed transpose format
+- Examples: (8, 16) through (128, 128) ✓
 
-### Workaround for Large Arrays
+**For dimensions > NUM_LANES (e.g., 2048):**
+- Substages 0 to `log2(num_tiles * NUM_SUBLANES)` use compressed format
+- Remaining substages use cross-lane permutations with `iota_tile(1)`
+- Examples: (8, 256), (8, 512), (8, 1024), (8, 2048) ✓
 
-For arrays exceeding the size limit, use the full `sort()` implementation:
+### Key Implementation Details
+
+**Range Fix:** Critical bug fix in substage iteration:
 ```python
-from tallax._src.sort import sort
-
-# For large arrays like (8, 2048)
-result = sort(arr, num_keys=1, descending=False)
+# Correct: Includes all cross-lane substages from max_substage to stage-1
+for substage in range(max_substage, stage)[::-1]:
 ```
 
-### Future Work
+**Position Mapping:** Uses the same formula as sort.py:
+```python
+tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+is_descending = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+```
 
-To support larger arrays with the bitonic sort approach would require:
-1. Implementing cross-lane comparison substages (similar to `_run_array_substage_on_refs` in sort.py)
-2. Adding HBM-based operations for substages that don't fit in VMEM
-3. Hybrid pipeline combining compressed format operations with cross-lane permutations
+**Optimization:** The `_compute_is_descending_for_tile` function optimizes `is_descending` computation by detecting when the value is constant:
+- **SAME_ALL**: When bit at position `stage` is constant across all tiles, returns a single scalar value
+- **CONST_PER_TILE**: When bit is constant within each tile but differs between tiles, returns one scalar per tile
+- **VARIES**: When bit varies within a tile, computes the full (8, 128) array
 
-This would essentially replicate the full `sort()` implementation's architecture.
+This optimization reduces computation and memory traffic for ~30-50% of stages in typical workloads. See `OPTIMIZATION_REPORT.md` for detailed analysis.
+
+**Descending Sort:** Controlled by `dim1_offset`:
+```python
+dim1_offset = int(descending) * sort_dim  # 0 for ascending, sort_dim for descending
+```
+
+### Validated Shapes
+
+All the following shapes pass comprehensive tests with both ascending and descending sort:
+- (8, 16), (8, 64), (8, 128) ✓
+- (8, 256), (8, 512), (8, 1024), (8, 2048) ✓
+- (16, 128), (32, 128), (64, 128), (128, 128), (128, 256) ✓

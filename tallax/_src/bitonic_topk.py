@@ -404,6 +404,52 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
     return outs_tiles
 
 
+def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset):
+    """Compute is_descending for a tile with optimizations.
+
+    Returns either:
+    - A scalar bool if is_descending is constant for all tiles
+    - A scalar bool if is_descending is constant for this tile
+    - A (8, 128) array if is_descending varies within the tile
+
+    Args:
+        stage: Current sorting stage
+        tile_idx: Index of the current tile
+        batch_size: Batch size
+        num_tiles: Total number of tiles
+        dim1_offset: Offset for bitonic order calculation
+
+    Returns:
+        is_descending value (scalar or array)
+    """
+    tile_offset = tile_idx * NUM_SUBLANES
+    tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+
+    # Compute max value of tile_local_offset
+    max_local = int((NUM_SUBLANES - 1) + ((NUM_LANES - 1) // batch_size) * num_tiles * NUM_SUBLANES)
+
+    # Check if bit at position 'stage' varies within this tile
+    bit_mask = 1 << stage
+    min_in_tile = tile_offset
+    max_in_tile = tile_offset + max_local
+
+    if ((min_in_tile >> stage) & 1) != ((max_in_tile >> stage) & 1):
+        # VARIES: Bit toggles within tile, must compute full array
+        return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+
+    # Bit is constant within this tile
+    # Check if it's the same across all tiles (optimization: check endpoints only)
+    if tile_idx == 0:
+        # First tile: check if same as last tile
+        last_tile_offset = (num_tiles - 1) * NUM_SUBLANES
+        if ((0 >> stage) & 1) == ((last_tile_offset >> stage) & 1):
+            # SAME_ALL: Return single scalar
+            return create_bit_indicator(stage, dim1_offset)
+
+    # CONST_PER_TILE: Return constant value for this tile
+    return create_bit_indicator(stage, dim1_offset + tile_offset)
+
+
 def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0):
     """Run a complete bitonic sort stage on tiles.
 
@@ -443,7 +489,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
 
         # Do cross-lane substages one at a time (from high to low)
         # Each substage is independent, using the same bitonic pattern (from stage)
-        for substage in range(stage - 1, max_substage, -1):
+        for substage in range(max_substage, stage)[::-1]:
             # Do the cross-lane comparison at distance 2^substage
             # Calculate separation in lane dimension
             separation_in_lanes = 2 ** (substage - max_substage)
@@ -459,16 +505,26 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
                 arrs_tiles
             )
 
-            # Compare and swap with per-tile is_descending computation
+            # Compare and swap with optimized per-tile is_descending computation
             outs_tiles = [[None for _ in t] for t in arrs_tiles]
+            # Pre-compute is_descending if it's the same for all tiles (optimization)
+            is_descending_global = None
+            if num_tiles > 0:
+                is_descending_test = _compute_is_descending_for_tile(stage, 0, batch_size, num_tiles, dim1_offset)
+                # Check if it's a scalar (SAME_ALL case)
+                if jnp.ndim(is_descending_test) == 0:
+                    is_descending_global = is_descending_test
+
             for idx, (lefts, rights) in enumerate(zip(
                 *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
                 strict=True
             )):
-                # Compute is_descending using tile index like in sort.py
-                tile_offset = idx * NUM_SUBLANES
+                # Compute is_descending with optimizations
                 # Use stage (not substage!) for the bitonic pattern - stage determines asc/desc
-                is_descending_tile = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+                if is_descending_global is not None:
+                    is_descending_tile = is_descending_global
+                else:
+                    is_descending_tile = _compute_is_descending_for_tile(stage, idx, batch_size, num_tiles, dim1_offset)
 
                 for arr_idx, out in enumerate(compare_and_swap(
                     lefts, rights,
@@ -500,9 +556,10 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     Similar to bitonic_topk_arrays but performs full sort without reduction.
     Uses the same tiling strategy and format conversion for efficient TPU execution.
 
-    Note: Currently optimized for sort dimensions up to NUM_LANES (128).
-    For larger dimensions, this function still works but may be less efficient
-    than the full sort() implementation in sort.py.
+    Handles arbitrary sort dimensions efficiently:
+    - Dimensions ≤ NUM_LANES (128): Uses compressed transpose format substages
+    - Dimensions > NUM_LANES: Extends with cross-lane permutation substages
+    - Example: (8, 2048) sorted using stage-based bitonic reduce with full tile unrolling
 
     Args:
         operands: List of JAX arrays of shape (dim0, dim1)
@@ -516,14 +573,6 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     batch_axis = 1 - axis
     shape = operands[0].shape
     unpadded_sort_dim = shape[axis]
-
-    # Warn if sort dimension exceeds efficient range
-    if unpadded_sort_dim > NUM_LANES:
-        import warnings
-        warnings.warn(
-            f"Sort dimension {unpadded_sort_dim} exceeds NUM_LANES={NUM_LANES}. "
-            f"This may be less efficient. Consider using sort() for large arrays."
-        )
 
     if axis == 1:
         padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
