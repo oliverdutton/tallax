@@ -436,18 +436,15 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
         )
     else:
         # Stage requires cross-lane operations
-        # First do all substages that fit in compressed format (once!)
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-            arrs_tiles,
-            num_substages=max_substage,
-            stage=stage,
-            dim1_offset=dim1_offset,
-            batch_size=batch_size,
-            num_keys=num_keys,
-        )
+        # Compute tile_local_offset once (used for all cross-lane comparisons)
+        # This maps lane positions to positions in the original array
+        # In compressed format, lanes map to different chunks based on batch_size
+        tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
 
-        # Then do cross-lane substages one at a time (from high to low)
-        for substage in range(stage - 1, max_substage - 1, -1):
+        # Do cross-lane substages one at a time (from high to low)
+        # Each substage is independent, using the same bitonic pattern (from stage)
+        for substage in range(stage - 1, max_substage, -1):
+            # Do the cross-lane comparison at distance 2^substage
             # Calculate separation in lane dimension
             separation_in_lanes = 2 ** (substage - max_substage)
             lane_separation = batch_size * separation_in_lanes
@@ -462,10 +459,6 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
                 arrs_tiles
             )
 
-            # For cross-lane, use simpler position computation (just sublane offset)
-            # since lanes correspond to different chunks in the original array
-            tile_local_offset = iota_tile(0)
-
             # Compare and swap with per-tile is_descending computation
             outs_tiles = [[None for _ in t] for t in arrs_tiles]
             for idx, (lefts, rights) in enumerate(zip(
@@ -474,6 +467,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
             )):
                 # Compute is_descending using tile index like in sort.py
                 tile_offset = idx * NUM_SUBLANES
+                # Use stage (not substage!) for the bitonic pattern - stage determines asc/desc
                 is_descending_tile = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 
                 for arr_idx, out in enumerate(compare_and_swap(
@@ -485,6 +479,16 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
                     outs_tiles[arr_idx][idx] = out
 
             arrs_tiles = outs_tiles
+
+        # After all cross-lane substages, run the remaining compressed format substages
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+            arrs_tiles,
+            num_substages=max_substage,
+            stage=stage,
+            dim1_offset=dim1_offset,
+            batch_size=batch_size,
+            num_keys=num_keys,
+        )
 
     return arrs_tiles
 
