@@ -273,12 +273,12 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         separation = k * (2**i)
         arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
       # Final sort: convert bitonic sequence to fully descending order
-      # Use dim1_offset=k to ensure descending direction
+      # Use sort_dim_offset=k to ensure descending direction
       arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
         num_substages=log2(k),
         stage=log2(k),
-        dim1_offset=k,
+        sort_dim_offset=k,
         batch_size=batch_size,
         num_keys=num_keys,
       )
@@ -307,7 +307,7 @@ def max_arrays(operands, num_keys, axis):
 ### Bitonic Sort Implementation
 
 def _bitonic_reduce_inter_tile(
-    arrs_tiles, *, separation, stage, num_keys: int, dim1_offset: int = 0
+    arrs_tiles, *, separation, stage, num_keys: int, sort_dim_offset: int = 0
 ):
   """Perform cross-tile bitonic comparison for sort.
 
@@ -318,7 +318,7 @@ def _bitonic_reduce_inter_tile(
     separation: Distance between tiles to compare
     stage: Current sorting stage
     num_keys: Number of sort keys
-    dim1_offset: Offset for bitonic order calculation
+    sort_dim_offset: Offset for bitonic order calculation
 
   Returns:
     Tuple of lists with same number of tiles (both halves kept)
@@ -335,7 +335,7 @@ def _bitonic_reduce_inter_tile(
     )
 
     # Compute is_descending based on bitonic pattern
-    is_descending = create_bit_indicator(stage, dim1_offset + tile_offset_left)
+    is_descending = create_bit_indicator(stage, sort_dim_offset + tile_offset_left)
 
     # Keep both halves (no reduction), preserving tile order
     for j, (o_left, o_right) in enumerate(compare_and_swap(
@@ -348,7 +348,7 @@ def _bitonic_reduce_inter_tile(
   return outs_tiles
 
 
-def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys, dim1_offset: int = 0, batch_size: int):
+def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys, sort_dim_offset: int = 0, batch_size: int):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -357,7 +357,7 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
       separation: Distance between elements to compare within tile
       stage: Current sorting stage
       num_keys: Number of sort keys
-      dim1_offset: Offset for bitonic order calculation
+      sort_dim_offset: Offset for bitonic order calculation
       batch_size: Batch size for computing tile offsets
 
     Returns:
@@ -381,11 +381,11 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
       if axis == 0:
         # Cross-sublane
         tile_offset = idx * NUM_SUBLANES
-        return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+        return create_bit_indicator(stage, sort_dim_offset + tile_offset + tile_local_offset)
       else:
         # Cross-lane
         lane_offset = idx * NUM_SUBLANES + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
-        return create_bit_indicator(stage, dim1_offset + lane_offset * batch_size)
+        return create_bit_indicator(stage, sort_dim_offset + lane_offset * batch_size)
 
     # Compare and merge with permuted values
     outs_tiles = [[None for _ in t] for t in arrs_tiles]
@@ -404,7 +404,7 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
     return outs_tiles
 
 
-def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset, tile_local_offset, sort_dim):
+def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, sort_dim_offset, tile_local_offset, sort_dim):
     """Compute is_descending for a tile with stratified optimizations.
 
     Optimizes using clear stratification rules similar to sort.py:
@@ -418,7 +418,7 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
         tile_idx: Index of the current tile
         batch_size: Batch size
         num_tiles: Total number of tiles
-        dim1_offset: Offset for bitonic order calculation
+        sort_dim_offset: Offset for bitonic order calculation
         tile_local_offset: Precomputed tile local offset array
         sort_dim: Size of dimension being sorted
 
@@ -431,23 +431,23 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
         # Stratified optimization based on bit position analysis
         if stage < log2(NUM_SUBLANES):
             # Bit only set by iota_tile(0), same pattern for all tiles
-            return create_bit_indicator(stage, tile_local_offset + dim1_offset)
+            return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
         elif stage < log2(num_tiles * NUM_SUBLANES):
             # Bit set by tile_offset, constant within tile, differs across tiles
-            return create_bit_indicator(stage, tile_offset + dim1_offset)
+            return create_bit_indicator(stage, tile_offset + sort_dim_offset)
         elif stage < log2(sort_dim):
             # Bit position beyond tile_offset range, tile_offset doesn't contribute
             # Pattern comes only from tile_local_offset, same for all tiles
-            return create_bit_indicator(stage, dim1_offset + tile_local_offset)
+            return create_bit_indicator(stage, sort_dim_offset + tile_local_offset)
         else:
             # Final stage(s): bit position beyond sort_dim, never set
-            return create_bit_indicator(stage, dim1_offset)
+            return create_bit_indicator(stage, sort_dim_offset)
 
     # Non-int stage (shouldn't happen in practice)
-    return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+    return create_bit_indicator(stage, sort_dim_offset + tile_offset + tile_local_offset)
 
 
-def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0, sort_dim: int = None):
+def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, sort_dim_offset: int = 0, sort_dim: int = None):
     """Run a complete bitonic sort stage on tiles.
 
     A stage consists of multiple substages that perform comparisons at
@@ -459,7 +459,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
         stage: Current sorting stage (determines sequence length = 2^stage)
         batch_size: Batch size
         num_keys: Number of sort keys
-        dim1_offset: Offset for bitonic order calculation
+        sort_dim_offset: Offset for bitonic order calculation
         sort_dim: Size of dimension being sorted
 
     Returns:
@@ -474,7 +474,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
             arrs_tiles,
             num_substages=stage,
             stage=stage,
-            dim1_offset=dim1_offset,
+            sort_dim_offset=sort_dim_offset,
             batch_size=batch_size,
             num_keys=num_keys,
         )
@@ -512,7 +512,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
                 # Compute is_descending with optimizations
                 # Use stage (not substage!) for the bitonic pattern - stage determines asc/desc
                 is_descending_tile = _compute_is_descending_for_tile(
-                    stage, idx, batch_size, num_tiles, dim1_offset, tile_local_offset, sort_dim
+                    stage, idx, batch_size, num_tiles, sort_dim_offset, tile_local_offset, sort_dim
                 )
 
                 for arr_idx, out in enumerate(compare_and_swap(
@@ -530,7 +530,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
             arrs_tiles,
             num_substages=max_substage,
             stage=stage,
-            dim1_offset=dim1_offset,
+            sort_dim_offset=sort_dim_offset,
             batch_size=batch_size,
             num_keys=num_keys,
         )
@@ -589,7 +589,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       num_stages = log2(sort_dim)
 
       # Offset to control ascending vs descending final order
-      dim1_offset = int(descending) * sort_dim
+      sort_dim_offset = int(descending) * sort_dim
 
       # Run all bitonic sort stages
       for stage in range(1, num_stages + 1):
@@ -598,7 +598,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
             stage=stage,
             batch_size=batch_size,
             num_keys=num_keys,
-            dim1_offset=dim1_offset,
+            sort_dim_offset=sort_dim_offset,
             sort_dim=sort_dim
         )
 
@@ -651,7 +651,7 @@ def _run_bitonic_stages_on_transpose_refs(
     num_stages = log2(sort_dim)
 
     # Offset to control ascending vs descending final order
-    dim1_offset = int(descending) * sort_dim
+    sort_dim_offset = int(descending) * sort_dim
 
     # Read transpose refs into tiles
     arrs = [ref[...] for ref in transpose_refs]
@@ -666,7 +666,7 @@ def _run_bitonic_stages_on_transpose_refs(
             stage=stage,
             batch_size=batch_size,
             num_keys=num_keys,
-            dim1_offset=dim1_offset,
+            sort_dim_offset=sort_dim_offset,
             sort_dim=sort_dim
         )
 
@@ -706,7 +706,7 @@ def _run_bitonic_stages_on_transpose_refs(
                             strict=True
                         )):
                             is_descending_tile = _compute_is_descending_for_tile(
-                                stage, idx, batch_size, num_tiles, dim1_offset, tile_local_offset, sort_dim
+                                stage, idx, batch_size, num_tiles, sort_dim_offset, tile_local_offset, sort_dim
                             )
 
                             for arr_idx, out in enumerate(compare_and_swap(
@@ -725,7 +725,7 @@ def _run_bitonic_stages_on_transpose_refs(
                     arrs_tiles,
                     substage=substage,
                     batch_size=batch_size,
-                    dim1_offset=dim1_offset,
+                    sort_dim_offset=sort_dim_offset,
                     stage=stage,
                     num_keys=num_keys
                 )
