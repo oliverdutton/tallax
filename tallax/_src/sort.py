@@ -180,36 +180,32 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
 
 def run_compressed_transpose_format_substages_on_tiles(
     arrs_tiles,
-    num_substages: int,
-    stage: int,
+    stages: tuple[int, ...],
+    num_substages: tuple[int, ...],
     batch_size: int,
     num_keys: int,
     dim1_offset: int = 0,
 ):
-  """Execute multiple substages within tiles."""
-  def _sort_tile_stage(arrs_tiles, stage, num_substages):
-    for substage in range(num_substages)[::-1]:
+  """Execute multiple substages within tiles.
+
+  Args:
+    arrs_tiles: Tuple of lists of tile arrays
+    stages: Tuple of stage indices to process
+    num_substages: Tuple of number of substages for each corresponding stage
+    batch_size: Batch size (padded, must be power of 2 <= NUM_LANES)
+    num_keys: Number of sort keys
+    dim1_offset: Offset for bitonic order calculation
+
+  Returns:
+    Tuple of lists of tiles with updated values
+  """
+  assert len(stages) == len(num_substages)
+
+  for stage, num_substage in zip(stages, num_substages, strict=True):
+    for substage in range(num_substage)[::-1]:
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
           arrs_tiles, substage=substage, batch_size=batch_size, dim1_offset=dim1_offset,
           stage=stage, num_keys=num_keys
-      )
-    return arrs_tiles
-
-  if stage is not None:
-    # Run single stage
-    arrs_tiles = _sort_tile_stage(
-        arrs_tiles,
-        num_substages=num_substages,
-        stage=stage,
-    )
-  else:
-    # Run all stages 1 to num_substages (allows compiler fusion)
-    num_stages = num_substages
-    for stage_ in range(1, num_stages + 1):
-      arrs_tiles = _sort_tile_stage(
-          arrs_tiles,
-          num_substages=stage_,
-          stage=stage_,
       )
 
   return arrs_tiles
@@ -218,14 +214,24 @@ def run_compressed_transpose_format_substages_on_tiles(
 def _run_compressed_transpose_format_substages_on_refs(
     refs,
     *,
-    num_substages: int,
-    stage: int,
+    stages: tuple[int, ...],
+    num_substages: tuple[int, ...],
     num_keys: int,
     unroll: int = 256,
     dim1_offset: int = 0,
     slice_dim1: int = None,
 ):
-  """Orchestrate subtile sorting with proper blocking."""
+  """Orchestrate subtile sorting with proper blocking.
+
+  Args:
+    refs: References to arrays being sorted
+    stages: Tuple of stage indices to process
+    num_substages: Tuple of number of substages for each corresponding stage
+    num_keys: Number of arrays to use as keys
+    unroll: Loop unrolling factor
+    dim1_offset: Offset for bitonic order calculation
+    slice_dim1: Size of slice in dimension 1
+  """
   shape = refs[0].shape
   if slice_dim1 is None:
     slice_dim1 = min(unroll * NUM_LANES, shape[1])
@@ -260,7 +266,7 @@ def _run_compressed_transpose_format_substages_on_refs(
 
     arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
-        stage=stage,
+        stages=stages,
         num_substages=num_substages,
         dim1_offset=dim1_offset + (block_col * slice_dim1),
         batch_size=batch_size,
@@ -349,11 +355,18 @@ def _run_stages(
   # Track global index for bitonic sort order (for array sub-sorting)
   # Second term controls whether final stage is descending or ascending
   dim1 = refs[0].shape[1]
+  dim0 = refs[0].shape[0]
   if log_n is None:
     log_n = log2(dim1)
   if dim1_offset is None:
     dim1_offset = (pl.program_id(1) * dim1 +
                    int(descending) * pl.num_programs(1) * dim1)
+
+  # Calculate max substages that can be run without transposing back
+  # max_substages_without_transpose = log2(num_tiles * NUM_SUBLANES)
+  #                                  = log2(shape[1] // (NUM_LANES // batch_size))
+  batch_size = min(dim0, pl.cdiv(NUM_LANES * NUM_LANES, dim1))
+  max_substages_without_transpose = log2(dim1 // (NUM_LANES // batch_size))
 
   if stage_ref is None:
     # Execute full bitonic sort
@@ -367,36 +380,37 @@ def _run_stages(
     end_stage = stage + 1
     start_stage_static_lower_bound = log_n
 
-  # Run stages 1 to 7 (if large enough), compiler fused
+  # Run initial stages (compiler fused)
   if start_stage_static_lower_bound == 1:
+    max_stage = min(max_substages_without_transpose, end_stage)
     _run_compressed_transpose_format_substages_on_refs(
         refs,
-        num_substages=min(log2(NUM_LANES), end_stage),
-        stage=None,
+        stages=tuple(range(1, max_stage + 1)),
+        num_substages=tuple(range(1, max_stage + 1)),
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )
   elif (all_concrete_ints(start_stage, end_stage)
-        and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
+        and start_stage <= max_substages_without_transpose and end_stage == start_stage + 1):
     _run_compressed_transpose_format_substages_on_refs(
         refs,
-        num_substages=start_stage,
-        stage=start_stage,
+        stages=(start_stage,),
+        num_substages=(start_stage,),
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )
     return
   else:
-    assert start_stage_static_lower_bound > log2(NUM_LANES), \
-        'stages 1 to log2(NUM_LANES) only triggered as fully unrolled code block'
+    assert start_stage_static_lower_bound > max_substages_without_transpose, \
+        'initial stages only triggered as fully unrolled code block'
 
-  # Run stages 8 and upwards
-  @pl.loop(max_int(start_stage, log2(NUM_LANES) + 1), end_stage)
+  # Run later stages
+  @pl.loop(max_int(start_stage, max_substages_without_transpose + 1), end_stage)
   def run_stage(stage):
-    for substage in range(log2(NUM_LANES), log_n)[::-1]:
-      # Run substages 7 and up
+    for substage in range(max_substages_without_transpose, log_n)[::-1]:
+      # Run substages that require cross-tile comparison
       @pl.when(stage > substage)
       def _():
         _run_array_substage_on_refs(
@@ -408,11 +422,11 @@ def _run_stages(
             num_keys=num_keys,
         )
 
-    # Run substages 0-6 inclusive
+    # Run substages within tiles (in compressed transpose format)
     _run_compressed_transpose_format_substages_on_refs(
         refs,
-        num_substages=log2(NUM_LANES),
-        stage=stage,
+        stages=(stage,),
+        num_substages=(max_substages_without_transpose,),
         dim1_offset=dim1_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
