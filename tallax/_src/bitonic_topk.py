@@ -657,78 +657,20 @@ def _run_bitonic_stages_on_transpose_refs(
     arrs = [ref[...] for ref in transpose_refs]
     arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
 
-    # Stages 1 to log2(unroll*NUM_SUBLANES) - fully unrolled
-    num_unrolled_stages = min(num_stages, log2(unroll * NUM_SUBLANES))
+    # Unroll all stages that fit in compressed format
+    # This should cover all stages if unroll is set correctly (unroll * NUM_SUBLANES >= sort_dim)
+    assert num_stages <= log2(num_tiles * NUM_SUBLANES), \
+        f"sort_dim {sort_dim} too large for unroll {unroll}. Need unroll >= {sort_dim // NUM_SUBLANES}"
 
-    for stage in range(1, num_unrolled_stages + 1):
-        arrs_tiles = _run_bitonic_stage_on_tiles(
+    for stage in range(1, num_stages + 1):
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
             arrs_tiles,
+            num_substages=stage,
             stage=stage,
             batch_size=batch_size,
             num_keys=num_keys,
             dim1_offset=dim1_offset,
-            sort_dim=sort_dim
         )
-
-    # Dynamic stages beyond unrolled stages
-    if num_stages > num_unrolled_stages:
-        @pl.loop(num_unrolled_stages + 1, num_stages + 1)
-        def run_dynamic_stage(stage):
-            nonlocal arrs_tiles
-            max_substage = log2(num_tiles * NUM_SUBLANES)
-
-            # Conditionally run high substages (cross-lane operations)
-            if num_unrolled_stages < max_substage:
-                tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
-
-                for substage in range(max_substage, num_unrolled_stages, -1):
-                    @pl.when(stage > substage)
-                    def run_substage():
-                        nonlocal arrs_tiles
-                        # Cross-lane comparison at distance 2^substage
-                        separation_in_lanes = 2 ** (substage - max_substage)
-                        lane_separation = batch_size * separation_in_lanes
-
-                        # Create permutation for cross-lane operation
-                        permutation = jnp.bitwise_xor(iota_tile(1), lane_separation)
-                        is_right_half = create_bit_indicator(log2(lane_separation), iota_tile(1))
-
-                        # Apply permutation to all tiles
-                        arrs_tiles_permuted = jax.tree.map(
-                            lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
-                            arrs_tiles
-                        )
-
-                        # Compare and swap
-                        outs_tiles = [[None for _ in t] for t in arrs_tiles]
-                        for idx, (lefts, rights) in enumerate(zip(
-                            *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-                            strict=True
-                        )):
-                            is_descending_tile = _compute_is_descending_for_tile(
-                                stage, idx, batch_size, num_tiles, dim1_offset, tile_local_offset, sort_dim
-                            )
-
-                            for arr_idx, out in enumerate(compare_and_swap(
-                                lefts, rights,
-                                is_descending=is_descending_tile,
-                                is_right_half=is_right_half,
-                                num_keys=num_keys
-                            )):
-                                outs_tiles[arr_idx][idx] = out
-
-                        arrs_tiles = outs_tiles
-
-            # Unconditionally run substages 0 to num_unrolled_stages in reverse order
-            for substage in range(min(num_unrolled_stages, log2(num_tiles * NUM_SUBLANES)))[::-1]:
-                arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
-                    arrs_tiles,
-                    substage=substage,
-                    batch_size=batch_size,
-                    dim1_offset=dim1_offset,
-                    stage=stage,
-                    num_keys=num_keys
-                )
 
     # Write back to transpose refs (concatenate tiles along dim0)
     arrs = [jnp.concatenate(tiles, axis=0) for tiles in arrs_tiles]
@@ -844,11 +786,23 @@ def bitonic_sort(
          [5 6 7 8]]
     """
     operands, unpadded_shape = canonicalize_operand(operand)
+
+    # Use ref slicing optimization only for large sort_dims where it provides benefit
+    # For smaller sizes, fall back to bitonic_sort_arrays
+    use_ref_slicing = unpadded_shape[1] >= unroll * NUM_SUBLANES
+
+    if not use_ref_slicing:
+        # Fall back to bitonic_sort_arrays for small shapes
+        operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
+          val='min' if descending else 'max') for x in operands]
+        outs = bitonic_sort_arrays(operands, num_keys=num_keys, descending=descending)
+        return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outs)
+
     # For ascending sort, pad with 'max' so padding values sort to the end
     # For descending sort, pad with 'min' so padding values sort to the end
 
-    # Pad to power of 2 and calculate actual unroll based on padded size
-    target_sort_dim = 2**log2(max(unpadded_shape[1], NUM_SUBLANES))
+    # Pad to power of 2 and ensure it's at least unroll * NUM_SUBLANES
+    target_sort_dim = max(unroll * NUM_SUBLANES, 2**log2(max(unpadded_shape[1], NUM_SUBLANES)))
     operands = [pad(x, (NUM_SUBLANES, target_sort_dim),
       val='min' if descending else 'max') for x in operands]
     batch_size, sort_dim = operands[0].shape
