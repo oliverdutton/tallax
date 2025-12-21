@@ -156,7 +156,7 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
     return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None, tile_dim0=NUM_SUBLANES, original_num_tiles=None):
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None):
   """Perform substage using sublane permutation or cross-tile comparison.
 
   Args:
@@ -166,36 +166,32 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
     num_keys: Number of sort keys
     dim1_offset: Offset for bitonic order calculation
     stage: Current sorting stage (if single stage)
-    tile_dim0: Size of dim0 for each tile (default NUM_SUBLANES)
-    original_num_tiles: Original number of tiles before coarsening (for offset calculation)
 
   Returns:
     Tuple of lists of tiles with updated values
   """
   assert batch_size <= NUM_LANES and batch_size == 2**log2(batch_size)
   num_tiles = len(arrs_tiles[0])
-  if original_num_tiles is None:
-    original_num_tiles = num_tiles
+  tile_dim0 = arrs_tiles[0][0].shape[0]  # Derive from actual tile shape
 
-  # Use tile_dim0 instead of NUM_SUBLANES for offset calculations
-  assert substage < log2(original_num_tiles * NUM_SUBLANES), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
+  # Check substage is within compressed format bounds
+  assert substage < log2(num_tiles * tile_dim0), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
 
   # Create iota with correct shape for current tile size
   def iota_for_tile(dim):
     return jax.lax.broadcasted_iota(jnp.int32, (tile_dim0, NUM_LANES), dim)
 
-  tile_local_offset = iota_for_tile(0) + (iota_for_tile(1) // batch_size) * original_num_tiles * NUM_SUBLANES
+  tile_local_offset = iota_for_tile(0) + (iota_for_tile(1) // batch_size) * num_tiles * tile_dim0
 
   def compute_is_descending(idx):
     tile_offset = idx * tile_dim0
     is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
-        # tile_offset is always a multiple of NUM_SUBLANES, so bit `stage` is not affected
+        # tile_offset is always a multiple of NUM_SUBLANES (even when coarsened)
         return create_bit_indicator(stage, tile_local_offset + dim1_offset)
-      elif tile_dim0 == NUM_SUBLANES and stage < log2(original_num_tiles * NUM_SUBLANES):
-        # Only apply this optimization for non-coarsened tiles
-        # When tiles are coarsened, tile_local_offset can be >= NUM_SUBLANES
+      elif stage < log2(num_tiles * tile_dim0):
+        # tile_local_offset < tile_dim0, so higher bits come only from tile_offset
         return create_bit_indicator(stage, tile_offset + dim1_offset)
     return is_desc
 
@@ -249,41 +245,43 @@ def run_compressed_transpose_format_substages_on_tiles(
   - Substage log2(4*NUM_SUBLANES): concatenate to dim0=4*NUM_SUBLANES
   - etc.
   """
-  original_num_tiles = len(arrs_tiles[0])
 
   def _sort_tile_stage(arrs_tiles, stage, num_substages):
     # Determine which substages require which tile sizes
     # Substages are processed in decreasing order (high to low separation)
-    current_tile_dim0 = NUM_SUBLANES
 
     for substage in range(num_substages)[::-1]:
+      num_tiles = len(arrs_tiles[0])
+      tile_dim0 = arrs_tiles[0][0].shape[0]
       separation = 2**substage
 
       # Determine target tile size for this substage
+      # Must ensure we can still handle the substage after coarsening:
+      # substage < log2(num_tiles * tile_dim0) requires num_tiles * tile_dim0 > 2^substage
       if separation >= 2 * NUM_SUBLANES:
         # Full tile comparison - use separation-sized tiles for efficiency
-        target_tile_dim0 = separation
+        # But cap to ensure we have at least 2 tiles (need num_tiles > 1)
+        max_tile_dim0 = (num_tiles * tile_dim0) // 2
+        target_tile_dim0 = min(separation, max_tile_dim0)
       else:
         # Within-tile or single-tile comparison - use NUM_SUBLANES
         target_tile_dim0 = NUM_SUBLANES
 
       # Coarsen or refine tiles if needed
-      if target_tile_dim0 > current_tile_dim0:
+      if target_tile_dim0 > tile_dim0:
         # Concatenate tiles
-        factor = target_tile_dim0 // current_tile_dim0
+        factor = target_tile_dim0 // tile_dim0
         arrs_tiles = jax.tree.map(
             lambda tiles: _concatenate_tiles_along_dim0(tiles, factor),
             arrs_tiles
         )
-        current_tile_dim0 = target_tile_dim0
-      elif target_tile_dim0 < current_tile_dim0:
-        # Split tiles back down (e.g., when we need lane permutes)
-        factor = current_tile_dim0 // target_tile_dim0
+      elif target_tile_dim0 < tile_dim0:
+        # Split tiles back down
+        factor = tile_dim0 // target_tile_dim0
         arrs_tiles = jax.tree.map(
             lambda tiles: _split_tiles_along_dim0(tiles, factor),
             arrs_tiles
         )
-        current_tile_dim0 = target_tile_dim0
 
       # Run the substage with current tile size
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
@@ -292,14 +290,13 @@ def run_compressed_transpose_format_substages_on_tiles(
           batch_size=batch_size,
           dim1_offset=dim1_offset,
           stage=stage,
-          num_keys=num_keys,
-          tile_dim0=current_tile_dim0,
-          original_num_tiles=original_num_tiles
+          num_keys=num_keys
       )
 
     # Ensure we end with NUM_SUBLANES-sized tiles
-    if current_tile_dim0 != NUM_SUBLANES:
-      factor = current_tile_dim0 // NUM_SUBLANES
+    final_tile_dim0 = arrs_tiles[0][0].shape[0]
+    if final_tile_dim0 != NUM_SUBLANES:
+      factor = final_tile_dim0 // NUM_SUBLANES
       arrs_tiles = jax.tree.map(
           lambda tiles: _split_tiles_along_dim0(tiles, factor),
           arrs_tiles
