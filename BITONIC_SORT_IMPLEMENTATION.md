@@ -159,22 +159,35 @@ tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NU
 is_descending = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 ```
 
-**Optimization:** The `_compute_is_descending_for_tile` function uses a hybrid optimization approach:
-1. **Threshold-based fast path**: Uses sort.py rules for stages < max_substage
-   - `stage < log2(NUM_SUBLANES)`: Returns (8,128) array same for all tiles
-   - `stage < log2(num_tiles * NUM_SUBLANES)`: Returns one scalar per tile
-2. **Runtime detection**: For stages >= max_substage, checks if tile is actually constant
-   - If constant: Returns scalar
-   - If varies: Returns full (8,128) array
+**Optimization:** The `_compute_is_descending_for_tile` function uses stratified optimization with four clear rules:
 
-This hybrid approach achieves **near-universal optimization**:
-- (8, 128): 100% of stages optimized (7 of 7)
-- (8, 2048): 100% of stages optimized (11 of 11)
-- (128, 256): 100% of stages optimized (8 of 8)
+1. **stage < log2(NUM_SUBLANES)**: SAME_2D_FOR_ALL
+   - Returns (8,128) array based on `tile_local_offset` only
+   - Same for all tiles - compute once, reuse
 
-The runtime check `jnp.all(is_desc_full == first_val)` has minimal overhead but catches many cases that threshold rules miss.
+2. **stage < log2(num_tiles * NUM_SUBLANES)**: SCALAR_PER_TILE
+   - Returns scalar per tile based on `tile_offset`
+   - Constant within tile, differs across tiles
 
-See `OPTIMIZATION_REPORT.md` for detailed analysis.
+3. **stage < log2(sort_dim)**: GLOBAL_2D
+   - Returns (8,128) array based on `tile_local_offset` only
+   - tile_offset doesn't contribute at this bit position
+   - Same for all tiles - compute once, reuse
+
+4. **stage >= log2(sort_dim)**: GLOBAL_SCALAR
+   - Returns single scalar for all tiles
+   - Bit position beyond array size
+
+This stratified approach achieves **100% optimization coverage**:
+- (8, 128): 100% (7 of 7 stages)
+- (8, 2048): 100% (11 of 11 stages)
+- (16, 4096): 100% (12 of 12 stages)
+- (16, 16384): 100% (14 of 14 stages)
+- (128, 256): 100% (8 of 8 stages)
+
+All decisions made via compile-time thresholds with zero runtime overhead.
+
+See `OPTIMIZATION_REPORT.md` for detailed analysis and verification.
 
 **Descending Sort:** Controlled by `dim1_offset`:
 ```python

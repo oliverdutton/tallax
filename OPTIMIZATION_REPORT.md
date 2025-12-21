@@ -2,19 +2,30 @@
 
 ## Summary
 
-The `is_descending` computation in bitonic sort can be optimized based on the stage and configuration. Following the pattern from `sort.py`, we have three optimization cases:
+The `is_descending` computation in bitonic sort achieves **100% optimization** using stratified rules based on bit position analysis. Every stage is optimized to avoid unnecessary array computations.
 
-1. **SAME_2D_FOR_ALL_TILES**: When `stage < log2(NUM_SUBLANES)` (stage < 3)
-   - Returns a (8, 128) array based on `tile_local_offset` only
-   - This array is the same for all tiles, so can be computed once and reused
+## Stratified Optimization Rules
 
-2. **SCALAR_PER_TILE**: When `stage < log2(num_tiles * NUM_SUBLANES)` (stage < max_substage)
-   - Returns a single scalar boolean per tile
-   - Different tiles may have different values
+Based on comprehensive analysis, we use four optimization cases (in order of checking):
 
-3. **FULL_ARRAY**: For larger stages
-   - Returns full (8, 128) array per tile
-   - Values vary within each tile
+1. **SAME_2D_FOR_ALL**: When `stage < log2(NUM_SUBLANES)` (stage < 3)
+   - Bit only set by sublane index `iota_tile(0)`
+   - Returns (8, 128) array based on `tile_local_offset` only
+   - Same array for all tiles - compute once, reuse everywhere
+
+2. **SCALAR_PER_TILE**: When `stage < log2(num_tiles * NUM_SUBLANES)`
+   - Bit set by `tile_offset` differences
+   - Constant within each tile, differs across tiles
+   - Returns single scalar boolean per tile
+
+3. **GLOBAL_2D**: When `stage < log2(sort_dim)`
+   - Bit position beyond `tile_offset` range (tile_offset doesn't contribute)
+   - Pattern comes only from `tile_local_offset`
+   - Same (8, 128) array for all tiles - compute once, reuse everywhere
+
+4. **GLOBAL_SCALAR**: When `stage >= log2(sort_dim)`
+   - Bit position beyond array size, never set
+   - Returns single scalar boolean for all tiles
 
 ## Optimization Rules (from sort.py)
 
@@ -94,63 +105,64 @@ The simple rules based on stage thresholds provide effective optimization:
 - These are the stages where tile_local_offset contribution causes within-tile variation
 - Example: (8, 2048) stages 7-11 require full computation
 
-## Enhanced Implementation
+## Stratified Implementation
 
-Implemented in `tallax/_src/bitonic_topk.py`:
+Implemented in `tallax/_src/bitonic_topk.py` using clean stratification similar to `sort.py`:
+
 ```python
 def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles,
-                                     dim1_offset, tile_local_offset):
-    """Compute is_descending for a tile with optimizations."""
+                                     dim1_offset, tile_local_offset, sort_dim):
+    """Compute is_descending for a tile with stratified optimizations."""
     tile_offset = tile_idx * NUM_SUBLANES
 
     if type(stage) == int:
-        # Threshold-based optimizations from sort.py
+        # Stratified optimization based on bit position analysis
         if stage < log2(NUM_SUBLANES):
-            # every tile has same (8,128) value
+            # Bit only set by iota_tile(0), same pattern for all tiles
             return create_bit_indicator(stage, tile_local_offset + dim1_offset)
         elif stage < log2(num_tiles * NUM_SUBLANES):
-            # value constant across tile (scalar per tile)
+            # Bit set by tile_offset, constant within tile, differs across tiles
             return create_bit_indicator(stage, tile_offset + dim1_offset)
-
-        # For stages >= max_substage, check if pattern is actually constant
-        # This catches cases where tile_local_offset doesn't contribute variation
-        is_desc_full = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
-
-        # Check if this tile's pattern is constant (all same value)
-        first_val = is_desc_full[0, 0]
-        if jnp.all(is_desc_full == first_val):
-            # Tile is constant - return scalar
-            return first_val
-
-        return is_desc_full
+        elif stage < log2(sort_dim):
+            # Bit position beyond tile_offset range, tile_offset doesn't contribute
+            # Pattern comes only from tile_local_offset, same for all tiles
+            return create_bit_indicator(stage, dim1_offset + tile_local_offset)
+        else:
+            # Final stage(s): bit position beyond sort_dim, never set
+            return create_bit_indicator(stage, dim1_offset)
 
     return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 ```
 
-## Key Enhancements
+## Verification Results
 
-The implementation uses **hybrid approach**:
-1. **Threshold-based fast path**: Uses sort.py rules for stages < max_substage
-2. **Runtime detection**: For stages >= max_substage, checks if tile is actually constant
-3. **Automatic optimization**: Returns scalar when possible, full array when necessary
+### Optimization Coverage (100% for all configurations)
 
-### Why This Matters
+| Config | SAME_2D | SCALAR | GLOBAL_2D | GLOBAL_SCALAR | Total |
+|--------|---------|--------|-----------|---------------|-------|
+| (8, 128) | 29% (2) | 0% (0) | 57% (4) | 14% (1) | **100%** (7/7) |
+| (8, 2048) | 18% (2) | 36% (4) | 36% (4) | 9% (1) | **100%** (11/11) |
+| (16, 4096) | 17% (2) | 50% (6) | 25% (3) | 8% (1) | **100%** (12/12) |
+| (16, 16384) | 14% (2) | 57% (8) | 21% (3) | 7% (1) | **100%** (14/14) |
+| (128, 256) | 25% (2) | 62% (5) | 0% (0) | 12% (1) | **100%** (8/8) |
 
-Analysis shows that many stages >= max_substage are actually GLOBAL_2D or GLOBAL_SCALAR:
-- (8, 128): Stages 3-7 are constant (threshold rules miss this)
-- (8, 256): Stages 4-8 are constant (threshold rules miss this)
-- (8, 2048): Stages 7-11 are constant (threshold rules miss this)
+### Example: (8, 2048) Stratification
 
-The runtime check `jnp.all(is_desc_full == first_val)` catches these cases **at minimal cost**.
+- **Stages 1-2**: SAME_2D_FOR_ALL (stage < 3)
+- **Stages 3-6**: SCALAR_PER_TILE (3 ≤ stage < 7)
+- **Stages 7-10**: GLOBAL_2D (7 ≤ stage < 11)
+- **Stage 11**: GLOBAL_SCALAR (stage ≥ 11)
 
-### Performance Impact
+### Example: (16, 16384) Stratification
 
-**Before (threshold-only)**:
-- (8, 128): 2 of 7 stages optimized (29%)
-- (8, 2048): 6 of 11 stages optimized (54%)
+- **Stages 1-2**: SAME_2D_FOR_ALL (stage < 3)
+- **Stages 3-10**: SCALAR_PER_TILE (3 ≤ stage < 11)
+- **Stages 11-13**: GLOBAL_2D (11 ≤ stage < 14)
+- **Stage 14**: GLOBAL_SCALAR (stage ≥ 14)
 
-**After (threshold + runtime)**:
-- (8, 128): 7 of 7 stages optimized (100%)
-- (8, 2048): 11 of 11 stages optimized (100%)
+## Key Benefits
 
-The enhancement provides **near-universal optimization** with minimal overhead.
+1. **Universal Optimization**: 100% of stages optimized for all configurations
+2. **Zero Runtime Overhead**: All decisions made via compile-time thresholds
+3. **Clear Stratification**: Four distinct rules covering all cases
+4. **Mathematically Sound**: Based on bit position analysis of bitonic pattern
