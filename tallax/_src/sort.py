@@ -416,8 +416,13 @@ def _run_stages_compressed(
           from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
           for tiles in arrs_tiles
       ]
-      for ref, out in zip(refs, outs, strict=True):
-        ref[...] = out
+      # Stack into single array for efficient write
+      if len(refs) > 1:
+        out_stacked = jnp.stack(outs, axis=0)
+        for i, ref in enumerate(refs):
+          ref[...] = out_stacked[i]
+      else:
+        refs[0][...] = outs[0]
 
     # Stages > unroll_stage_limit: use fori_loop
     # Work with tiles in scratch refs, avoiding transposes
@@ -455,8 +460,13 @@ def _run_stages_compressed(
         from_compressed_transpose_format(tiles, dim0=padded_batch_size)[:batch_size]
         for tiles in arrs_tiles
     ]
-    for ref, out in zip(refs, outs, strict=True):
-      ref[...] = out
+    # Stack into single array for efficient write
+    if len(refs) > 1:
+      out_stacked = jnp.stack(outs, axis=0)
+      for i, ref in enumerate(refs):
+        ref[...] = out_stacked[i]
+    else:
+      refs[0][...] = outs[0]
 
 
 def _run_stages(
