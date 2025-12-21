@@ -256,15 +256,16 @@ def run_compressed_transpose_format_substages_on_tiles(
       separation = 2**substage
 
       # Determine target tile size for this substage
-      # Must ensure we can still handle the substage after coarsening:
-      # substage < log2(num_tiles * tile_dim0) requires num_tiles * tile_dim0 > 2^substage
-      if separation >= 2 * NUM_SUBLANES:
-        # Full tile comparison - use separation-sized tiles for efficiency
-        # But cap to ensure we have at least 2 tiles (need num_tiles > 1)
+      # Coarsen when: separation >= 2*tile_dim0 (tiles too small) and still in compressed format
+      # This reduces tile count while maintaining the ability to handle the substage
+      if separation >= 2 * tile_dim0 and separation < num_tiles * tile_dim0:
+        # Coarsen to separation-sized tiles for efficiency
+        # Cap to ensure we have at least 2 tiles after coarsening
         max_tile_dim0 = (num_tiles * tile_dim0) // 2
         target_tile_dim0 = min(separation, max_tile_dim0)
       else:
-        # Within-tile or single-tile comparison - use NUM_SUBLANES
+        # Either within-tile, or tiles are already appropriate size
+        # Use NUM_SUBLANES as the baseline
         target_tile_dim0 = NUM_SUBLANES
 
       # Coarsen or refine tiles if needed
