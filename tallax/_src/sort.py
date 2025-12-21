@@ -130,6 +130,7 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
   """
   assert batch_size <= NUM_LANES and batch_size == 2**log2(batch_size)
   num_tiles = len(arrs_tiles[0])
+  assert substage < log2(num_tiles * NUM_SUBLANES), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
   tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
@@ -186,8 +187,6 @@ def run_compressed_transpose_format_substages_on_tiles(
     dim1_offset: int = 0,
 ):
   """Execute multiple substages within tiles."""
-  assert num_substages <= log2(NUM_LANES)
-
   def _sort_tile_stage(arrs_tiles, stage, num_substages):
     for substage in range(num_substages)[::-1]:
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
