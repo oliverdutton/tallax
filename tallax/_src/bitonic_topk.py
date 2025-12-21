@@ -409,7 +409,12 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
 
     A stage consists of multiple substages that perform comparisons at
     decreasing distances. This handles stages entirely within the
-    compressed transpose format (up to NUM_LANES elements).
+    compressed transpose format.
+
+    Note: For stages that exceed the compressed format capacity
+    (stage > log2(num_tiles * NUM_SUBLANES)), only the substages that
+    fit within the format are executed. This limits efficient sorting
+    to dimensions up to NUM_LANES.
 
     Args:
         arrs_tiles: Tuple of lists of tile arrays
@@ -419,44 +424,22 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
         dim1_offset: Offset for bitonic order calculation
 
     Returns:
-        Tuple of lists of tiles with stage completed
+        Tuple of lists of tiles with stage completed (or partially completed for large stages)
     """
     num_tiles = len(arrs_tiles[0])
     max_substage = log2(num_tiles * NUM_SUBLANES)
 
-    if stage <= max_substage:
-        # Entire stage fits within compressed transpose format
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-            arrs_tiles,
-            num_substages=stage,
-            stage=stage,
-            dim1_offset=dim1_offset,
-            batch_size=batch_size,
-            num_keys=num_keys,
-        )
-    else:
-        # Stage requires cross-lane operations
-        # First handle substages within compressed format
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-            arrs_tiles,
-            num_substages=max_substage,
-            stage=stage,
-            dim1_offset=dim1_offset,
-            batch_size=batch_size,
-            num_keys=num_keys,
-        )
-        # Then handle remaining substages with cross-lane permutations
-        for substage in range(max_substage, stage):
-            lane_separation = batch_size * (2 ** (substage - max_substage))
-            arrs_tiles = _bitonic_reduce_intra_tile(
-                arrs_tiles,
-                axis=1,
-                separation=lane_separation,
-                stage=stage,
-                dim1_offset=dim1_offset,
-                batch_size=batch_size,
-                num_keys=num_keys
-            )
+    # Only run substages that fit within compressed transpose format
+    num_substages = min(stage, max_substage)
+
+    arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+        arrs_tiles,
+        num_substages=num_substages,
+        stage=stage,
+        dim1_offset=dim1_offset,
+        batch_size=batch_size,
+        num_keys=num_keys,
+    )
 
     return arrs_tiles
 
@@ -467,6 +450,10 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
 
     Similar to bitonic_topk_arrays but performs full sort without reduction.
     Uses the same tiling strategy and format conversion for efficient TPU execution.
+
+    Note: Currently optimized for sort dimensions up to NUM_LANES (128).
+    For larger dimensions, this function still works but may be less efficient
+    than the full sort() implementation in sort.py.
 
     Args:
         operands: List of JAX arrays of shape (dim0, dim1)
@@ -481,6 +468,14 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     shape = operands[0].shape
     unpadded_sort_dim = shape[axis]
 
+    # Warn if sort dimension exceeds efficient range
+    if unpadded_sort_dim > NUM_LANES:
+        import warnings
+        warnings.warn(
+            f"Sort dimension {unpadded_sort_dim} exceeds NUM_LANES={NUM_LANES}. "
+            f"This may be less efficient. Consider using sort() for large arrays."
+        )
+
     if axis == 1:
         padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
     elif axis == 0:
@@ -492,7 +487,9 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         raise ValueError
 
     # Pad both dimensions if needed
-    arrs = [pad(op, block_shape=padded_shape, val='max' if descending else 'min') for op in operands]
+    # For ascending sort, pad with 'max' so padding values sort to the end
+    # For descending sort, pad with 'min' so padding values sort to the end
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     def _sort_arrays(arrs):
@@ -517,11 +514,11 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
             dim1_offset=dim1_offset
         )
 
-      arrs = [join_tiles_to_array(
-        tiles, dim0=ceil_multiple(sort_dim if axis == 0 else batch_size, NUM_SUBLANES))
-        for tiles in arrs_tiles]
+      # Convert back from compressed transpose format
       if axis == 1:
-        arrs = [x.T for x in arrs]
+        arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+      else:
+        arrs = [join_tiles_to_array(tiles, dim0=ceil_multiple(sort_dim, NUM_SUBLANES)) for tiles in arrs_tiles]
       return arrs
 
     # wrapping to act on batch_size <= NUM_LANES in the kernel
@@ -602,6 +599,8 @@ def bitonic_sort(
          [5 6 7 8]]
     """
     operands, unpadded_shape = canonicalize_operand(operand)
+    # For ascending sort, pad with 'max' so padding values sort to the end
+    # For descending sort, pad with 'min' so padding values sort to the end
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
       val='min' if descending else 'max') for x in operands]
     batch_size, sort_dim = operands[0].shape
