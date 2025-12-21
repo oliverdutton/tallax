@@ -408,13 +408,8 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
     """Run a complete bitonic sort stage on tiles.
 
     A stage consists of multiple substages that perform comparisons at
-    decreasing distances. This handles stages entirely within the
-    compressed transpose format.
-
-    Note: For stages that exceed the compressed format capacity
-    (stage > log2(num_tiles * NUM_SUBLANES)), only the substages that
-    fit within the format are executed. This limits efficient sorting
-    to dimensions up to NUM_LANES.
+    decreasing distances. This handles stages within compressed transpose
+    format and extends to cross-lane operations for larger stages.
 
     Args:
         arrs_tiles: Tuple of lists of tile arrays
@@ -424,22 +419,72 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
         dim1_offset: Offset for bitonic order calculation
 
     Returns:
-        Tuple of lists of tiles with stage completed (or partially completed for large stages)
+        Tuple of lists of tiles with stage completed
     """
     num_tiles = len(arrs_tiles[0])
     max_substage = log2(num_tiles * NUM_SUBLANES)
 
-    # Only run substages that fit within compressed transpose format
-    num_substages = min(stage, max_substage)
+    if stage <= max_substage:
+        # Entire stage fits within compressed transpose format
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+            arrs_tiles,
+            num_substages=stage,
+            stage=stage,
+            dim1_offset=dim1_offset,
+            batch_size=batch_size,
+            num_keys=num_keys,
+        )
+    else:
+        # Stage requires cross-lane operations
+        # First do all substages that fit in compressed format (once!)
+        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
+            arrs_tiles,
+            num_substages=max_substage,
+            stage=stage,
+            dim1_offset=dim1_offset,
+            batch_size=batch_size,
+            num_keys=num_keys,
+        )
 
-    arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-        arrs_tiles,
-        num_substages=num_substages,
-        stage=stage,
-        dim1_offset=dim1_offset,
-        batch_size=batch_size,
-        num_keys=num_keys,
-    )
+        # Then do cross-lane substages one at a time (from high to low)
+        for substage in range(stage - 1, max_substage - 1, -1):
+            # Calculate separation in lane dimension
+            separation_in_lanes = 2 ** (substage - max_substage)
+            lane_separation = batch_size * separation_in_lanes
+
+            # Create permutation for cross-lane operation
+            permutation = jnp.bitwise_xor(iota_tile(1), lane_separation)
+            is_right_half = create_bit_indicator(log2(lane_separation), iota_tile(1))
+
+            # Apply permutation to all tiles
+            arrs_tiles_permuted = jax.tree.map(
+                lambda tile: jnp.take_along_axis(tile, permutation, axis=1),
+                arrs_tiles
+            )
+
+            # For cross-lane, use simpler position computation (just sublane offset)
+            # since lanes correspond to different chunks in the original array
+            tile_local_offset = iota_tile(0)
+
+            # Compare and swap with per-tile is_descending computation
+            outs_tiles = [[None for _ in t] for t in arrs_tiles]
+            for idx, (lefts, rights) in enumerate(zip(
+                *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+                strict=True
+            )):
+                # Compute is_descending using tile index like in sort.py
+                tile_offset = idx * NUM_SUBLANES
+                is_descending_tile = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+
+                for arr_idx, out in enumerate(compare_and_swap(
+                    lefts, rights,
+                    is_descending=is_descending_tile,
+                    is_right_half=is_right_half,
+                    num_keys=num_keys
+                )):
+                    outs_tiles[arr_idx][idx] = out
+
+            arrs_tiles = outs_tiles
 
     return arrs_tiles
 

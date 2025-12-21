@@ -6,6 +6,8 @@ This document describes the implementation of bitonic sort in tallax, which comp
 
 The bitonic sort implementation provides a full sorting capability using the same compressed transpose format and tiling strategy as bitonic top-k, optimized for TPU execution.
 
+**Current Status:** The implementation is fully functional for arrays with sort dimension up to NUM_LANES (128). Larger dimensions have known limitations due to the compressed transpose format constraints.
+
 ## Key Components
 
 ### 1. `bitonic_sort_arrays(operands, num_keys, axis, descending)`
@@ -126,3 +128,34 @@ sorted_values, sorted_indices = bitonic_sort([values, indices], num_keys=2)
 - Efficient for batch sizes up to NUM_LANES (128)
 - Larger batches handled via automatic chunking
 - Best performance on TPU; CPU support via interpret mode
+
+## Current Limitations
+
+### Sort Dimension Size Limit
+
+The current implementation efficiently handles arrays with sort dimension up to NUM_LANES (128). Examples of supported shapes:
+- (8, 16), (8, 32), (8, 64), (8, 128) ✓
+- (16, 128), (32, 128), (64, 128) ✓
+
+For arrays with sort dimensions > 128 (e.g., (8, 2048)), the compressed transpose format approach has inherent constraints:
+- The `run_compressed_transpose_format_substages_on_tiles` function cannot handle substages requiring cross-lane comparisons beyond `log2(num_tiles * NUM_SUBLANES)`
+- To efficiently sort larger dimensions would require a hybrid VMEM/HBM approach similar to the existing `sort()` function in `sort.py`
+
+### Workaround for Large Arrays
+
+For arrays exceeding the size limit, use the full `sort()` implementation:
+```python
+from tallax._src.sort import sort
+
+# For large arrays like (8, 2048)
+result = sort(arr, num_keys=1, descending=False)
+```
+
+### Future Work
+
+To support larger arrays with the bitonic sort approach would require:
+1. Implementing cross-lane comparison substages (similar to `_run_array_substage_on_refs` in sort.py)
+2. Adding HBM-based operations for substages that don't fit in VMEM
+3. Hybrid pipeline combining compressed format operations with cross-lane permutations
+
+This would essentially replicate the full `sort()` implementation's architecture.
