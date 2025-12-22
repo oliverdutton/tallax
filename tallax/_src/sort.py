@@ -131,7 +131,11 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
   assert batch_size <= NUM_LANES and batch_size == 2**log2(batch_size)
   num_tiles = len(arrs_tiles[0])
   assert substage < log2(num_tiles * NUM_SUBLANES), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
-  tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
+
+  # Pre-compute iota tiles to avoid rematerialization
+  iota_0 = iota_tile(0)
+  iota_1 = iota_tile(1)
+  tile_local_offset = iota_0 + (iota_1 // batch_size) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
     tile_offset = idx * NUM_SUBLANES
@@ -149,11 +153,12 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
 
   if substage < log2(NUM_SUBLANES):
     # Comparison within tile
-    permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
+    # Reuse iota_0 computed above to avoid rematerialization
+    permutation = jnp.bitwise_xor(iota_0, 1 << substage)
     arrs_tiles_permuted = jax.tree.map(
         lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
     )
-    is_right_half = create_bit_indicator(substage, iota_tile(0))
+    is_right_half = create_bit_indicator(substage, iota_0)
     for idx, (lefts, rights) in enumerate(zip(
         *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
     )):
@@ -622,10 +627,17 @@ def _run_array_substage_on_hbm_refs(
   pair_length = 2 ** (substage + 1)
   slices_per_pair = (pair_length // 2) // slice_length
 
+  # Create closure for pair slice index computation
+  _compute_pair_slice_start_index = functools.partial(
+      compute_pair_slice_start_index,
+      separation=pair_length,
+      slice_length=slice_length
+  )
+
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = _compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
+    left_start = _compute_pair_slice_start_index(i)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
