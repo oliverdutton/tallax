@@ -724,16 +724,18 @@ def _run_bitonic_stages_on_transpose_refs(
 
         @pl.loop(num_unrolled_stages + 1, num_stages + 1)
         def run_dynamic_stage(stage):
-            # Cross-lane substages (for stages > max_substage)
-            # Use standard (NUM_SUBLANES, NUM_LANES) tiles for lane permuting
-            for substage in range(max_substage, num_stages)[::-1]:
-                @pl.when(stage > substage)
+            # Substages for stage s (1-indexed) are: s-1, s-2, ..., 0 (0-indexed)
+            # Cross-lane substages (>= max_substage) - conditional
+            # Note: stage is 1-indexed, so stage-1 is the highest 0-indexed substage needed
+            for substage_0indexed in range(max_substage, num_stages)[::-1]:
+                # Run this substage if stage > substage_0indexed+1 (converting back to 1-indexed stage)
+                @pl.when(stage > substage_0indexed)
                 def run_cross_lane_substage():
                     # Read from refs and split into standard tiles
                     arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
                     arrs_tiles = [_resplit(arr, NUM_SUBLANES) for arr in arrs]
 
-                    separation_in_lanes = 2 ** (substage - max_substage)
+                    separation_in_lanes = 2 ** (substage_0indexed - max_substage)
                     lane_separation = batch_size * separation_in_lanes
 
                     permutation = jnp.bitwise_xor(iota_tile(1), lane_separation)
@@ -768,24 +770,26 @@ def _run_bitonic_stages_on_transpose_refs(
                     for ref, arr in zip(transpose_refs, arrs, strict=True):
                         ref[...] = arr
 
-            # Compressed format substages (run for all stages)
-            # Read from refs and split into standard tiles
-            arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
-            arrs_tiles = [_resplit(arr, NUM_SUBLANES) for arr in arrs]
+            # Compressed format substages (0 to max_substage-1) - all run unconditionally
+            # These always run because stage >= num_unrolled_stages + 1
+            for substage_0indexed in range(0, max_substage)[::-1]:
+                # Read from refs and split into standard tiles
+                arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
+                arrs_tiles = [_resplit(arr, NUM_SUBLANES) for arr in arrs]
 
-            arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-                arrs_tiles,
-                num_substages=max_substage,
-                stage=stage,
-                sort_dim_offset=sort_dim_offset,
-                batch_size=batch_size,
-                num_keys=num_keys,
-            )
+                arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
+                    arrs_tiles,
+                    substage=substage_0indexed,
+                    stage=stage,
+                    sort_dim_offset=sort_dim_offset,
+                    batch_size=batch_size,
+                    num_keys=num_keys,
+                )
 
-            # Write back results for this stage
-            arrs = [jnp.concatenate(tiles, axis=0) for tiles in arrs_tiles]
-            for ref, arr in zip(transpose_refs, arrs, strict=True):
-                ref[...] = arr
+                # Write back results
+                arrs = [jnp.concatenate(tiles, axis=0) for tiles in arrs_tiles]
+                for ref, arr in zip(transpose_refs, arrs, strict=True):
+                    ref[...] = arr
 
 
 def bitonic_sort_refs(
