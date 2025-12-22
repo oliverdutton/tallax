@@ -268,9 +268,9 @@ def join_tiles_to_array(tiles, dim0):
   return jnp.concatenate(rows, axis=-2)
 
 
-def iota_tile(dim):
+def iota_tile(dim, tile_shape=(NUM_SUBLANES, NUM_LANES)):
   """Create iota array with tile shape."""
-  return lax.broadcasted_iota(jnp.int32, (NUM_SUBLANES, NUM_LANES), dim)
+  return lax.broadcasted_iota(jnp.int32, tile_shape, dim)
 
 
 def create_bit_indicator(bit_position: int, index=None):
