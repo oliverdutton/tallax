@@ -93,14 +93,19 @@ def _resplit(operands, target_tile_dim0: int):
     return [_resplit_inner(x) for x in operands]
    
 def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length):
+    sort_dim_offset = sort_dim_offset % 2**(stage + 1)
     if type(stage) == int:
         # Stratified optimization based on bit position analysis
         if (stage < log2(NUM_SUBLANES)) or (stage >= log2(compression_length)):
             # Bit only set by iota_tile(0), same pattern for all tiles
-            return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
+            if sort_dim_offset != 0:
+                tile_local_offset += sort_dim_offset
+            return create_bit_indicator(stage, tile_local_offset)
         else:
             # Bit set by tile_offset, constant within tile, differs across tiles
-            return create_bit_indicator(stage, tile_start_offset + sort_dim_offset)
+            if sort_dim_offset != 0:
+                tile_start_offset += sort_dim_offset
+            return create_bit_indicator(stage, tile_start_offset)
 
     # tracer stage
     return create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
