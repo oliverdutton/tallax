@@ -404,6 +404,44 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
     return outs_tiles
 
 
+def _resplit(arrs_or_tiles, target_tile_dim0):
+    """Resplit arrays or tiles to have target dim0 size.
+
+    Polymorphic function that handles:
+    - Single array: (total_dim0, NUM_LANES) -> list of tiles
+    - List of tiles: concatenates then re-splits
+    - List of lists: applies recursively to each sublist
+
+    Args:
+        arrs_or_tiles: Array, list of arrays, or nested list
+        target_tile_dim0: Target dim0 size for each tile
+
+    Returns:
+        List of tiles (or list of lists if input was nested)
+    """
+    # Base case: single array
+    if isinstance(arrs_or_tiles, jnp.ndarray):
+        arr = arrs_or_tiles
+        total_dim0 = arr.shape[0]
+        assert total_dim0 % target_tile_dim0 == 0, \
+            f"Array dim0 {total_dim0} not divisible by target_tile_dim0 {target_tile_dim0}"
+        num_tiles = total_dim0 // target_tile_dim0
+        return list(jnp.split(arr, num_tiles, axis=0))
+
+    # Recursive case: list
+    if isinstance(arrs_or_tiles, (list, tuple)):
+        # Check if it's a list of arrays (all elements are arrays)
+        if all(isinstance(x, jnp.ndarray) for x in arrs_or_tiles):
+            # List of tiles - concatenate and re-split
+            arr = jnp.concatenate(arrs_or_tiles, axis=0)
+            return _resplit(arr, target_tile_dim0)
+        else:
+            # List of lists - apply recursively
+            return [_resplit(x, target_tile_dim0) for x in arrs_or_tiles]
+
+    raise ValueError(f"Unsupported type: {type(arrs_or_tiles)}")
+
+
 def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, sort_dim_offset, tile_local_offset, sort_dim):
     """Compute is_descending for a tile with stratified optimizations.
 
@@ -658,8 +696,8 @@ def _run_bitonic_stages_on_transpose_refs(
     sort_dim_offset = int(descending) * sort_dim
 
     # Read transpose refs into tiles
-    arrs = [ref[...] for ref in transpose_refs]
-    arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+    arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
+    arrs_tiles = [split_array_to_tiles(arr) for arr in arrs]
 
     # Stages 1 to log2(unroll*NUM_SUBLANES) - fully unrolled
     num_unrolled_stages = min(num_stages, log2(unroll * NUM_SUBLANES))
@@ -687,12 +725,13 @@ def _run_bitonic_stages_on_transpose_refs(
         @pl.loop(num_unrolled_stages + 1, num_stages + 1)
         def run_dynamic_stage(stage):
             # Cross-lane substages (for stages > max_substage)
+            # Use standard (NUM_SUBLANES, NUM_LANES) tiles for lane permuting
             for substage in range(max_substage, num_stages)[::-1]:
                 @pl.when(stage > substage)
                 def run_cross_lane_substage():
-                    # Read from refs
-                    arrs = [ref[...] for ref in transpose_refs]
-                    arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+                    # Read from refs and split into standard tiles
+                    arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
+                    arrs_tiles = [_resplit(arr, NUM_SUBLANES) for arr in arrs]
 
                     separation_in_lanes = 2 ** (substage - max_substage)
                     lane_separation = batch_size * separation_in_lanes
@@ -710,8 +749,10 @@ def _run_bitonic_stages_on_transpose_refs(
                         *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
                         strict=True
                     )):
-                        is_descending_tile = _compute_is_descending_for_tile(
-                            stage, idx, batch_size, num_tiles, sort_dim_offset, tile_local_offset, sort_dim
+                        # Compute is_descending for this tile
+                        tile_offset = idx * NUM_SUBLANES
+                        is_descending_tile = create_bit_indicator(
+                            stage, sort_dim_offset + tile_offset + tile_local_offset
                         )
 
                         for arr_idx, out in enumerate(compare_and_swap(
@@ -728,9 +769,9 @@ def _run_bitonic_stages_on_transpose_refs(
                         ref[...] = arr
 
             # Compressed format substages (run for all stages)
-            # Read from refs
-            arrs = [ref[...] for ref in transpose_refs]
-            arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+            # Read from refs and split into standard tiles
+            arrs = jax.tree.leaves([ref[...] for ref in transpose_refs])
+            arrs_tiles = [_resplit(arr, NUM_SUBLANES) for arr in arrs]
 
             arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
                 arrs_tiles,
