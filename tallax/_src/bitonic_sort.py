@@ -105,7 +105,7 @@ def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim
     # tracer stage
     return create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
 
-def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0):
+def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -124,8 +124,8 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
     if type(arrs_tiles[0])!=list:
       # if still arrays, we make it into one big tile so its sanitized to list[list[jax.ndarray]]
       arrs_tiles = jax.tree.map(jax.tree.leaves, arrs_tiles)
-
-    compression_length = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
+    if compression_length is None:
+      compression_length = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
     if separation < NUM_SUBLANES or separation >= compression_length:
       # we need to permute within tiles
       axis = int(separation < NUM_SUBLANES)
@@ -244,19 +244,20 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       sort_dim_offset = int(descending) * sort_dim
 
       # Run all bitonic sort stages
+      compression_length = arrs_tiles[0].shape[0]
       out_arrs_tiles = []
       l = 2**PIPELINE_STAGE
       for i in range(sort_dim // l):
         arrs_tiles_ = [arr[i*l:(i+1)*l] for arr in arrs_tiles]
         for stage in range(1, PIPELINE_STAGE+1):
           for substage in range(stage)[::-1]:
-            arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l)
+            arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l, compression_length = compression_length)
         out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_tiles_])
       out_arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
       
       for stage in range(PIPELINE_STAGE+1, num_stages + 1):
         for substage in range(stage)[::-1]:
-          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset)
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
 
       # Convert back from compressed transpose format
       if axis == 1:
