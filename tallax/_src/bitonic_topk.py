@@ -447,7 +447,7 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, sort
     return create_bit_indicator(stage, sort_dim_offset + tile_offset + tile_local_offset)
 
 
-def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, sort_dim_offset: int = 0, sort_dim: int = None):
+def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, sort_dim_offset: int = 0, sort_dim: int = None, min_stage: int = None):
     """Run a complete bitonic sort stage on tiles.
 
     A stage consists of multiple substages that perform comparisons at
@@ -461,6 +461,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, so
         num_keys: Number of sort keys
         sort_dim_offset: Offset for bitonic order calculation
         sort_dim: Size of dimension being sorted
+        min_stage: Static minimum value of stage (for dynamic stage in pl.loop)
 
     Returns:
         Tuple of lists of tiles with stage completed
@@ -468,11 +469,14 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, so
     num_tiles = len(arrs_tiles[0])
     max_substage = log2(num_tiles * NUM_SUBLANES)
 
-    if stage <= max_substage:
+    # Use min_stage for control flow when stage is dynamic (Tracer)
+    stage_for_control = min_stage if type(stage) != int else stage
+
+    if stage_for_control <= max_substage:
         # Entire stage fits within compressed transpose format
         arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
             arrs_tiles,
-            num_substages=stage,
+            num_substages=stage if type(stage) == int else max_substage,
             stage=stage,
             sort_dim_offset=sort_dim_offset,
             batch_size=batch_size,
@@ -678,22 +682,18 @@ def _run_bitonic_stages_on_transpose_refs(
     # Dynamic stages beyond unrolled stages
     if num_stages > num_unrolled_stages:
         max_substage = log2(num_tiles * NUM_SUBLANES)
+        tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
 
         @pl.loop(num_unrolled_stages + 1, num_stages + 1)
         def run_dynamic_stage(stage):
-            # Read from refs for each dynamic stage
-            arrs = [ref[...] for ref in transpose_refs]
-            arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
-
-            # For stage <= max_substage, run all substages in compressed format
-            # For stage > max_substage, run cross-lane substages then compressed substages
-            tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
-
             # Cross-lane substages (for stages > max_substage)
             for substage in range(max_substage, num_stages)[::-1]:
                 @pl.when(stage > substage)
                 def run_cross_lane_substage():
-                    nonlocal arrs_tiles
+                    # Read from refs
+                    arrs = [ref[...] for ref in transpose_refs]
+                    arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+
                     separation_in_lanes = 2 ** (substage - max_substage)
                     lane_separation = batch_size * separation_in_lanes
 
@@ -722,9 +722,16 @@ def _run_bitonic_stages_on_transpose_refs(
                         )):
                             outs_tiles[arr_idx][idx] = out
 
-                    arrs_tiles = outs_tiles
+                    # Write back to refs
+                    arrs = [jnp.concatenate(tiles, axis=0) for tiles in outs_tiles]
+                    for ref, arr in zip(transpose_refs, arrs, strict=True):
+                        ref[...] = arr
 
             # Compressed format substages (run for all stages)
+            # Read from refs
+            arrs = [ref[...] for ref in transpose_refs]
+            arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+
             arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
                 arrs_tiles,
                 num_substages=max_substage,
