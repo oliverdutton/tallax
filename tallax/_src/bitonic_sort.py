@@ -247,8 +247,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       compression_length = arrs_tiles[0].shape[0]
       out_arrs_tiles = []
       l = 2**PIPELINE_STAGE
-      for i in range(compression_length // l):
-        arrs_tiles_ = [arr[i*l:(i+1)*l] for arr in arrs_tiles]
+      for i, arrs_tiles_ in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, l))):
         for stage in range(1, PIPELINE_STAGE+1):
           for substage in range(stage)[::-1]:
             arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l, compression_length = compression_length)
@@ -256,9 +255,15 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
       
       for stage in range(PIPELINE_STAGE+1, num_stages + 1):
-        for substage in range(stage)[::-1]:
+        for substage in range(PIPELINE_STAGE, stage)[::-1]:
           arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
-
+        for i, arrs_tiles_ in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, l))):
+          for substage in range(PIPELINE_STAGE)[::-1]:
+            arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l, compression_length = compression_length)
+          out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_tiles_])
+        arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+        
+      
       # Convert back from compressed transpose format
       if axis == 1:
         arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
