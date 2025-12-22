@@ -12,6 +12,7 @@ Algorithm:
 - Convert back to original format
 """
 
+PIPELINE_STAGE = 7
 import functools
 from collections.abc import Sequence
 
@@ -132,18 +133,15 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
       
       # we need hardware tiles to lower the permute
       arrs_tiles = _resplit(arrs_tiles, NUM_SUBLANES)
-  
-      permutation = jnp.bitwise_xor(iota_tile(axis), intra_tile_separation)
+      # Compute is_descending for each tile based on bitonic pattern
+      tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * compression_length
       is_right_half = create_bit_indicator(log2(intra_tile_separation), iota_tile(axis))
-  
+      permutation = jnp.bitwise_xor(iota_tile(axis), intra_tile_separation)
       # Apply permutation to all tiles
       arrs_tiles_permuted = jax.tree.map(
         lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
         arrs_tiles
       )
-  
-      # Compute is_descending for each tile based on bitonic pattern
-      tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * compression_length
   
       # Compare and merge with permuted values
       outs_tiles = [[None for _ in t] for t in arrs_tiles]
@@ -246,7 +244,17 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       sort_dim_offset = int(descending) * sort_dim
 
       # Run all bitonic sort stages
-      for stage in range(1, num_stages + 1):
+      out_arrs_tiles = []
+      l = 2**PIPELINE_STAGE
+      for i in range(sort_dim // l):
+        arrs_tiles_ = [arr[i*l:(i+1)*l] for arr in arrs_tiles]
+        for stage in range(1, PIPELINE_STAGE+1):
+          for substage in range(stage)[::-1]:
+            arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l)
+        out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_tiles_])
+      out_arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+      
+      for stage in range(PIPELINE_STAGE+1, num_stages + 1):
         for substage in range(stage)[::-1]:
           arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset)
 
