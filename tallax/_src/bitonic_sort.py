@@ -253,7 +253,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           for substage in range(stage)[::-1]:
             arrs_tiles_ = _bitonic_sort_substage(arrs_tiles_, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*l, compression_length = compression_length)
         out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_tiles_])
-      out_arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+      arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
       
       for stage in range(PIPELINE_STAGE+1, num_stages + 1):
         for substage in range(stage)[::-1]:
