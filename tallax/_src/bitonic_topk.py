@@ -404,7 +404,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
       outs_tiles = [[None for _ in t] for t in arrs_tiles]
       for i in range(num_tiles // 2):
         idx = compute_pair_slice_start_index(i, separation=tile_separation)
-        lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
+        lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + tile_separation))
         for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
             lefts, rights, is_descending=_compute_is_descending(
               stage=stage, 
@@ -416,7 +416,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
             num_keys=num_keys
         )):
           outs_tiles[arr_idx][idx] = out_left
-          outs_tiles[arr_idx][idx + separation] = out_right
+          outs_tiles[arr_idx][idx + tile_separation] = out_right
     assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
     return outs_tiles
 
