@@ -39,7 +39,6 @@ from tallax._src.utils import (
     create_bit_indicator,
 )
 from tallax._src.sort import (
-    run_compressed_transpose_format_substages_on_tiles,
     compare_and_swap,
     compute_pair_slice_start_index,
     _run_compressed_transpose_format_substage_on_tiles,
@@ -323,10 +322,10 @@ def _resplit(operands, target_tile_dim0: int):
 def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length):
     if type(stage) == int:
         # Stratified optimization based on bit position analysis
-        if stage < log2(NUM_SUBLANES) or stage >= log2(compression_length):
+        if (stage < log2(NUM_SUBLANES)) or (stage >= log2(compression_length)):
             # Bit only set by iota_tile(0), same pattern for all tiles
             return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
-        else stage < log2(compression_length):
+        else:
             # Bit set by tile_offset, constant within tile, differs across tiles
             return create_bit_indicator(stage, tile_start_offset + sort_dim_offset)
 
@@ -354,7 +353,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
       arrs_tiles = jax.tree.map(jax.tree.leaves, arrs_tiles)
 
     compression_length = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
-    if separation < NUM_SUBLANES or separation >= uncompressed_sort_length:
+    if separation < NUM_SUBLANES or separation >= compression_length:
       # we need to permute within tiles
       axis = int(separation < NUM_SUBLANES)
       intra_tile_separation = separation if axis==0 else (separation // compression_length)
@@ -572,7 +571,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       # Run all bitonic sort stages
       for stage in range(1, num_stages + 1):
         for substage in range(stage)[::-1]:
-          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=int(descending) * sort_dim)
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset)
 
       # Convert back from compressed transpose format
       if axis == 1:
