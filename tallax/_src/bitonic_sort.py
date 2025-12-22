@@ -247,7 +247,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       compression_length = arrs_tiles[0].shape[0]
       out_arrs_tiles = []
       l = 2**PIPELINE_STAGE
-      for i in range(sort_dim // l):
+      for i in range(compression_length // l):
         arrs_tiles_ = [arr[i*l:(i+1)*l] for arr in arrs_tiles]
         for stage in range(1, PIPELINE_STAGE+1):
           for substage in range(stage)[::-1]:
