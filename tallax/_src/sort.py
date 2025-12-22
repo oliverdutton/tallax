@@ -114,7 +114,7 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
     return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None):
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None, iota_0=None, iota_1=None):
   """Perform substage using sublane permutation or cross-tile comparison.
 
   Args:
@@ -124,6 +124,8 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
     num_keys: Number of sort keys
     dim1_offset: Offset for bitonic order calculation
     stage: Current sorting stage (if single stage)
+    iota_0: Pre-computed iota_tile(0) to avoid rematerialization
+    iota_1: Pre-computed iota_tile(1) to avoid rematerialization
 
   Returns:
     Tuple of lists of tiles with updated values
@@ -132,9 +134,11 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
   num_tiles = len(arrs_tiles[0])
   assert substage < log2(num_tiles * NUM_SUBLANES), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
 
-  # Pre-compute iota tiles to avoid rematerialization
-  iota_0 = iota_tile(0)
-  iota_1 = iota_tile(1)
+  # Use pre-computed iota tiles (or compute if not provided for backwards compatibility)
+  if iota_0 is None:
+    iota_0 = iota_tile(0)
+  if iota_1 is None:
+    iota_1 = iota_tile(1)
   tile_local_offset = iota_0 + (iota_1 // batch_size) * num_tiles * NUM_SUBLANES
 
   def compute_is_descending(idx):
@@ -192,11 +196,15 @@ def run_compressed_transpose_format_substages_on_tiles(
     dim1_offset: int = 0,
 ):
   """Execute multiple substages within tiles."""
+  # Pre-compute iota tiles once for ALL substages to avoid rematerialization
+  iota_0 = iota_tile(0)
+  iota_1 = iota_tile(1)
+
   def _sort_tile_stage(arrs_tiles, stage, num_substages):
     for substage in range(num_substages)[::-1]:
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
           arrs_tiles, substage=substage, batch_size=batch_size, dim1_offset=dim1_offset,
-          stage=stage, num_keys=num_keys
+          stage=stage, num_keys=num_keys, iota_0=iota_0, iota_1=iota_1
       )
     return arrs_tiles
 
