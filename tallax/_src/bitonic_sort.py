@@ -43,6 +43,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+import sympy
 
 from tallax._src.utils import (
     NUM_LANES,
@@ -122,37 +123,73 @@ def _rejoin(operands):
        
    
 def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length):
-    assert isinstance(sort_dim_offset, int)
-    
+    """Compute is_descending pattern with SymInt-based optimizations.
+
+    Uses SymInt bounds tracking to optimize the bitonic pattern computation by
+    determining if certain terms can be eliminated based on stage bounds.
+
+    Args:
+      stage: Stage number (int or SymInt with bounds)
+      tile_start_offset: Starting offset for tiles (int or SymInt)
+      tile_local_offset: Local offset within tile
+      sort_dim_offset: Offset in sort dimension (int or SymInt)
+      compression_length: Compression length
+
+    Returns:
+      Boolean array indicating descending pattern
+    """
+    # Helper to extract raw value from SymInt for operations
+    def _get_value(val):
+      return val.value if isinstance(val, SymInt) else val
+
+    # Extract stage value for computing the modulo period
+    stage_for_mod = _get_value(stage)
+
     # is_descending repeats every 2**(stage+1)
-    # if the offset divides cleanly it's 0's allowing for CSE in the add of zeros (and hopefully remove of add 0)
-    sort_dim_offset %= (2**(stage+1))
-    
+    # Apply modulo if stage is concrete
+    if isinstance(stage_for_mod, int):
+      # Extract sort_dim_offset value and apply modulo
+      offset_raw = _get_value(sort_dim_offset)
+      if isinstance(offset_raw, int):
+        sort_dim_offset = offset_raw % (2**(stage_for_mod+1))
+      else:
+        # Traced value - apply modulo in computation
+        sort_dim_offset = offset_raw % (2**(stage_for_mod+1))
+    else:
+      # Can't compute modulo for non-concrete stage, use offset as-is
+      sort_dim_offset = _get_value(sort_dim_offset)
+
     # unoptimized is_descending from fully computing indices
-    is_descending = create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
-    
-    if type(stage) == int:
-      stage_lb = stage
-      stage_ub = stage
-    elif hasattr(stage, 'lower_bound') and hasattr(stage, 'upper_bound'):
-      # both bounds are inclusive
+    # create_bit_indicator needs the raw value for stage, not SymInt wrapper
+    stage_for_bit = _get_value(stage)
+    tile_start_for_bit = _get_value(tile_start_offset)
+
+    is_descending = create_bit_indicator(stage_for_bit, tile_start_for_bit + tile_local_offset + sort_dim_offset)
+
+    # Extract stage bounds for optimization
+    if isinstance(stage, SymInt):
       stage_lb = stage.lower_bound
       stage_ub = stage.upper_bound
+    elif isinstance(stage, int):
+      stage_lb = stage
+      stage_ub = stage
     else:
-      # can't optimize
+      # No bounds information
       return is_descending
-      
-    if (stage_ub < log2(NUM_SUBLANES)) or (stage_lb >= log2(compression_length)):
-        # Bit only set by iota_tile(0), same pattern for all tiles
-        return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
-    elif (stage_lb >= log2(NUM_SUBLANES)) and (stage_ub < log2(compression_length)):
-        # Bit set by tile_offset, constant within tile, differs across tiles
-        return create_bit_indicator(stage, tile_start_offset + sort_dim_offset)
-    # can't optimize
+
+    if stage_lb is not None and stage_ub is not None:
+      if (stage_ub < log2(NUM_SUBLANES)) or (stage_lb >= log2(compression_length)):
+          # Bit only set by iota_tile(0), same pattern for all tiles
+          return create_bit_indicator(stage_for_bit, tile_local_offset + sort_dim_offset)
+      elif (stage_lb >= log2(NUM_SUBLANES)) and (stage_ub < log2(compression_length)):
+          # Bit set by tile_offset, constant within tile, differs across tiles
+          return create_bit_indicator(stage_for_bit, tile_start_for_bit + sort_dim_offset)
+
+    # Can't optimize
     return is_descending
     
 
-def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None):
+def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset = 0, compression_length=None):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -238,7 +275,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
     return outs_tiles
 
 
-def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, slice_size=None):
+def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: int, batch_size: int, sort_dim_offset = 0, compression_length=None, slice_size=None):
   # no compression or not compatible
   if slice_size is None:
     slice_size = compression_length  
@@ -246,7 +283,7 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
   sharded = tuple(2**substage < slice_size for substage in substages)
   if all(sharded):
     pass
-  elif all((not b for b in sharded))
+  elif all((not b for b in sharded)):
     slice_size = compression_length
   else:
     # will switch between them. We do the longest run we can of same slice_size
@@ -260,21 +297,201 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
             
   @pl.loop(0, grid_size)
   def process_block(i):
-    i = SymInt(i) # to track divisors of i for is_descending optimizations
+    # Track i as SymInt with bounds [0, grid_size-1]
+    # i * slice_size is divisible by slice_size, helpful for modulo optimizations
+    i_symint = SymInt(i, lower_bound=0, upper_bound=grid_size-1)
+    slice_offset = i_symint * slice_size
+
     arrs_tiles = [
         ref[pl.dslice(i * slice_size, slice_size)]
         for ref in transpose_refs
     ]
     for substage, stage in zip(substages, stages, strict=True):
-      arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i * slice_size, compression_length = compression_length)
+      arrs_tiles = _bitonic_sort_substage(
+        arrs_tiles,
+        substage=substage,
+        stage=stage,
+        num_keys=num_keys,
+        batch_size=batch_size,
+        sort_dim_offset=sort_dim_offset + slice_offset,
+        compression_length=compression_length
+      )
     # Write back to refs
     for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
       ref[pl.dslice(i * slice_size, slice_size)] = arr
                   
-class BoundedInt(jax.ndarray):
-  def __init__(self, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-  #TODO add lower_bound and upper_bound and tracking of what its a multiple of so % can produce 0 in some cases
+class SymInt:
+  """Symbolic integer with bounds tracking for optimization.
+
+  Uses sympy for symbolic integer operations and tracks bounds for
+  optimizations in is_descending function. Tracks divisibility information
+  for modulo operations.
+
+  Args:
+    value: Integer value or sympy expression
+    lower_bound: Inclusive lower bound (defaults to value if concrete)
+    upper_bound: Inclusive upper bound (defaults to value if concrete)
+    divisible_by: Set of integers that this value is known to be divisible by
+  """
+
+  def __init__(self, value, lower_bound=None, upper_bound=None, divisible_by=None):
+    if isinstance(value, SymInt):
+      # Copy constructor
+      self.value = value.value
+      self.lower_bound = lower_bound if lower_bound is not None else value.lower_bound
+      self.upper_bound = upper_bound if upper_bound is not None else value.upper_bound
+      self.divisible_by = divisible_by if divisible_by is not None else value.divisible_by.copy()
+    elif isinstance(value, int):
+      # Concrete integer value
+      self.value = value
+      self.lower_bound = lower_bound if lower_bound is not None else value
+      self.upper_bound = upper_bound if upper_bound is not None else value
+      self.divisible_by = divisible_by if divisible_by is not None else set()
+    else:
+      # Traced value or symbolic expression - don't try to concretize
+      self.value = value
+      self.lower_bound = lower_bound
+      self.upper_bound = upper_bound
+      self.divisible_by = divisible_by if divisible_by is not None else set()
+
+  def __int__(self):
+    """Convert to int if concrete."""
+    if isinstance(self.value, int):
+      return self.value
+    return int(self.value)
+
+  def __index__(self):
+    """Support using as array index."""
+    return int(self)
+
+  def __mod__(self, other):
+    """Modulo operation with divisibility tracking."""
+    if isinstance(other, int) and other in self.divisible_by:
+      # Known to be divisible, result is 0
+      return SymInt(0, lower_bound=0, upper_bound=0)
+
+    # For concrete values, compute directly
+    if isinstance(self.value, int) and isinstance(other, int):
+      result = self.value % other
+      return SymInt(result, lower_bound=result, upper_bound=result)
+
+    # For traced/symbolic values, use regular modulo (JAX will trace it)
+    # Result of x % n is in range [0, n-1]
+    if isinstance(other, int):
+      return SymInt(
+        self.value % other,
+        lower_bound=0,
+        upper_bound=other - 1
+      )
+
+    return SymInt(self.value % other)
+
+  def __mul__(self, other):
+    """Multiplication with bound tracking."""
+    if isinstance(other, int):
+      new_divisible_by = self.divisible_by.copy()
+      # If multiplying by n, result is divisible by n and all previous divisors
+      new_divisible_by.add(other)
+
+      if isinstance(self.value, int):
+        result = self.value * other
+        return SymInt(
+          result,
+          lower_bound=result,
+          upper_bound=result,
+          divisible_by=new_divisible_by
+        )
+
+      # Symbolic multiplication
+      if self.lower_bound is not None and self.upper_bound is not None:
+        lb = self.lower_bound * other if other >= 0 else self.upper_bound * other
+        ub = self.upper_bound * other if other >= 0 else self.lower_bound * other
+        return SymInt(
+          self.value * other,
+          lower_bound=lb,
+          upper_bound=ub,
+          divisible_by=new_divisible_by
+        )
+
+    return SymInt(self.value * other)
+
+  def __rmul__(self, other):
+    return self.__mul__(other)
+
+  def __add__(self, other):
+    """Addition with bound tracking."""
+    if isinstance(other, SymInt):
+      # Adding two SymInts
+      if isinstance(self.value, int) and isinstance(other.value, int):
+        result = self.value + other.value
+        return SymInt(result, lower_bound=result, upper_bound=result)
+
+      # Track bounds if both have them
+      if (self.lower_bound is not None and self.upper_bound is not None and
+          other.lower_bound is not None and other.upper_bound is not None):
+        return SymInt(
+          self.value + other.value,
+          lower_bound=self.lower_bound + other.lower_bound,
+          upper_bound=self.upper_bound + other.upper_bound
+        )
+
+      return SymInt(self.value + other.value)
+
+    elif isinstance(other, int):
+      if isinstance(self.value, int):
+        result = self.value + other
+        return SymInt(result, lower_bound=result, upper_bound=result)
+
+      if self.lower_bound is not None and self.upper_bound is not None:
+        return SymInt(
+          self.value + other,
+          lower_bound=self.lower_bound + other,
+          upper_bound=self.upper_bound + other,
+          divisible_by=self.divisible_by
+        )
+
+      return SymInt(self.value + other)
+
+    # Other types (traced values, etc.)
+    return SymInt(self.value + other)
+
+  def __radd__(self, other):
+    return self.__add__(other)
+
+  def __gt__(self, other):
+    """Greater than comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value > other_val
+
+  def __lt__(self, other):
+    """Less than comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value < other_val
+
+  def __ge__(self, other):
+    """Greater than or equal comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value >= other_val
+
+  def __le__(self, other):
+    """Less than or equal comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value <= other_val
+
+  def __eq__(self, other):
+    """Equality comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value == other_val
+
+  def __ne__(self, other):
+    """Inequality comparison."""
+    other_val = other.value if isinstance(other, SymInt) else other
+    return self.value != other_val
+
+  def __repr__(self):
+    bounds = f"[{self.lower_bound}, {self.upper_bound}]" if self.lower_bound is not None else ""
+    div = f" div by {self.divisible_by}" if self.divisible_by else ""
+    return f"SymInt({self.value}{bounds}{div})"
 
 
 
@@ -420,6 +637,9 @@ def bitonic_sort_refs(
     *,
     num_keys: int,
     descending: bool,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
+    unroll_stages: bool = False,
 ):
     """
     Pallas kernel for bitonic sort in compressed transpose format.
@@ -429,6 +649,9 @@ def bitonic_sort_refs(
         out_refs: Output array references
         num_keys: Number of sort keys
         descending: Sort in descending order
+        max_num_fused_stages: Maximum number of stages to fuse
+        tile_unroll: Tile unrolling factor
+        unroll_stages: Whether to unroll stages
     """
     dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
     dim0 = min(dim0, NUM_LANES)
@@ -439,7 +662,10 @@ def bitonic_sort_refs(
           [ref[...] for ref in in_refs],
           num_keys=num_keys,
           descending=descending,
-            transpose_scratch_refs=transpose_refs,
+          max_num_fused_stages=max_num_fused_stages,
+          tile_unroll=tile_unroll,
+          unroll_stages=unroll_stages,
+          transpose_scratch_refs=transpose_refs,
         )
         for out, out_ref in zip(outs, out_refs, strict=True):
           out_ref[...] = out.astype(out_ref.dtype)
@@ -447,13 +673,16 @@ def bitonic_sort_refs(
 
 @functools.partial(
     jit,
-    static_argnames=("num_keys", "descending", "interpret"),
+    static_argnames=("num_keys", "descending", "interpret", "max_num_fused_stages", "tile_unroll", "unroll_stages"),
 )
 def bitonic_sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int = 1,
     descending: bool = False,
     interpret: bool = False,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
+    unroll_stages: bool = False,
 ) -> tuple[jax.Array, ...]:
     """
     Sort arrays using bitonic sort in compressed transpose format.
@@ -472,6 +701,9 @@ def bitonic_sort(
         num_keys: Number of arrays to use as sort keys.
         descending: If True, sort in descending order.
         interpret: If True, run in CPU interpret mode.
+        max_num_fused_stages: Maximum number of stages to fuse together.
+        tile_unroll: Tile unrolling factor for optimization.
+        unroll_stages: Whether to unroll stages in the sort.
 
     Returns:
         Tuple of arrays (same length as input operands):
@@ -503,6 +735,9 @@ def bitonic_sort(
             bitonic_sort_refs,
             num_keys=num_keys,
             descending=descending,
+            max_num_fused_stages=max_num_fused_stages,
+            tile_unroll=tile_unroll,
+            unroll_stages=unroll_stages,
         ),
         out_shape=(output_shapes,),
         compiler_params=pltpu.CompilerParams(
