@@ -66,6 +66,7 @@ from tallax._src.sort import (
     compute_pair_slice_start_index,
 )
 
+CONCAT_TILES = False
 
 def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
@@ -211,7 +212,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
             outs_tiles[arr_idx][idx] = out
     else:
       # Comparison between tiles
-      arrs_tiles = _resplit(arrs_tiles, separation)
+      arrs_tiles = _resplit(arrs_tiles, separation if CONCAT_TILES else NUM_SUBLANES)
       tile_shape = arrs_tiles[0][0].shape      
       num_tiles = len(arrs_tiles[0])
       tile_separation = separation // tile_shape[0]
