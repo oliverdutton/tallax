@@ -1,0 +1,174 @@
+
+Testing bitonic_sort with shape (16, 1024)
+================================================================================
+
+1. Extracting jaxpr from bitonic_sort_arrays...
+
+2. Counting primitives (with jit counted)...
+Total primitives (counting jit): 12449
+Number of jit primitives: 1512
+
+3. Counting primitives (recursing through jit)...
+
+Original primitive counts (total: 10937):
+  convert_element_type: 1700
+  select_n: 1460
+  gt: 1441
+  add: 1284
+  xor: 977
+  and: 789
+  eq: 704
+  lt: 528
+  reshape: 528
+  gather: 528
+  ne: 440
+  iota: 170
+  sign: 104
+  mul: 104
+  div: 52
+  rem: 52
+  sub: 52
+  slice: 16
+  split: 3
+  concatenate: 3
+
+4. Applying CSE transformation once...
+After 1 iteration: 7732 primitives (3205 reduction)
+
+5. Applying CSE until fixpoint...
+
+Fixpoint reached in 2 iterations
+Fixpoint primitive counts (total: 7732):
+  select_n: 1409
+  convert_element_type: 1127
+  xor: 950
+  gt: 872
+  eq: 704
+  add: 546
+  lt: 528
+  reshape: 528
+  gather: 528
+  ne: 338
+  and: 169
+  slice: 16
+  split: 3
+  concatenate: 3
+  transpose: 2
+  iota: 2
+  sign: 2
+  mul: 2
+  div: 1
+  rem: 1
+
+================================================================================
+RESULTS:
+  Original total primitives:     10937
+  After 1 CSE iteration:         7732 (29.30%)
+  After fixpoint (2 iterations): 7732 (29.30%)
+  Additional reduction at fixpoint: 0
+================================================================================
+
+Per-primitive reductions (fixpoint vs original):
+  add                           :   1284 ->    546 (  +738, +57.48%)
+  and                           :    789 ->    169 (  +620, +78.58%)
+  convert_element_type          :   1700 ->   1127 (  +573, +33.71%)
+  gt                            :   1441 ->    872 (  +569, +39.49%)
+  iota                          :    170 ->      2 (  +168, +98.82%)
+  mul                           :    104 ->      2 (  +102, +98.08%)
+  sign                          :    104 ->      2 (  +102, +98.08%)
+  ne                            :    440 ->    338 (  +102, +23.18%)
+  rem                           :     52 ->      1 (   +51, +98.08%)
+  div                           :     52 ->      1 (   +51, +98.08%)
+  select_n                      :   1460 ->   1409 (   +51,  +3.49%)
+  sub                           :     52 ->      1 (   +51, +98.08%)
+  xor                           :    977 ->    950 (   +27,  +2.76%)
+
+6. Verifying correctness...
+✓ Verification PASSED: Fixpoint jaxpr produces identical output!
+✓ Correctness PASSED: Output matches reference sort!
+
+Testing bitonic_sort with shape (16, 32768)
+================================================================================
+
+1. Extracting jaxpr from bitonic_sort_arrays...
+
+2. Counting primitives (with jit counted)...
+Total primitives (counting jit): 650975
+Number of jit primitives: 86250
+
+3. Counting primitives (recursing through jit)...
+
+Original primitive counts (total: 564725):
+  convert_element_type: 86133
+  select_n: 86133
+  gt: 86064
+  add: 67701
+  and: 43173
+  xor: 43056
+  eq: 43008
+  ne: 34026
+  lt: 24576
+  reshape: 24576
+  gather: 24576
+  slice: 512
+  iota: 330
+  sign: 234
+  mul: 234
+  div: 117
+  rem: 117
+  sub: 117
+  concatenate: 37
+  split: 3
+
+4. Applying CSE transformation once...
+After 1 iteration: 425046 primitives (139679 reduction)
+
+5. Applying CSE until fixpoint...
+
+Fixpoint reached in 2 iterations
+Fixpoint primitive counts (total: 425046):
+  select_n: 86017
+  convert_element_type: 61447
+  gt: 50696
+  xor: 43014
+  eq: 43008
+  ne: 33794
+  add: 25090
+  lt: 24576
+  reshape: 24576
+  gather: 24576
+  and: 7689
+  slice: 512
+  concatenate: 37
+  split: 3
+  transpose: 2
+  iota: 2
+  sign: 2
+  mul: 2
+  div: 1
+  rem: 1
+
+================================================================================
+RESULTS:
+  Original total primitives:     564725
+  After 1 CSE iteration:         425046 (24.73%)
+  After fixpoint (2 iterations): 425046 (24.73%)
+  Additional reduction at fixpoint: 0
+================================================================================
+
+Per-primitive reductions (fixpoint vs original):
+  add                           :  67701 ->  25090 (+42611, +62.94%)
+  and                           :  43173 ->   7689 (+35484, +82.19%)
+  gt                            :  86064 ->  50696 (+35368, +41.09%)
+  convert_element_type          :  86133 ->  61447 (+24686, +28.66%)
+  iota                          :    330 ->      2 (  +328, +99.39%)
+  mul                           :    234 ->      2 (  +232, +99.15%)
+  sign                          :    234 ->      2 (  +232, +99.15%)
+  ne                            :  34026 ->  33794 (  +232,  +0.68%)
+  rem                           :    117 ->      1 (  +116, +99.15%)
+  div                           :    117 ->      1 (  +116, +99.15%)
+  select_n                      :  86133 ->  86017 (  +116,  +0.13%)
+  sub                           :    117 ->      1 (  +116, +99.15%)
+  xor                           :  43056 ->  43014 (   +42,  +0.10%)
+
+6. Verifying correctness...
