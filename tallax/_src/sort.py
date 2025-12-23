@@ -257,6 +257,7 @@ def _run_compressed_transpose_format_substages_on_refs(
         pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
     batch_size = arrs[0].shape[0]
     arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
+    arrs_tiles = jax.tree.map(lambda x: jnp.split(x, x.shape[0] // NUM_SUBLANES, axis=0), arrs_tiles)
 
     arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
         arrs_tiles,
