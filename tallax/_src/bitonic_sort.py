@@ -314,7 +314,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     else:
         raise ValueError
         
-    print('Padding {shape} to {padded_shape}')
+    print(f'Padding {shape} to {padded_shape}')
 
     # Pad both dimensions if needed
     # For ascending sort, pad with 'max' so padding values sort to the end
@@ -423,6 +423,9 @@ def bitonic_sort_refs(
     *,
     num_keys: int,
     descending: bool,
+    max_num_fused_stages: int | None = None, 
+    tile_unroll: int | None = None, 
+    unroll_stages=True,
 ):
     """
     Pallas kernel for bitonic sort in compressed transpose format.
@@ -444,6 +447,9 @@ def bitonic_sort_refs(
           num_keys=num_keys,
           descending=descending,
           transpose_scratch_refs=transpose_refs,
+           max_num_fused_stages=max_num_fused_stages,
+          unroll_stages=unroll_stages,
+          tile_unroll=tile_unroll,
         )
         for out, out_ref in zip(outs, out_refs, strict=True):
           out_ref[...] = out.astype(out_ref.dtype)
@@ -451,13 +457,17 @@ def bitonic_sort_refs(
 
 @functools.partial(
     jit,
-    static_argnames=("num_keys", "descending", "interpret"),
+    static_argnames=("num_keys", "descending", "interpret", "max_num_fused_stages", "tile_unroll", "unroll_stages"),
 )
 def bitonic_sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int = 1,
     descending: bool = False,
-    interpret: bool = False,
+    interpret: bool = False,    
+    max_num_fused_stages: int | None = None, 
+    tile_unroll: int | None = None, 
+    unroll_stages=True,
+
 ) -> tuple[jax.Array, ...]:
     """
     Sort arrays using bitonic sort in compressed transpose format.
@@ -507,6 +517,9 @@ def bitonic_sort(
             bitonic_sort_refs,
             num_keys=num_keys,
             descending=descending,
+            max_num_fused_stages=max_num_fused_stages,
+            unroll_stages=unroll_stages,
+            tile_unroll=tile_unroll,
         ),
         out_shape=(output_shapes,),
         compiler_params=pltpu.CompilerParams(
