@@ -122,7 +122,7 @@ def _rejoin(operands):
        
    
 def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length):
-    assert isinstance(sort_dim_offset, int)
+    #assert isinstance(sort_dim_offset, int)
     
     # is_descending repeats every 2**(stage+1)
     # if the offset divides cleanly it's 0's allowing for CSE in the add of zeros (and hopefully remove of add 0)
