@@ -1,0 +1,1180 @@
+HloModule jit_test_rematerialization_patterns, is_scheduled=true, entry_computation_layout={()->s32[]}, allow_spmd_sharding_propagation_to_output={true}
+
+FileNames
+1 "/home/user/tallax/analyze_hlo.py"
+
+FunctionNames
+1 "<module>"
+2 "test_rematerialization_patterns"
+3 "test_rematerialization_patterns.<locals>.body_fn"
+4 "iota_tile"
+5 "create_bit_indicator"
+
+FileLocations
+1 {file_name_id=1 function_name_id=1 line=53 end_line=53 column=11 end_column=59}
+2 {file_name_id=1 function_name_id=2 line=44 end_line=44 column=61 end_column=99}
+3 {file_name_id=1 function_name_id=2 line=44 end_line=44 column=19 end_column=100}
+4 {file_name_id=1 function_name_id=3 line=31 end_line=31 column=12 end_column=34}
+5 {file_name_id=1 function_name_id=3 line=33 end_line=33 column=27 end_column=39}
+6 {file_name_id=1 function_name_id=4 line=11 end_line=11 column=11 end_column=59}
+7 {file_name_id=1 function_name_id=3 line=34 end_line=34 column=27 end_column=39}
+8 {file_name_id=1 function_name_id=3 line=35 end_line=35 column=48 end_column=74}
+9 {file_name_id=1 function_name_id=3 line=35 end_line=35 column=47 end_column=96}
+10 {file_name_id=1 function_name_id=3 line=35 end_line=35 column=32 end_column=96}
+11 {file_name_id=1 function_name_id=3 line=37 end_line=37 column=36 end_column=42}
+12 {file_name_id=1 function_name_id=3 line=38 end_line=38 column=28 end_column=65}
+13 {file_name_id=1 function_name_id=5 line=19 end_line=19 column=12 end_column=33}
+14 {file_name_id=1 function_name_id=5 line=19 end_line=19 column=11 end_column=38}
+15 {file_name_id=1 function_name_id=3 line=39 end_line=39 column=26 end_column=78}
+16 {file_name_id=1 function_name_id=3 line=41 end_line=41 column=23 end_column=74}
+17 {file_name_id=1 function_name_id=3 line=41 end_line=41 column=12 end_column=88}
+18 {file_name_id=1 function_name_id=2 line=45 end_line=45 column=11 end_column=29}
+
+StackFrames
+1 {file_location_id=1 parent_frame_id=1}
+2 {file_location_id=2 parent_frame_id=2}
+3 {file_location_id=3 parent_frame_id=2}
+4 {file_location_id=4 parent_frame_id=4}
+5 {file_location_id=5 parent_frame_id=4}
+6 {file_location_id=6 parent_frame_id=6}
+7 {file_location_id=7 parent_frame_id=4}
+8 {file_location_id=6 parent_frame_id=8}
+9 {file_location_id=8 parent_frame_id=4}
+10 {file_location_id=9 parent_frame_id=4}
+11 {file_location_id=10 parent_frame_id=4}
+12 {file_location_id=11 parent_frame_id=4}
+13 {file_location_id=12 parent_frame_id=4}
+14 {file_location_id=13 parent_frame_id=14}
+15 {file_location_id=14 parent_frame_id=14}
+16 {file_location_id=15 parent_frame_id=4}
+17 {file_location_id=16 parent_frame_id=4}
+18 {file_location_id=17 parent_frame_id=4}
+19 {file_location_id=18 parent_frame_id=2}
+
+
+%fused_computation (param_0.2: s32[128,128], param_1.5: s32[128,128], param_2.4: s32[128,128], param_3.4: s32[128,128], param_4.6: s32[128,128], param_5.6: s32[128,128], param_6.6: s32[128,128], param_7.6: s32[128,128], param_8.6: s32[128,128], param_9.6: s32[128,128], param_10.6: s32[128,128], param_11.6: s32[128,128], param_12.6: s32[128,128], param_13.6: s32[128,128], param_14.6: s32[128,128], param_15.6: s32[128,128], param_16.6: s32[128,128], param_17.6: s32[128,128], param_18.6: s32[128,128], param_19.6: s32[128,128], param_20.6: s32[128,128], param_21.6: s32[128,128], param_22.6: s32[128,128], param_23.6: s32[128,128], param_24.6: s32[128,128], param_25.6: s32[128,128], param_26.6: s32[128,128], param_27.6: s32[128,128], param_28.6: s32[128,128], param_29.6: s32[128,128], param_30.6: s32[128,128], param_31.6: s32[128,128], param_32.6: s32[128,128], param_33.6: s32[128,128], param_34.6: s32[128,128], param_35.6: s32[128,128], param_36.6: s32[128,128], param_37.6: s32[128,128], param_38.6: s32[128,128], param_39.6: s32[128,128], param_40.6: s32[128,128], param_41.6: s32[128,128], param_42.6: s32[128,128], param_43.6: s32[128,128], param_44.6: s32[128,128], param_45.6: s32[128,128], param_46.6: s32[128,128], param_47.6: s32[128,128], param_48.6: s32[128,128], param_49.6: s32[128,128], param_50.6: s32[128,128], param_51.6: s32[128,128], param_52.6: s32[128,128], param_53.6: s32[128,128], param_54.6: s32[128,128], param_55.6: s32[128,128], param_56.6: s32[128,128], param_57.6: s32[128,128], param_58.6: s32[128,128], param_59.6: s32[128,128], param_60.6: s32[128,128], param_61.6: s32[128,128], param_62.6: s32[128,128], param_63.6: s32[128,128], param_64.6: s32[128,128], param_65.6: s32[128,128], param_66.6: s32[128,128], param_67.6: s32[128,128], param_68.6: s32[128,128], param_69.6: s32[128,128], param_70.6: s32[128,128], param_71.6: s32[128,128], param_72.6: s32[128,128], param_73.6: s32[128,128], param_74.6: s32[128,128], param_75.6: s32[128,128], param_76.6: s32[128,128], param_77.6: s32[128,128], param_78.6: s32[128,128], param_79.6: s32[128,128], param_80.6: s32[128,128], param_81.6: s32[128,128], param_82.6: s32[128,128], param_83.6: s32[128,128], param_84.6: s32[128,128], param_85.6: s32[128,128], param_86.6: s32[128,128], param_87.6: s32[128,128], param_88.6: s32[128,128], param_89.6: s32[128,128], param_90.6: s32[128,128], param_91.6: s32[128,128], param_92.6: s32[128,128], param_93.6: s32[128,128], param_94.6: s32[128,128], param_95.6: s32[128,128], param_96.6: s32[128,128], param_97.6: s32[128,128], param_98.6: s32[128,128], param_99.6: s32[128,128], param_100.6: s32[128,128], param_101.6: s32[128,128], param_102.6: s32[128,128], param_103.6: s32[128,128], param_104.6: s32[128,128], param_105.6: s32[128,128], param_106.6: s32[128,128], param_107.6: s32[128,128], param_108.6: s32[128,128], param_109.6: s32[128,128], param_110.6: s32[128,128], param_111.6: s32[128,128], param_112.6: s32[128,128], param_113.6: s32[128,128], param_114.6: s32[128,128], param_115.6: s32[128,128], param_116.6: s32[128,128], param_117.6: s32[128,128], param_118.6: s32[128,128], param_119.6: s32[128,128], param_120.6: s32[128,128], param_121.6: s32[128,128], param_122.6: s32[128,128], param_123.6: s32[128,128], param_124.6: s32[128,128], param_125.6: s32[128,128], param_126.6: s32[128,128], param_127.6: s32[128,128], param_128.6: s32[128,128], param_129.6: s32[128,128], param_130.6: s32[128,128], param_131.6: s32[128,128], param_132.6: s32[128,128], param_133.6: s32[128,128], param_134.6: s32[128,128], param_135.6: s32[128,128], param_136.6: s32[128,128], param_137.6: s32[128,128], param_138.6: s32[128,128], param_139.6: s32[128,128], param_140.6: s32[128,128], param_141.6: s32[128,128], param_142.6: s32[128,128], param_143.6: s32[128,128], param_144.6: s32[128,128], param_145.6: s32[128,128], param_146.6: s32[128,128], param_147.6: s32[128,128], param_148.6: s32[128,128], param_149.6: s32[128,128], param_150.6: s32[128,128], param_151.6: s32[128,128], param_152.6: s32[128,128], param_153.6: s32[128,128], param_154.6: s32[128,128], param_155.6: s32[128,128], param_156.6: s32[128,128], param_157.6: s32[128,128], param_158.6: s32[128,128], param_159.6: s32[128,128], param_160.6: s32[128,128], param_161.6: s32[128,128], param_162.6: s32[128,128], param_163.6: s32[128,128], param_164.6: s32[128,128], param_165.6: s32[128,128], param_166.6: s32[128,128], param_167.6: s32[128,128], param_168.6: s32[128,128], param_169.6: s32[128,128], param_170.6: s32[128,128], param_171.6: s32[128,128], param_172.6: s32[128,128], param_173.6: s32[128,128], param_174.6: s32[128,128], param_175.6: s32[128,128], param_176.6: s32[128,128], param_177.6: s32[128,128], param_178.6: s32[128,128], param_179.6: s32[128,128], param_180.6: s32[128,128], param_181.6: s32[128,128], param_182.6: s32[128,128], param_183.6: s32[128,128], param_184.6: s32[128,128], param_185.6: s32[128,128], param_186.6: s32[128,128], param_187.6: s32[128,128], param_188.6: s32[128,128], param_189.6: s32[128,128], param_190.6: s32[128,128], param_191.6: s32[128,128], param_192.6: s32[128,128], param_193.6: s32[128,128], param_194.6: s32[128,128], param_195.6: s32[128,128], param_196.6: s32[128,128], param_197.6: s32[128,128], param_198.6: s32[128,128], param_199.6: s32[128,128], param_200.8: s32[128,128], param_201.8: s32[7], param_202.8: s32[]) -> s32[128,128] {
+  %param_199.6 = s32[128,128]{1,0} parameter(199)
+  %param_200.8 = s32[128,128]{1,0} parameter(200)
+  %iota.4600 = s32[128]{0} iota(), iota_dimension=0, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=6}
+  %param_201.8 = s32[7]{0} parameter(201)
+  %param_202.8 = s32[] parameter(202)
+  %constant.8058 = s32[] constant(0), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call"}
+  %lt.11 = pred[] compare(%param_202.8, %constant.8058), direction=LT, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/lt" stack_frame_id=4}
+  %constant.8057 = s32[] constant(7), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call"}
+  %add.7224 = s32[] add(%param_202.8, %constant.8057), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=4}
+  %select_n.1607 = s32[] select(%lt.11, %add.7224, %param_202.8), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/select_n" stack_frame_id=4}
+  %dynamic_slice.7 = s32[1]{0} dynamic-slice(%param_201.8, %select_n.1607), dynamic_slice_sizes={1}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/dynamic_slice" stack_frame_id=4}
+  %bitcast.1 = s32[] bitcast(%dynamic_slice.7), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/dynamic_slice" stack_frame_id=4}
+  %broadcast.20612 = s32[128]{0} broadcast(%bitcast.1), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/shift_right_arithmetic" stack_frame_id=14}
+  %shift_right_arithmetic.2000 = s32[128]{0} shift-right-arithmetic(%iota.4600, %broadcast.20612), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/shift_right_arithmetic" stack_frame_id=14}
+  %constant.8059 = s32[] constant(1)
+  %broadcast.20611 = s32[128]{0} broadcast(%constant.8059), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call"}
+  %and.4400 = s32[128]{0} and(%shift_right_arithmetic.2000, %broadcast.20611), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/and" stack_frame_id=15}
+  %broadcast.20610 = s32[128,128]{1,0} broadcast(%and.4400), dimensions={0}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=6}
+  %add.7223 = s32[128,128]{1,0} add(%param_200.8, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %shift_left.1400 = s32[] shift-left(%constant.8059, %bitcast.1), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/shift_left" stack_frame_id=12}
+  %broadcast.20609 = s32[128]{0} broadcast(%shift_left.1400), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/xor" stack_frame_id=16}
+  %xor.2000 = s32[128]{0} xor(%iota.4600, %broadcast.20609), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/xor" stack_frame_id=16}
+  %broadcast.20608 = s32[128,128]{1,0} broadcast(%xor.2000), dimensions={0}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=6}
+  %add.7222 = s32[128,128]{1,0} add(%add.7223, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7221 = s32[128,128]{1,0} add(%param_199.6, %add.7222), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_198.6 = s32[128,128]{1,0} parameter(198)
+  %add.7220 = s32[128,128]{1,0} add(%param_198.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7219 = s32[128,128]{1,0} add(%add.7220, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7218 = s32[128,128]{1,0} add(%add.7221, %add.7219), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_197.6 = s32[128,128]{1,0} parameter(197)
+  %add.7217 = s32[128,128]{1,0} add(%param_197.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7216 = s32[128,128]{1,0} add(%add.7217, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7215 = s32[128,128]{1,0} add(%add.7218, %add.7216), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_196.6 = s32[128,128]{1,0} parameter(196)
+  %add.7214 = s32[128,128]{1,0} add(%param_196.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7213 = s32[128,128]{1,0} add(%add.7214, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7212 = s32[128,128]{1,0} add(%add.7215, %add.7213), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_195.6 = s32[128,128]{1,0} parameter(195)
+  %add.7211 = s32[128,128]{1,0} add(%param_195.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7210 = s32[128,128]{1,0} add(%add.7211, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7209 = s32[128,128]{1,0} add(%add.7212, %add.7210), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_194.6 = s32[128,128]{1,0} parameter(194)
+  %add.7208 = s32[128,128]{1,0} add(%param_194.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7207 = s32[128,128]{1,0} add(%add.7208, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7206 = s32[128,128]{1,0} add(%add.7209, %add.7207), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_193.6 = s32[128,128]{1,0} parameter(193)
+  %add.7205 = s32[128,128]{1,0} add(%param_193.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7204 = s32[128,128]{1,0} add(%add.7205, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7203 = s32[128,128]{1,0} add(%add.7206, %add.7204), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_192.6 = s32[128,128]{1,0} parameter(192)
+  %add.7202 = s32[128,128]{1,0} add(%param_192.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7201 = s32[128,128]{1,0} add(%add.7202, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7200 = s32[128,128]{1,0} add(%add.7203, %add.7201), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_191.6 = s32[128,128]{1,0} parameter(191)
+  %add.7199 = s32[128,128]{1,0} add(%param_191.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7198 = s32[128,128]{1,0} add(%add.7199, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7197 = s32[128,128]{1,0} add(%add.7200, %add.7198), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_190.6 = s32[128,128]{1,0} parameter(190)
+  %add.7196 = s32[128,128]{1,0} add(%param_190.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7195 = s32[128,128]{1,0} add(%add.7196, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7194 = s32[128,128]{1,0} add(%add.7197, %add.7195), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_189.6 = s32[128,128]{1,0} parameter(189)
+  %add.7193 = s32[128,128]{1,0} add(%param_189.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7192 = s32[128,128]{1,0} add(%add.7193, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7191 = s32[128,128]{1,0} add(%add.7194, %add.7192), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_188.6 = s32[128,128]{1,0} parameter(188)
+  %add.7190 = s32[128,128]{1,0} add(%param_188.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7189 = s32[128,128]{1,0} add(%add.7190, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7188 = s32[128,128]{1,0} add(%add.7191, %add.7189), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_187.6 = s32[128,128]{1,0} parameter(187)
+  %add.7187 = s32[128,128]{1,0} add(%param_187.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7186 = s32[128,128]{1,0} add(%add.7187, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7185 = s32[128,128]{1,0} add(%add.7188, %add.7186), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_186.6 = s32[128,128]{1,0} parameter(186)
+  %add.7184 = s32[128,128]{1,0} add(%param_186.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7183 = s32[128,128]{1,0} add(%add.7184, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7182 = s32[128,128]{1,0} add(%add.7185, %add.7183), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_185.6 = s32[128,128]{1,0} parameter(185)
+  %add.7181 = s32[128,128]{1,0} add(%param_185.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7180 = s32[128,128]{1,0} add(%add.7181, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7179 = s32[128,128]{1,0} add(%add.7182, %add.7180), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_184.6 = s32[128,128]{1,0} parameter(184)
+  %add.7178 = s32[128,128]{1,0} add(%param_184.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7177 = s32[128,128]{1,0} add(%add.7178, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7176 = s32[128,128]{1,0} add(%add.7179, %add.7177), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_183.6 = s32[128,128]{1,0} parameter(183)
+  %add.7175 = s32[128,128]{1,0} add(%param_183.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7174 = s32[128,128]{1,0} add(%add.7175, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7173 = s32[128,128]{1,0} add(%add.7176, %add.7174), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_182.6 = s32[128,128]{1,0} parameter(182)
+  %add.7172 = s32[128,128]{1,0} add(%param_182.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7171 = s32[128,128]{1,0} add(%add.7172, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7170 = s32[128,128]{1,0} add(%add.7173, %add.7171), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_181.6 = s32[128,128]{1,0} parameter(181)
+  %add.7169 = s32[128,128]{1,0} add(%param_181.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7168 = s32[128,128]{1,0} add(%add.7169, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7167 = s32[128,128]{1,0} add(%add.7170, %add.7168), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_180.6 = s32[128,128]{1,0} parameter(180)
+  %add.7166 = s32[128,128]{1,0} add(%param_180.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7165 = s32[128,128]{1,0} add(%add.7166, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7164 = s32[128,128]{1,0} add(%add.7167, %add.7165), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_179.6 = s32[128,128]{1,0} parameter(179)
+  %add.7163 = s32[128,128]{1,0} add(%param_179.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7162 = s32[128,128]{1,0} add(%add.7163, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7161 = s32[128,128]{1,0} add(%add.7164, %add.7162), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_178.6 = s32[128,128]{1,0} parameter(178)
+  %add.7160 = s32[128,128]{1,0} add(%param_178.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7159 = s32[128,128]{1,0} add(%add.7160, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7158 = s32[128,128]{1,0} add(%add.7161, %add.7159), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_177.6 = s32[128,128]{1,0} parameter(177)
+  %add.7157 = s32[128,128]{1,0} add(%param_177.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7156 = s32[128,128]{1,0} add(%add.7157, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7155 = s32[128,128]{1,0} add(%add.7158, %add.7156), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_176.6 = s32[128,128]{1,0} parameter(176)
+  %add.7154 = s32[128,128]{1,0} add(%param_176.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7153 = s32[128,128]{1,0} add(%add.7154, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7152 = s32[128,128]{1,0} add(%add.7155, %add.7153), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_175.6 = s32[128,128]{1,0} parameter(175)
+  %add.7151 = s32[128,128]{1,0} add(%param_175.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7150 = s32[128,128]{1,0} add(%add.7151, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7149 = s32[128,128]{1,0} add(%add.7152, %add.7150), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_174.6 = s32[128,128]{1,0} parameter(174)
+  %add.7148 = s32[128,128]{1,0} add(%param_174.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7147 = s32[128,128]{1,0} add(%add.7148, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7146 = s32[128,128]{1,0} add(%add.7149, %add.7147), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_173.6 = s32[128,128]{1,0} parameter(173)
+  %add.7145 = s32[128,128]{1,0} add(%param_173.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7144 = s32[128,128]{1,0} add(%add.7145, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7143 = s32[128,128]{1,0} add(%add.7146, %add.7144), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_172.6 = s32[128,128]{1,0} parameter(172)
+  %add.7142 = s32[128,128]{1,0} add(%param_172.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7141 = s32[128,128]{1,0} add(%add.7142, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7140 = s32[128,128]{1,0} add(%add.7143, %add.7141), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_171.6 = s32[128,128]{1,0} parameter(171)
+  %add.7139 = s32[128,128]{1,0} add(%param_171.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7138 = s32[128,128]{1,0} add(%add.7139, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7137 = s32[128,128]{1,0} add(%add.7140, %add.7138), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_170.6 = s32[128,128]{1,0} parameter(170)
+  %add.7136 = s32[128,128]{1,0} add(%param_170.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7135 = s32[128,128]{1,0} add(%add.7136, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7134 = s32[128,128]{1,0} add(%add.7137, %add.7135), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_169.6 = s32[128,128]{1,0} parameter(169)
+  %add.7133 = s32[128,128]{1,0} add(%param_169.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7132 = s32[128,128]{1,0} add(%add.7133, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7131 = s32[128,128]{1,0} add(%add.7134, %add.7132), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_168.6 = s32[128,128]{1,0} parameter(168)
+  %add.7130 = s32[128,128]{1,0} add(%param_168.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7129 = s32[128,128]{1,0} add(%add.7130, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7128 = s32[128,128]{1,0} add(%add.7131, %add.7129), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_167.6 = s32[128,128]{1,0} parameter(167)
+  %add.7127 = s32[128,128]{1,0} add(%param_167.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7126 = s32[128,128]{1,0} add(%add.7127, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7125 = s32[128,128]{1,0} add(%add.7128, %add.7126), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_166.6 = s32[128,128]{1,0} parameter(166)
+  %add.7124 = s32[128,128]{1,0} add(%param_166.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7123 = s32[128,128]{1,0} add(%add.7124, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7122 = s32[128,128]{1,0} add(%add.7125, %add.7123), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_165.6 = s32[128,128]{1,0} parameter(165)
+  %add.7121 = s32[128,128]{1,0} add(%param_165.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7120 = s32[128,128]{1,0} add(%add.7121, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7119 = s32[128,128]{1,0} add(%add.7122, %add.7120), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_164.6 = s32[128,128]{1,0} parameter(164)
+  %add.7118 = s32[128,128]{1,0} add(%param_164.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7117 = s32[128,128]{1,0} add(%add.7118, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7116 = s32[128,128]{1,0} add(%add.7119, %add.7117), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_163.6 = s32[128,128]{1,0} parameter(163)
+  %add.7115 = s32[128,128]{1,0} add(%param_163.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7114 = s32[128,128]{1,0} add(%add.7115, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7113 = s32[128,128]{1,0} add(%add.7116, %add.7114), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_162.6 = s32[128,128]{1,0} parameter(162)
+  %add.7112 = s32[128,128]{1,0} add(%param_162.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7111 = s32[128,128]{1,0} add(%add.7112, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7110 = s32[128,128]{1,0} add(%add.7113, %add.7111), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_161.6 = s32[128,128]{1,0} parameter(161)
+  %add.7109 = s32[128,128]{1,0} add(%param_161.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7108 = s32[128,128]{1,0} add(%add.7109, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7107 = s32[128,128]{1,0} add(%add.7110, %add.7108), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_160.6 = s32[128,128]{1,0} parameter(160)
+  %add.7106 = s32[128,128]{1,0} add(%param_160.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7105 = s32[128,128]{1,0} add(%add.7106, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7104 = s32[128,128]{1,0} add(%add.7107, %add.7105), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_159.6 = s32[128,128]{1,0} parameter(159)
+  %add.7103 = s32[128,128]{1,0} add(%param_159.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7102 = s32[128,128]{1,0} add(%add.7103, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7101 = s32[128,128]{1,0} add(%add.7104, %add.7102), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_158.6 = s32[128,128]{1,0} parameter(158)
+  %add.7100 = s32[128,128]{1,0} add(%param_158.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7099 = s32[128,128]{1,0} add(%add.7100, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7098 = s32[128,128]{1,0} add(%add.7101, %add.7099), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_157.6 = s32[128,128]{1,0} parameter(157)
+  %add.7097 = s32[128,128]{1,0} add(%param_157.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7096 = s32[128,128]{1,0} add(%add.7097, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7095 = s32[128,128]{1,0} add(%add.7098, %add.7096), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_156.6 = s32[128,128]{1,0} parameter(156)
+  %add.7094 = s32[128,128]{1,0} add(%param_156.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7093 = s32[128,128]{1,0} add(%add.7094, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7092 = s32[128,128]{1,0} add(%add.7095, %add.7093), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_155.6 = s32[128,128]{1,0} parameter(155)
+  %add.7091 = s32[128,128]{1,0} add(%param_155.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7090 = s32[128,128]{1,0} add(%add.7091, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7089 = s32[128,128]{1,0} add(%add.7092, %add.7090), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_154.6 = s32[128,128]{1,0} parameter(154)
+  %add.7088 = s32[128,128]{1,0} add(%param_154.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7087 = s32[128,128]{1,0} add(%add.7088, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7086 = s32[128,128]{1,0} add(%add.7089, %add.7087), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_153.6 = s32[128,128]{1,0} parameter(153)
+  %add.7085 = s32[128,128]{1,0} add(%param_153.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7084 = s32[128,128]{1,0} add(%add.7085, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7083 = s32[128,128]{1,0} add(%add.7086, %add.7084), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_152.6 = s32[128,128]{1,0} parameter(152)
+  %add.7082 = s32[128,128]{1,0} add(%param_152.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7081 = s32[128,128]{1,0} add(%add.7082, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7080 = s32[128,128]{1,0} add(%add.7083, %add.7081), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_151.6 = s32[128,128]{1,0} parameter(151)
+  %add.7079 = s32[128,128]{1,0} add(%param_151.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7078 = s32[128,128]{1,0} add(%add.7079, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7077 = s32[128,128]{1,0} add(%add.7080, %add.7078), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_150.6 = s32[128,128]{1,0} parameter(150)
+  %add.7076 = s32[128,128]{1,0} add(%param_150.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7075 = s32[128,128]{1,0} add(%add.7076, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7074 = s32[128,128]{1,0} add(%add.7077, %add.7075), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_149.6 = s32[128,128]{1,0} parameter(149)
+  %add.7073 = s32[128,128]{1,0} add(%param_149.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7072 = s32[128,128]{1,0} add(%add.7073, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7071 = s32[128,128]{1,0} add(%add.7074, %add.7072), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_148.6 = s32[128,128]{1,0} parameter(148)
+  %add.7070 = s32[128,128]{1,0} add(%param_148.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7069 = s32[128,128]{1,0} add(%add.7070, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7068 = s32[128,128]{1,0} add(%add.7071, %add.7069), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_147.6 = s32[128,128]{1,0} parameter(147)
+  %add.7067 = s32[128,128]{1,0} add(%param_147.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7066 = s32[128,128]{1,0} add(%add.7067, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7065 = s32[128,128]{1,0} add(%add.7068, %add.7066), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_146.6 = s32[128,128]{1,0} parameter(146)
+  %add.7064 = s32[128,128]{1,0} add(%param_146.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7063 = s32[128,128]{1,0} add(%add.7064, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7062 = s32[128,128]{1,0} add(%add.7065, %add.7063), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_145.6 = s32[128,128]{1,0} parameter(145)
+  %add.7061 = s32[128,128]{1,0} add(%param_145.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7060 = s32[128,128]{1,0} add(%add.7061, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7059 = s32[128,128]{1,0} add(%add.7062, %add.7060), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_144.6 = s32[128,128]{1,0} parameter(144)
+  %add.7058 = s32[128,128]{1,0} add(%param_144.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7057 = s32[128,128]{1,0} add(%add.7058, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7056 = s32[128,128]{1,0} add(%add.7059, %add.7057), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_143.6 = s32[128,128]{1,0} parameter(143)
+  %add.7055 = s32[128,128]{1,0} add(%param_143.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7054 = s32[128,128]{1,0} add(%add.7055, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7053 = s32[128,128]{1,0} add(%add.7056, %add.7054), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_142.6 = s32[128,128]{1,0} parameter(142)
+  %add.7052 = s32[128,128]{1,0} add(%param_142.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7051 = s32[128,128]{1,0} add(%add.7052, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7050 = s32[128,128]{1,0} add(%add.7053, %add.7051), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_141.6 = s32[128,128]{1,0} parameter(141)
+  %add.7049 = s32[128,128]{1,0} add(%param_141.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7048 = s32[128,128]{1,0} add(%add.7049, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7047 = s32[128,128]{1,0} add(%add.7050, %add.7048), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_140.6 = s32[128,128]{1,0} parameter(140)
+  %add.7046 = s32[128,128]{1,0} add(%param_140.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7045 = s32[128,128]{1,0} add(%add.7046, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7044 = s32[128,128]{1,0} add(%add.7047, %add.7045), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_139.6 = s32[128,128]{1,0} parameter(139)
+  %add.7043 = s32[128,128]{1,0} add(%param_139.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7042 = s32[128,128]{1,0} add(%add.7043, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7041 = s32[128,128]{1,0} add(%add.7044, %add.7042), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_138.6 = s32[128,128]{1,0} parameter(138)
+  %add.7040 = s32[128,128]{1,0} add(%param_138.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7039 = s32[128,128]{1,0} add(%add.7040, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7038 = s32[128,128]{1,0} add(%add.7041, %add.7039), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_137.6 = s32[128,128]{1,0} parameter(137)
+  %add.7037 = s32[128,128]{1,0} add(%param_137.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7036 = s32[128,128]{1,0} add(%add.7037, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7035 = s32[128,128]{1,0} add(%add.7038, %add.7036), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_136.6 = s32[128,128]{1,0} parameter(136)
+  %add.7034 = s32[128,128]{1,0} add(%param_136.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7033 = s32[128,128]{1,0} add(%add.7034, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7032 = s32[128,128]{1,0} add(%add.7035, %add.7033), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_135.6 = s32[128,128]{1,0} parameter(135)
+  %add.7031 = s32[128,128]{1,0} add(%param_135.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7030 = s32[128,128]{1,0} add(%add.7031, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7029 = s32[128,128]{1,0} add(%add.7032, %add.7030), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_134.6 = s32[128,128]{1,0} parameter(134)
+  %add.7028 = s32[128,128]{1,0} add(%param_134.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7027 = s32[128,128]{1,0} add(%add.7028, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7026 = s32[128,128]{1,0} add(%add.7029, %add.7027), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_133.6 = s32[128,128]{1,0} parameter(133)
+  %add.7025 = s32[128,128]{1,0} add(%param_133.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7024 = s32[128,128]{1,0} add(%add.7025, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7023 = s32[128,128]{1,0} add(%add.7026, %add.7024), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_132.6 = s32[128,128]{1,0} parameter(132)
+  %add.7022 = s32[128,128]{1,0} add(%param_132.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7021 = s32[128,128]{1,0} add(%add.7022, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7020 = s32[128,128]{1,0} add(%add.7023, %add.7021), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_131.6 = s32[128,128]{1,0} parameter(131)
+  %add.7019 = s32[128,128]{1,0} add(%param_131.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7018 = s32[128,128]{1,0} add(%add.7019, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7017 = s32[128,128]{1,0} add(%add.7020, %add.7018), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_130.6 = s32[128,128]{1,0} parameter(130)
+  %add.7016 = s32[128,128]{1,0} add(%param_130.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7015 = s32[128,128]{1,0} add(%add.7016, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7014 = s32[128,128]{1,0} add(%add.7017, %add.7015), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_129.6 = s32[128,128]{1,0} parameter(129)
+  %add.7013 = s32[128,128]{1,0} add(%param_129.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7012 = s32[128,128]{1,0} add(%add.7013, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7011 = s32[128,128]{1,0} add(%add.7014, %add.7012), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_128.6 = s32[128,128]{1,0} parameter(128)
+  %add.7010 = s32[128,128]{1,0} add(%param_128.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7009 = s32[128,128]{1,0} add(%add.7010, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7008 = s32[128,128]{1,0} add(%add.7011, %add.7009), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_127.6 = s32[128,128]{1,0} parameter(127)
+  %add.7007 = s32[128,128]{1,0} add(%param_127.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7006 = s32[128,128]{1,0} add(%add.7007, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7005 = s32[128,128]{1,0} add(%add.7008, %add.7006), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_126.6 = s32[128,128]{1,0} parameter(126)
+  %add.7004 = s32[128,128]{1,0} add(%param_126.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7003 = s32[128,128]{1,0} add(%add.7004, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7002 = s32[128,128]{1,0} add(%add.7005, %add.7003), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_125.6 = s32[128,128]{1,0} parameter(125)
+  %add.7001 = s32[128,128]{1,0} add(%param_125.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.7000 = s32[128,128]{1,0} add(%add.7001, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6999 = s32[128,128]{1,0} add(%add.7002, %add.7000), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_124.6 = s32[128,128]{1,0} parameter(124)
+  %add.6998 = s32[128,128]{1,0} add(%param_124.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6997 = s32[128,128]{1,0} add(%add.6998, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6996 = s32[128,128]{1,0} add(%add.6999, %add.6997), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_123.6 = s32[128,128]{1,0} parameter(123)
+  %add.6995 = s32[128,128]{1,0} add(%param_123.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6994 = s32[128,128]{1,0} add(%add.6995, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6993 = s32[128,128]{1,0} add(%add.6996, %add.6994), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_122.6 = s32[128,128]{1,0} parameter(122)
+  %add.6992 = s32[128,128]{1,0} add(%param_122.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6991 = s32[128,128]{1,0} add(%add.6992, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6990 = s32[128,128]{1,0} add(%add.6993, %add.6991), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_121.6 = s32[128,128]{1,0} parameter(121)
+  %add.6989 = s32[128,128]{1,0} add(%param_121.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6988 = s32[128,128]{1,0} add(%add.6989, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6987 = s32[128,128]{1,0} add(%add.6990, %add.6988), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_120.6 = s32[128,128]{1,0} parameter(120)
+  %add.6986 = s32[128,128]{1,0} add(%param_120.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6985 = s32[128,128]{1,0} add(%add.6986, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6984 = s32[128,128]{1,0} add(%add.6987, %add.6985), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_119.6 = s32[128,128]{1,0} parameter(119)
+  %add.6983 = s32[128,128]{1,0} add(%param_119.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6982 = s32[128,128]{1,0} add(%add.6983, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6981 = s32[128,128]{1,0} add(%add.6984, %add.6982), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_118.6 = s32[128,128]{1,0} parameter(118)
+  %add.6980 = s32[128,128]{1,0} add(%param_118.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6979 = s32[128,128]{1,0} add(%add.6980, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6978 = s32[128,128]{1,0} add(%add.6981, %add.6979), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_117.6 = s32[128,128]{1,0} parameter(117)
+  %add.6977 = s32[128,128]{1,0} add(%param_117.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6976 = s32[128,128]{1,0} add(%add.6977, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6975 = s32[128,128]{1,0} add(%add.6978, %add.6976), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_116.6 = s32[128,128]{1,0} parameter(116)
+  %add.6974 = s32[128,128]{1,0} add(%param_116.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6973 = s32[128,128]{1,0} add(%add.6974, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6972 = s32[128,128]{1,0} add(%add.6975, %add.6973), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_115.6 = s32[128,128]{1,0} parameter(115)
+  %add.6971 = s32[128,128]{1,0} add(%param_115.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6970 = s32[128,128]{1,0} add(%add.6971, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6969 = s32[128,128]{1,0} add(%add.6972, %add.6970), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_114.6 = s32[128,128]{1,0} parameter(114)
+  %add.6968 = s32[128,128]{1,0} add(%param_114.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6967 = s32[128,128]{1,0} add(%add.6968, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6966 = s32[128,128]{1,0} add(%add.6969, %add.6967), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_113.6 = s32[128,128]{1,0} parameter(113)
+  %add.6965 = s32[128,128]{1,0} add(%param_113.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6964 = s32[128,128]{1,0} add(%add.6965, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6963 = s32[128,128]{1,0} add(%add.6966, %add.6964), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_112.6 = s32[128,128]{1,0} parameter(112)
+  %add.6962 = s32[128,128]{1,0} add(%param_112.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6961 = s32[128,128]{1,0} add(%add.6962, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6960 = s32[128,128]{1,0} add(%add.6963, %add.6961), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_111.6 = s32[128,128]{1,0} parameter(111)
+  %add.6959 = s32[128,128]{1,0} add(%param_111.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6958 = s32[128,128]{1,0} add(%add.6959, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6957 = s32[128,128]{1,0} add(%add.6960, %add.6958), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_110.6 = s32[128,128]{1,0} parameter(110)
+  %add.6956 = s32[128,128]{1,0} add(%param_110.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6955 = s32[128,128]{1,0} add(%add.6956, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6954 = s32[128,128]{1,0} add(%add.6957, %add.6955), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_109.6 = s32[128,128]{1,0} parameter(109)
+  %add.6953 = s32[128,128]{1,0} add(%param_109.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6952 = s32[128,128]{1,0} add(%add.6953, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6951 = s32[128,128]{1,0} add(%add.6954, %add.6952), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_108.6 = s32[128,128]{1,0} parameter(108)
+  %add.6950 = s32[128,128]{1,0} add(%param_108.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6949 = s32[128,128]{1,0} add(%add.6950, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6948 = s32[128,128]{1,0} add(%add.6951, %add.6949), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_107.6 = s32[128,128]{1,0} parameter(107)
+  %add.6947 = s32[128,128]{1,0} add(%param_107.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6946 = s32[128,128]{1,0} add(%add.6947, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6945 = s32[128,128]{1,0} add(%add.6948, %add.6946), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_106.6 = s32[128,128]{1,0} parameter(106)
+  %add.6944 = s32[128,128]{1,0} add(%param_106.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6943 = s32[128,128]{1,0} add(%add.6944, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6942 = s32[128,128]{1,0} add(%add.6945, %add.6943), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_105.6 = s32[128,128]{1,0} parameter(105)
+  %add.6941 = s32[128,128]{1,0} add(%param_105.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6940 = s32[128,128]{1,0} add(%add.6941, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6939 = s32[128,128]{1,0} add(%add.6942, %add.6940), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_104.6 = s32[128,128]{1,0} parameter(104)
+  %add.6938 = s32[128,128]{1,0} add(%param_104.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6937 = s32[128,128]{1,0} add(%add.6938, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6936 = s32[128,128]{1,0} add(%add.6939, %add.6937), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_103.6 = s32[128,128]{1,0} parameter(103)
+  %add.6935 = s32[128,128]{1,0} add(%param_103.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6934 = s32[128,128]{1,0} add(%add.6935, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6933 = s32[128,128]{1,0} add(%add.6936, %add.6934), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_102.6 = s32[128,128]{1,0} parameter(102)
+  %add.6932 = s32[128,128]{1,0} add(%param_102.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6931 = s32[128,128]{1,0} add(%add.6932, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6930 = s32[128,128]{1,0} add(%add.6933, %add.6931), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_101.6 = s32[128,128]{1,0} parameter(101)
+  %add.6929 = s32[128,128]{1,0} add(%param_101.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6928 = s32[128,128]{1,0} add(%add.6929, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6927 = s32[128,128]{1,0} add(%add.6930, %add.6928), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_100.6 = s32[128,128]{1,0} parameter(100)
+  %add.6926 = s32[128,128]{1,0} add(%param_100.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6925 = s32[128,128]{1,0} add(%add.6926, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6924 = s32[128,128]{1,0} add(%add.6927, %add.6925), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_99.6 = s32[128,128]{1,0} parameter(99)
+  %add.6923 = s32[128,128]{1,0} add(%param_99.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6922 = s32[128,128]{1,0} add(%add.6923, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6921 = s32[128,128]{1,0} add(%add.6924, %add.6922), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_98.6 = s32[128,128]{1,0} parameter(98)
+  %add.6920 = s32[128,128]{1,0} add(%param_98.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6919 = s32[128,128]{1,0} add(%add.6920, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6918 = s32[128,128]{1,0} add(%add.6921, %add.6919), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_97.6 = s32[128,128]{1,0} parameter(97)
+  %add.6917 = s32[128,128]{1,0} add(%param_97.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6916 = s32[128,128]{1,0} add(%add.6917, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6915 = s32[128,128]{1,0} add(%add.6918, %add.6916), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_96.6 = s32[128,128]{1,0} parameter(96)
+  %add.6914 = s32[128,128]{1,0} add(%param_96.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6913 = s32[128,128]{1,0} add(%add.6914, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6912 = s32[128,128]{1,0} add(%add.6915, %add.6913), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_95.6 = s32[128,128]{1,0} parameter(95)
+  %add.6911 = s32[128,128]{1,0} add(%param_95.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6910 = s32[128,128]{1,0} add(%add.6911, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6909 = s32[128,128]{1,0} add(%add.6912, %add.6910), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_94.6 = s32[128,128]{1,0} parameter(94)
+  %add.6908 = s32[128,128]{1,0} add(%param_94.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6907 = s32[128,128]{1,0} add(%add.6908, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6906 = s32[128,128]{1,0} add(%add.6909, %add.6907), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_93.6 = s32[128,128]{1,0} parameter(93)
+  %add.6905 = s32[128,128]{1,0} add(%param_93.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6904 = s32[128,128]{1,0} add(%add.6905, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6903 = s32[128,128]{1,0} add(%add.6906, %add.6904), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_92.6 = s32[128,128]{1,0} parameter(92)
+  %add.6902 = s32[128,128]{1,0} add(%param_92.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6901 = s32[128,128]{1,0} add(%add.6902, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6900 = s32[128,128]{1,0} add(%add.6903, %add.6901), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_91.6 = s32[128,128]{1,0} parameter(91)
+  %add.6899 = s32[128,128]{1,0} add(%param_91.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6898 = s32[128,128]{1,0} add(%add.6899, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6897 = s32[128,128]{1,0} add(%add.6900, %add.6898), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_90.6 = s32[128,128]{1,0} parameter(90)
+  %add.6896 = s32[128,128]{1,0} add(%param_90.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6895 = s32[128,128]{1,0} add(%add.6896, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6894 = s32[128,128]{1,0} add(%add.6897, %add.6895), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_89.6 = s32[128,128]{1,0} parameter(89)
+  %add.6893 = s32[128,128]{1,0} add(%param_89.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6892 = s32[128,128]{1,0} add(%add.6893, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6891 = s32[128,128]{1,0} add(%add.6894, %add.6892), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_88.6 = s32[128,128]{1,0} parameter(88)
+  %add.6890 = s32[128,128]{1,0} add(%param_88.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6889 = s32[128,128]{1,0} add(%add.6890, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6888 = s32[128,128]{1,0} add(%add.6891, %add.6889), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_87.6 = s32[128,128]{1,0} parameter(87)
+  %add.6887 = s32[128,128]{1,0} add(%param_87.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6886 = s32[128,128]{1,0} add(%add.6887, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6885 = s32[128,128]{1,0} add(%add.6888, %add.6886), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_86.6 = s32[128,128]{1,0} parameter(86)
+  %add.6884 = s32[128,128]{1,0} add(%param_86.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6883 = s32[128,128]{1,0} add(%add.6884, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6882 = s32[128,128]{1,0} add(%add.6885, %add.6883), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_85.6 = s32[128,128]{1,0} parameter(85)
+  %add.6881 = s32[128,128]{1,0} add(%param_85.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6880 = s32[128,128]{1,0} add(%add.6881, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6879 = s32[128,128]{1,0} add(%add.6882, %add.6880), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_84.6 = s32[128,128]{1,0} parameter(84)
+  %add.6878 = s32[128,128]{1,0} add(%param_84.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6877 = s32[128,128]{1,0} add(%add.6878, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6876 = s32[128,128]{1,0} add(%add.6879, %add.6877), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_83.6 = s32[128,128]{1,0} parameter(83)
+  %add.6875 = s32[128,128]{1,0} add(%param_83.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6874 = s32[128,128]{1,0} add(%add.6875, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6873 = s32[128,128]{1,0} add(%add.6876, %add.6874), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_82.6 = s32[128,128]{1,0} parameter(82)
+  %add.6872 = s32[128,128]{1,0} add(%param_82.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6871 = s32[128,128]{1,0} add(%add.6872, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6870 = s32[128,128]{1,0} add(%add.6873, %add.6871), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_81.6 = s32[128,128]{1,0} parameter(81)
+  %add.6869 = s32[128,128]{1,0} add(%param_81.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6868 = s32[128,128]{1,0} add(%add.6869, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6867 = s32[128,128]{1,0} add(%add.6870, %add.6868), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_80.6 = s32[128,128]{1,0} parameter(80)
+  %add.6866 = s32[128,128]{1,0} add(%param_80.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6865 = s32[128,128]{1,0} add(%add.6866, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6864 = s32[128,128]{1,0} add(%add.6867, %add.6865), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_79.6 = s32[128,128]{1,0} parameter(79)
+  %add.6863 = s32[128,128]{1,0} add(%param_79.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6862 = s32[128,128]{1,0} add(%add.6863, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6861 = s32[128,128]{1,0} add(%add.6864, %add.6862), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_78.6 = s32[128,128]{1,0} parameter(78)
+  %add.6860 = s32[128,128]{1,0} add(%param_78.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6859 = s32[128,128]{1,0} add(%add.6860, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6858 = s32[128,128]{1,0} add(%add.6861, %add.6859), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_77.6 = s32[128,128]{1,0} parameter(77)
+  %add.6857 = s32[128,128]{1,0} add(%param_77.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6856 = s32[128,128]{1,0} add(%add.6857, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6855 = s32[128,128]{1,0} add(%add.6858, %add.6856), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_76.6 = s32[128,128]{1,0} parameter(76)
+  %add.6854 = s32[128,128]{1,0} add(%param_76.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6853 = s32[128,128]{1,0} add(%add.6854, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6852 = s32[128,128]{1,0} add(%add.6855, %add.6853), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_75.6 = s32[128,128]{1,0} parameter(75)
+  %add.6851 = s32[128,128]{1,0} add(%param_75.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6850 = s32[128,128]{1,0} add(%add.6851, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6849 = s32[128,128]{1,0} add(%add.6852, %add.6850), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_74.6 = s32[128,128]{1,0} parameter(74)
+  %add.6848 = s32[128,128]{1,0} add(%param_74.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6847 = s32[128,128]{1,0} add(%add.6848, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6846 = s32[128,128]{1,0} add(%add.6849, %add.6847), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_73.6 = s32[128,128]{1,0} parameter(73)
+  %add.6845 = s32[128,128]{1,0} add(%param_73.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6844 = s32[128,128]{1,0} add(%add.6845, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6843 = s32[128,128]{1,0} add(%add.6846, %add.6844), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_72.6 = s32[128,128]{1,0} parameter(72)
+  %add.6842 = s32[128,128]{1,0} add(%param_72.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6841 = s32[128,128]{1,0} add(%add.6842, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6840 = s32[128,128]{1,0} add(%add.6843, %add.6841), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_71.6 = s32[128,128]{1,0} parameter(71)
+  %add.6839 = s32[128,128]{1,0} add(%param_71.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6838 = s32[128,128]{1,0} add(%add.6839, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6837 = s32[128,128]{1,0} add(%add.6840, %add.6838), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_70.6 = s32[128,128]{1,0} parameter(70)
+  %add.6836 = s32[128,128]{1,0} add(%param_70.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6835 = s32[128,128]{1,0} add(%add.6836, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6834 = s32[128,128]{1,0} add(%add.6837, %add.6835), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_69.6 = s32[128,128]{1,0} parameter(69)
+  %add.6833 = s32[128,128]{1,0} add(%param_69.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6832 = s32[128,128]{1,0} add(%add.6833, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6831 = s32[128,128]{1,0} add(%add.6834, %add.6832), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_68.6 = s32[128,128]{1,0} parameter(68)
+  %add.6830 = s32[128,128]{1,0} add(%param_68.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6829 = s32[128,128]{1,0} add(%add.6830, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6828 = s32[128,128]{1,0} add(%add.6831, %add.6829), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_67.6 = s32[128,128]{1,0} parameter(67)
+  %add.6827 = s32[128,128]{1,0} add(%param_67.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6826 = s32[128,128]{1,0} add(%add.6827, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6825 = s32[128,128]{1,0} add(%add.6828, %add.6826), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_66.6 = s32[128,128]{1,0} parameter(66)
+  %add.6824 = s32[128,128]{1,0} add(%param_66.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6823 = s32[128,128]{1,0} add(%add.6824, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6822 = s32[128,128]{1,0} add(%add.6825, %add.6823), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_65.6 = s32[128,128]{1,0} parameter(65)
+  %add.6821 = s32[128,128]{1,0} add(%param_65.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6820 = s32[128,128]{1,0} add(%add.6821, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6819 = s32[128,128]{1,0} add(%add.6822, %add.6820), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_64.6 = s32[128,128]{1,0} parameter(64)
+  %add.6818 = s32[128,128]{1,0} add(%param_64.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6817 = s32[128,128]{1,0} add(%add.6818, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6816 = s32[128,128]{1,0} add(%add.6819, %add.6817), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_63.6 = s32[128,128]{1,0} parameter(63)
+  %add.6815 = s32[128,128]{1,0} add(%param_63.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6814 = s32[128,128]{1,0} add(%add.6815, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6813 = s32[128,128]{1,0} add(%add.6816, %add.6814), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_62.6 = s32[128,128]{1,0} parameter(62)
+  %add.6812 = s32[128,128]{1,0} add(%param_62.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6811 = s32[128,128]{1,0} add(%add.6812, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6810 = s32[128,128]{1,0} add(%add.6813, %add.6811), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_61.6 = s32[128,128]{1,0} parameter(61)
+  %add.6809 = s32[128,128]{1,0} add(%param_61.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6808 = s32[128,128]{1,0} add(%add.6809, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6807 = s32[128,128]{1,0} add(%add.6810, %add.6808), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_60.6 = s32[128,128]{1,0} parameter(60)
+  %add.6806 = s32[128,128]{1,0} add(%param_60.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6805 = s32[128,128]{1,0} add(%add.6806, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6804 = s32[128,128]{1,0} add(%add.6807, %add.6805), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_59.6 = s32[128,128]{1,0} parameter(59)
+  %add.6803 = s32[128,128]{1,0} add(%param_59.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6802 = s32[128,128]{1,0} add(%add.6803, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6801 = s32[128,128]{1,0} add(%add.6804, %add.6802), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_58.6 = s32[128,128]{1,0} parameter(58)
+  %add.6800 = s32[128,128]{1,0} add(%param_58.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6799 = s32[128,128]{1,0} add(%add.6800, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6798 = s32[128,128]{1,0} add(%add.6801, %add.6799), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_57.6 = s32[128,128]{1,0} parameter(57)
+  %add.6797 = s32[128,128]{1,0} add(%param_57.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6796 = s32[128,128]{1,0} add(%add.6797, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6795 = s32[128,128]{1,0} add(%add.6798, %add.6796), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_56.6 = s32[128,128]{1,0} parameter(56)
+  %add.6794 = s32[128,128]{1,0} add(%param_56.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6793 = s32[128,128]{1,0} add(%add.6794, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6792 = s32[128,128]{1,0} add(%add.6795, %add.6793), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_55.6 = s32[128,128]{1,0} parameter(55)
+  %add.6791 = s32[128,128]{1,0} add(%param_55.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6790 = s32[128,128]{1,0} add(%add.6791, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6789 = s32[128,128]{1,0} add(%add.6792, %add.6790), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_54.6 = s32[128,128]{1,0} parameter(54)
+  %add.6788 = s32[128,128]{1,0} add(%param_54.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6787 = s32[128,128]{1,0} add(%add.6788, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6786 = s32[128,128]{1,0} add(%add.6789, %add.6787), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_53.6 = s32[128,128]{1,0} parameter(53)
+  %add.6785 = s32[128,128]{1,0} add(%param_53.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6784 = s32[128,128]{1,0} add(%add.6785, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6783 = s32[128,128]{1,0} add(%add.6786, %add.6784), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_52.6 = s32[128,128]{1,0} parameter(52)
+  %add.6782 = s32[128,128]{1,0} add(%param_52.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6781 = s32[128,128]{1,0} add(%add.6782, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6780 = s32[128,128]{1,0} add(%add.6783, %add.6781), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_51.6 = s32[128,128]{1,0} parameter(51)
+  %add.6779 = s32[128,128]{1,0} add(%param_51.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6778 = s32[128,128]{1,0} add(%add.6779, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6777 = s32[128,128]{1,0} add(%add.6780, %add.6778), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_50.6 = s32[128,128]{1,0} parameter(50)
+  %add.6776 = s32[128,128]{1,0} add(%param_50.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6775 = s32[128,128]{1,0} add(%add.6776, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6774 = s32[128,128]{1,0} add(%add.6777, %add.6775), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_49.6 = s32[128,128]{1,0} parameter(49)
+  %add.6773 = s32[128,128]{1,0} add(%param_49.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6772 = s32[128,128]{1,0} add(%add.6773, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6771 = s32[128,128]{1,0} add(%add.6774, %add.6772), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_48.6 = s32[128,128]{1,0} parameter(48)
+  %add.6770 = s32[128,128]{1,0} add(%param_48.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6769 = s32[128,128]{1,0} add(%add.6770, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6768 = s32[128,128]{1,0} add(%add.6771, %add.6769), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_47.6 = s32[128,128]{1,0} parameter(47)
+  %add.6767 = s32[128,128]{1,0} add(%param_47.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6766 = s32[128,128]{1,0} add(%add.6767, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6765 = s32[128,128]{1,0} add(%add.6768, %add.6766), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_46.6 = s32[128,128]{1,0} parameter(46)
+  %add.6764 = s32[128,128]{1,0} add(%param_46.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6763 = s32[128,128]{1,0} add(%add.6764, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6762 = s32[128,128]{1,0} add(%add.6765, %add.6763), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_45.6 = s32[128,128]{1,0} parameter(45)
+  %add.6761 = s32[128,128]{1,0} add(%param_45.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6760 = s32[128,128]{1,0} add(%add.6761, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6759 = s32[128,128]{1,0} add(%add.6762, %add.6760), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_44.6 = s32[128,128]{1,0} parameter(44)
+  %add.6758 = s32[128,128]{1,0} add(%param_44.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6757 = s32[128,128]{1,0} add(%add.6758, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6756 = s32[128,128]{1,0} add(%add.6759, %add.6757), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_43.6 = s32[128,128]{1,0} parameter(43)
+  %add.6755 = s32[128,128]{1,0} add(%param_43.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6754 = s32[128,128]{1,0} add(%add.6755, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6753 = s32[128,128]{1,0} add(%add.6756, %add.6754), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_42.6 = s32[128,128]{1,0} parameter(42)
+  %add.6752 = s32[128,128]{1,0} add(%param_42.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6751 = s32[128,128]{1,0} add(%add.6752, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6750 = s32[128,128]{1,0} add(%add.6753, %add.6751), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_41.6 = s32[128,128]{1,0} parameter(41)
+  %add.6749 = s32[128,128]{1,0} add(%param_41.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6748 = s32[128,128]{1,0} add(%add.6749, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6747 = s32[128,128]{1,0} add(%add.6750, %add.6748), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_40.6 = s32[128,128]{1,0} parameter(40)
+  %add.6746 = s32[128,128]{1,0} add(%param_40.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6745 = s32[128,128]{1,0} add(%add.6746, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6744 = s32[128,128]{1,0} add(%add.6747, %add.6745), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_39.6 = s32[128,128]{1,0} parameter(39)
+  %add.6743 = s32[128,128]{1,0} add(%param_39.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6742 = s32[128,128]{1,0} add(%add.6743, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6741 = s32[128,128]{1,0} add(%add.6744, %add.6742), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_38.6 = s32[128,128]{1,0} parameter(38)
+  %add.6740 = s32[128,128]{1,0} add(%param_38.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6739 = s32[128,128]{1,0} add(%add.6740, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6738 = s32[128,128]{1,0} add(%add.6741, %add.6739), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_37.6 = s32[128,128]{1,0} parameter(37)
+  %add.6737 = s32[128,128]{1,0} add(%param_37.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6736 = s32[128,128]{1,0} add(%add.6737, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6735 = s32[128,128]{1,0} add(%add.6738, %add.6736), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_36.6 = s32[128,128]{1,0} parameter(36)
+  %add.6734 = s32[128,128]{1,0} add(%param_36.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6733 = s32[128,128]{1,0} add(%add.6734, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6732 = s32[128,128]{1,0} add(%add.6735, %add.6733), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_35.6 = s32[128,128]{1,0} parameter(35)
+  %add.6731 = s32[128,128]{1,0} add(%param_35.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6730 = s32[128,128]{1,0} add(%add.6731, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6729 = s32[128,128]{1,0} add(%add.6732, %add.6730), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_34.6 = s32[128,128]{1,0} parameter(34)
+  %add.6728 = s32[128,128]{1,0} add(%param_34.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6727 = s32[128,128]{1,0} add(%add.6728, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6726 = s32[128,128]{1,0} add(%add.6729, %add.6727), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_33.6 = s32[128,128]{1,0} parameter(33)
+  %add.6725 = s32[128,128]{1,0} add(%param_33.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6724 = s32[128,128]{1,0} add(%add.6725, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6723 = s32[128,128]{1,0} add(%add.6726, %add.6724), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_32.6 = s32[128,128]{1,0} parameter(32)
+  %add.6722 = s32[128,128]{1,0} add(%param_32.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6721 = s32[128,128]{1,0} add(%add.6722, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6720 = s32[128,128]{1,0} add(%add.6723, %add.6721), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_31.6 = s32[128,128]{1,0} parameter(31)
+  %add.6719 = s32[128,128]{1,0} add(%param_31.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6718 = s32[128,128]{1,0} add(%add.6719, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6717 = s32[128,128]{1,0} add(%add.6720, %add.6718), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_30.6 = s32[128,128]{1,0} parameter(30)
+  %add.6716 = s32[128,128]{1,0} add(%param_30.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6715 = s32[128,128]{1,0} add(%add.6716, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6714 = s32[128,128]{1,0} add(%add.6717, %add.6715), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_29.6 = s32[128,128]{1,0} parameter(29)
+  %add.6713 = s32[128,128]{1,0} add(%param_29.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6712 = s32[128,128]{1,0} add(%add.6713, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6711 = s32[128,128]{1,0} add(%add.6714, %add.6712), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_28.6 = s32[128,128]{1,0} parameter(28)
+  %add.6710 = s32[128,128]{1,0} add(%param_28.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6709 = s32[128,128]{1,0} add(%add.6710, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6708 = s32[128,128]{1,0} add(%add.6711, %add.6709), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_27.6 = s32[128,128]{1,0} parameter(27)
+  %add.6707 = s32[128,128]{1,0} add(%param_27.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6706 = s32[128,128]{1,0} add(%add.6707, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6705 = s32[128,128]{1,0} add(%add.6708, %add.6706), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_26.6 = s32[128,128]{1,0} parameter(26)
+  %add.6704 = s32[128,128]{1,0} add(%param_26.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6703 = s32[128,128]{1,0} add(%add.6704, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6702 = s32[128,128]{1,0} add(%add.6705, %add.6703), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_25.6 = s32[128,128]{1,0} parameter(25)
+  %add.6701 = s32[128,128]{1,0} add(%param_25.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6700 = s32[128,128]{1,0} add(%add.6701, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6699 = s32[128,128]{1,0} add(%add.6702, %add.6700), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_24.6 = s32[128,128]{1,0} parameter(24)
+  %add.6698 = s32[128,128]{1,0} add(%param_24.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6697 = s32[128,128]{1,0} add(%add.6698, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6696 = s32[128,128]{1,0} add(%add.6699, %add.6697), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_23.6 = s32[128,128]{1,0} parameter(23)
+  %add.6695 = s32[128,128]{1,0} add(%param_23.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6694 = s32[128,128]{1,0} add(%add.6695, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6693 = s32[128,128]{1,0} add(%add.6696, %add.6694), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_22.6 = s32[128,128]{1,0} parameter(22)
+  %add.6692 = s32[128,128]{1,0} add(%param_22.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6691 = s32[128,128]{1,0} add(%add.6692, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6690 = s32[128,128]{1,0} add(%add.6693, %add.6691), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_21.6 = s32[128,128]{1,0} parameter(21)
+  %add.6689 = s32[128,128]{1,0} add(%param_21.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6688 = s32[128,128]{1,0} add(%add.6689, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6687 = s32[128,128]{1,0} add(%add.6690, %add.6688), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_20.6 = s32[128,128]{1,0} parameter(20)
+  %add.6686 = s32[128,128]{1,0} add(%param_20.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6685 = s32[128,128]{1,0} add(%add.6686, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6684 = s32[128,128]{1,0} add(%add.6687, %add.6685), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_19.6 = s32[128,128]{1,0} parameter(19)
+  %add.6683 = s32[128,128]{1,0} add(%param_19.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6682 = s32[128,128]{1,0} add(%add.6683, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6681 = s32[128,128]{1,0} add(%add.6684, %add.6682), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_18.6 = s32[128,128]{1,0} parameter(18)
+  %add.6680 = s32[128,128]{1,0} add(%param_18.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6679 = s32[128,128]{1,0} add(%add.6680, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6678 = s32[128,128]{1,0} add(%add.6681, %add.6679), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_17.6 = s32[128,128]{1,0} parameter(17)
+  %add.6677 = s32[128,128]{1,0} add(%param_17.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6676 = s32[128,128]{1,0} add(%add.6677, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6675 = s32[128,128]{1,0} add(%add.6678, %add.6676), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_16.6 = s32[128,128]{1,0} parameter(16)
+  %add.6674 = s32[128,128]{1,0} add(%param_16.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6673 = s32[128,128]{1,0} add(%add.6674, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6672 = s32[128,128]{1,0} add(%add.6675, %add.6673), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_15.6 = s32[128,128]{1,0} parameter(15)
+  %add.6671 = s32[128,128]{1,0} add(%param_15.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6670 = s32[128,128]{1,0} add(%add.6671, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6669 = s32[128,128]{1,0} add(%add.6672, %add.6670), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_14.6 = s32[128,128]{1,0} parameter(14)
+  %add.6668 = s32[128,128]{1,0} add(%param_14.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6667 = s32[128,128]{1,0} add(%add.6668, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6666 = s32[128,128]{1,0} add(%add.6669, %add.6667), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_13.6 = s32[128,128]{1,0} parameter(13)
+  %add.6665 = s32[128,128]{1,0} add(%param_13.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6664 = s32[128,128]{1,0} add(%add.6665, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6663 = s32[128,128]{1,0} add(%add.6666, %add.6664), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_12.6 = s32[128,128]{1,0} parameter(12)
+  %add.6662 = s32[128,128]{1,0} add(%param_12.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6661 = s32[128,128]{1,0} add(%add.6662, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6660 = s32[128,128]{1,0} add(%add.6663, %add.6661), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_11.6 = s32[128,128]{1,0} parameter(11)
+  %add.6659 = s32[128,128]{1,0} add(%param_11.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6658 = s32[128,128]{1,0} add(%add.6659, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6657 = s32[128,128]{1,0} add(%add.6660, %add.6658), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_10.6 = s32[128,128]{1,0} parameter(10)
+  %add.6656 = s32[128,128]{1,0} add(%param_10.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6655 = s32[128,128]{1,0} add(%add.6656, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6654 = s32[128,128]{1,0} add(%add.6657, %add.6655), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_9.6 = s32[128,128]{1,0} parameter(9)
+  %add.6653 = s32[128,128]{1,0} add(%param_9.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6652 = s32[128,128]{1,0} add(%add.6653, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6651 = s32[128,128]{1,0} add(%add.6654, %add.6652), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_8.6 = s32[128,128]{1,0} parameter(8)
+  %add.6650 = s32[128,128]{1,0} add(%param_8.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6649 = s32[128,128]{1,0} add(%add.6650, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6648 = s32[128,128]{1,0} add(%add.6651, %add.6649), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_7.6 = s32[128,128]{1,0} parameter(7)
+  %add.6647 = s32[128,128]{1,0} add(%param_7.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6646 = s32[128,128]{1,0} add(%add.6647, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6645 = s32[128,128]{1,0} add(%add.6648, %add.6646), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_6.6 = s32[128,128]{1,0} parameter(6)
+  %add.6644 = s32[128,128]{1,0} add(%param_6.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6643 = s32[128,128]{1,0} add(%add.6644, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6642 = s32[128,128]{1,0} add(%add.6645, %add.6643), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_5.6 = s32[128,128]{1,0} parameter(5)
+  %add.6641 = s32[128,128]{1,0} add(%param_5.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6640 = s32[128,128]{1,0} add(%add.6641, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6639 = s32[128,128]{1,0} add(%add.6642, %add.6640), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_4.6 = s32[128,128]{1,0} parameter(4)
+  %add.6638 = s32[128,128]{1,0} add(%param_4.6, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6637 = s32[128,128]{1,0} add(%add.6638, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6636 = s32[128,128]{1,0} add(%add.6639, %add.6637), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_3.4 = s32[128,128]{1,0} parameter(3)
+  %add.6635 = s32[128,128]{1,0} add(%param_3.4, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6634 = s32[128,128]{1,0} add(%add.6635, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6633 = s32[128,128]{1,0} add(%add.6636, %add.6634), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_2.4 = s32[128,128]{1,0} parameter(2)
+  %add.6632 = s32[128,128]{1,0} add(%param_2.4, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6631 = s32[128,128]{1,0} add(%add.6632, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6630 = s32[128,128]{1,0} add(%add.6633, %add.6631), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_1.5 = s32[128,128]{1,0} parameter(1)
+  %add.6629 = s32[128,128]{1,0} add(%param_1.5, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6628 = s32[128,128]{1,0} add(%add.6629, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6627 = s32[128,128]{1,0} add(%add.6630, %add.6628), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+  %param_0.2 = s32[128,128]{1,0} parameter(0)
+  %add.6626 = s32[128,128]{1,0} add(%param_0.2, %broadcast.20610), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  %add.6625 = s32[128,128]{1,0} add(%add.6626, %broadcast.20608), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=17}
+  ROOT %add.6624 = s32[128,128]{1,0} add(%add.6627, %add.6625), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}
+}
+
+%wrapped_add_computation (param_0.6: s32[], param_1.11: s32[]) -> s32[] {
+  %param_0.6 = s32[] parameter(0)
+  %param_1.11 = s32[] parameter(1)
+  ROOT %add.7227 = s32[] add(%param_0.6, %param_1.11), metadata={op_name="jit(test_rematerialization_patterns)/while/body/add" stack_frame_id=3}
+}
+
+%wide.region_0.4.clone.clone.sunk.clone (wide.arg_tuple.3: (s32[], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=5*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=10*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=15*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=20*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=25*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=30*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=35*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=40*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=45*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=50*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=55*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=60*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=65*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=70*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=75*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=80*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=85*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=90*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=95*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=100*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=105*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=110*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=115*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=120*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=125*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=130*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=135*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=140*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=145*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=150*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=155*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=160*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=165*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=170*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=175*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=180*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=185*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=190*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=195*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=200*/s32[128,128], s32[128,128])) -> (s32[], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=5*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=10*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=15*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=20*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=25*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=30*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=35*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=40*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=45*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=50*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=55*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=60*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=65*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=70*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=75*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=80*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=85*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=90*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=95*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=100*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=105*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=110*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=115*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=120*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=125*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=130*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=135*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=140*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=145*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=150*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=155*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=160*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=165*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=170*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=175*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=180*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=185*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=190*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=195*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=200*/s32[128,128], s32[128,128]) {
+  %wide.arg_tuple.3 = (s32[], s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=5*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=10*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=15*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=20*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=25*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=30*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=35*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=40*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=45*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=50*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=55*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=60*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=65*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=70*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=75*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=80*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=85*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=90*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=95*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=100*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=105*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=110*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=115*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=120*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=125*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=130*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=135*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=140*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=145*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=150*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=155*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=160*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=165*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=170*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=175*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=180*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=185*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=190*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=195*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=200*/s32[128,128]{1,0}, s32[128,128]{1,0}) parameter(0)
+  %constant.8051 = s32[] constant(1)
+  %constant.8052 = s32[7]{0} constant({0, 1, 0, 1, 2, 0, 2})
+  %get-tuple-element.3061 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=201
+  %get-tuple-element.3060 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=200
+  %get-tuple-element.3059 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=199
+  %get-tuple-element.3058 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=198
+  %get-tuple-element.3057 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=197
+  %get-tuple-element.3056 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=196
+  %get-tuple-element.3055 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=195
+  %get-tuple-element.3054 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=194
+  %get-tuple-element.3053 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=193
+  %get-tuple-element.3052 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=192
+  %get-tuple-element.3051 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=191
+  %get-tuple-element.3050 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=190
+  %get-tuple-element.3049 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=189
+  %get-tuple-element.3048 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=188
+  %get-tuple-element.3047 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=187
+  %get-tuple-element.3046 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=186
+  %get-tuple-element.3045 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=185
+  %get-tuple-element.3044 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=184
+  %get-tuple-element.3043 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=183
+  %get-tuple-element.3042 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=182
+  %get-tuple-element.3041 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=181
+  %get-tuple-element.3040 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=180
+  %get-tuple-element.3039 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=179
+  %get-tuple-element.3038 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=178
+  %get-tuple-element.3037 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=177
+  %get-tuple-element.3036 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=176
+  %get-tuple-element.3035 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=175
+  %get-tuple-element.3034 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=174
+  %get-tuple-element.3033 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=173
+  %get-tuple-element.3032 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=172
+  %get-tuple-element.3031 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=171
+  %get-tuple-element.3030 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=170
+  %get-tuple-element.3029 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=169
+  %get-tuple-element.3028 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=168
+  %get-tuple-element.3027 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=167
+  %get-tuple-element.3026 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=166
+  %get-tuple-element.3025 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=165
+  %get-tuple-element.3024 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=164
+  %get-tuple-element.3023 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=163
+  %get-tuple-element.3022 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=162
+  %get-tuple-element.3021 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=161
+  %get-tuple-element.3020 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=160
+  %get-tuple-element.3019 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=159
+  %get-tuple-element.3018 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=158
+  %get-tuple-element.3017 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=157
+  %get-tuple-element.3016 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=156
+  %get-tuple-element.3015 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=155
+  %get-tuple-element.3014 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=154
+  %get-tuple-element.3013 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=153
+  %get-tuple-element.3012 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=152
+  %get-tuple-element.3011 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=151
+  %get-tuple-element.3010 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=150
+  %get-tuple-element.3009 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=149
+  %get-tuple-element.3008 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=148
+  %get-tuple-element.3007 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=147
+  %get-tuple-element.3006 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=146
+  %get-tuple-element.3005 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=145
+  %get-tuple-element.3004 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=144
+  %get-tuple-element.3003 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=143
+  %get-tuple-element.3002 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=142
+  %get-tuple-element.3001 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=141
+  %get-tuple-element.3000 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=140
+  %get-tuple-element.2999 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=139
+  %get-tuple-element.2998 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=138
+  %get-tuple-element.2997 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=137
+  %get-tuple-element.2996 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=136
+  %get-tuple-element.2995 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=135
+  %get-tuple-element.2994 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=134
+  %get-tuple-element.2993 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=133
+  %get-tuple-element.2992 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=132
+  %get-tuple-element.2991 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=131
+  %get-tuple-element.2990 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=130
+  %get-tuple-element.2989 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=129
+  %get-tuple-element.2988 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=128
+  %get-tuple-element.2987 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=127
+  %get-tuple-element.2986 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=126
+  %get-tuple-element.2985 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=125
+  %get-tuple-element.2984 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=124
+  %get-tuple-element.2983 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=123
+  %get-tuple-element.2982 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=122
+  %get-tuple-element.2981 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=121
+  %get-tuple-element.2980 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=120
+  %get-tuple-element.2979 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=119
+  %get-tuple-element.2978 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=118
+  %get-tuple-element.2977 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=117
+  %get-tuple-element.2976 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=116
+  %get-tuple-element.2975 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=115
+  %get-tuple-element.2974 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=114
+  %get-tuple-element.2973 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=113
+  %get-tuple-element.2972 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=112
+  %get-tuple-element.2971 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=111
+  %get-tuple-element.2970 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=110
+  %get-tuple-element.2969 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=109
+  %get-tuple-element.2968 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=108
+  %get-tuple-element.2967 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=107
+  %get-tuple-element.2966 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=106
+  %get-tuple-element.2965 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=105
+  %get-tuple-element.2964 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=104
+  %get-tuple-element.2963 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=103
+  %get-tuple-element.2962 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=102
+  %get-tuple-element.2961 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=101
+  %get-tuple-element.2960 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=100
+  %get-tuple-element.2959 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=99
+  %get-tuple-element.2958 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=98
+  %get-tuple-element.2957 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=97
+  %get-tuple-element.2956 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=96
+  %get-tuple-element.2955 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=95
+  %get-tuple-element.2954 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=94
+  %get-tuple-element.2953 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=93
+  %get-tuple-element.2952 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=92
+  %get-tuple-element.2951 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=91
+  %get-tuple-element.2950 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=90
+  %get-tuple-element.2949 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=89
+  %get-tuple-element.2948 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=88
+  %get-tuple-element.2947 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=87
+  %get-tuple-element.2946 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=86
+  %get-tuple-element.2945 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=85
+  %get-tuple-element.2944 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=84
+  %get-tuple-element.2943 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=83
+  %get-tuple-element.2942 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=82
+  %get-tuple-element.2941 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=81
+  %get-tuple-element.2940 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=80
+  %get-tuple-element.2939 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=79
+  %get-tuple-element.2938 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=78
+  %get-tuple-element.2937 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=77
+  %get-tuple-element.2936 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=76
+  %get-tuple-element.2935 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=75
+  %get-tuple-element.2934 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=74
+  %get-tuple-element.2933 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=73
+  %get-tuple-element.2932 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=72
+  %get-tuple-element.2931 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=71
+  %get-tuple-element.2930 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=70
+  %get-tuple-element.2929 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=69
+  %get-tuple-element.2928 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=68
+  %get-tuple-element.2927 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=67
+  %get-tuple-element.2926 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=66
+  %get-tuple-element.2925 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=65
+  %get-tuple-element.2924 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=64
+  %get-tuple-element.2923 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=63
+  %get-tuple-element.2922 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=62
+  %get-tuple-element.2921 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=61
+  %get-tuple-element.2920 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=60
+  %get-tuple-element.2919 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=59
+  %get-tuple-element.2918 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=58
+  %get-tuple-element.2917 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=57
+  %get-tuple-element.2916 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=56
+  %get-tuple-element.2915 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=55
+  %get-tuple-element.2914 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=54
+  %get-tuple-element.2913 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=53
+  %get-tuple-element.2912 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=52
+  %get-tuple-element.2911 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=51
+  %get-tuple-element.2910 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=50
+  %get-tuple-element.2909 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=49
+  %get-tuple-element.2908 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=48
+  %get-tuple-element.2907 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=47
+  %get-tuple-element.2906 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=46
+  %get-tuple-element.2905 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=45
+  %get-tuple-element.2904 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=44
+  %get-tuple-element.2903 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=43
+  %get-tuple-element.2902 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=42
+  %get-tuple-element.2901 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=41
+  %get-tuple-element.2900 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=40
+  %get-tuple-element.2899 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=39
+  %get-tuple-element.2898 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=38
+  %get-tuple-element.2897 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=37
+  %get-tuple-element.2896 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=36
+  %get-tuple-element.2895 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=35
+  %get-tuple-element.2894 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=34
+  %get-tuple-element.2893 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=33
+  %get-tuple-element.2892 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=32
+  %get-tuple-element.2891 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=31
+  %get-tuple-element.2890 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=30
+  %get-tuple-element.2889 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=29
+  %get-tuple-element.2888 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=28
+  %get-tuple-element.2887 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=27
+  %get-tuple-element.2886 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=26
+  %get-tuple-element.2885 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=25
+  %get-tuple-element.2884 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=24
+  %get-tuple-element.2883 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=23
+  %get-tuple-element.2882 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=22
+  %get-tuple-element.2881 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=21
+  %get-tuple-element.2880 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=20
+  %get-tuple-element.2879 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=19
+  %get-tuple-element.2878 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=18
+  %get-tuple-element.2877 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=17
+  %get-tuple-element.2876 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=16
+  %get-tuple-element.2875 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=15
+  %get-tuple-element.2874 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=14
+  %get-tuple-element.2873 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=13
+  %get-tuple-element.2872 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=12
+  %get-tuple-element.2871 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=11
+  %get-tuple-element.2870 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=10
+  %get-tuple-element.2869 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=9
+  %get-tuple-element.2868 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=8
+  %get-tuple-element.2867 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=7
+  %get-tuple-element.2866 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=6
+  %get-tuple-element.2865 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=5
+  %get-tuple-element.2864 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=4
+  %get-tuple-element.2863 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=3
+  %get-tuple-element.2862 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=2
+  %get-tuple-element.2659 = s32[128,128]{1,0} get-tuple-element(%wide.arg_tuple.3), index=1
+  %get-tuple-element.2658 = s32[] get-tuple-element(%wide.arg_tuple.3), index=0
+  %copy.2 = s32[] copy(%get-tuple-element.2658)
+  %wrapped_add = s32[] fusion(%copy.2, %constant.8051), kind=kLoop, calls=%wrapped_add_computation, metadata={op_name="jit(test_rematerialization_patterns)/while/body/add" stack_frame_id=3}
+  %add_add_fusion = s32[128,128]{1,0} fusion(%get-tuple-element.3061, %get-tuple-element.3060, %get-tuple-element.3059, %get-tuple-element.3058, %get-tuple-element.3057, /*index=5*/%get-tuple-element.3056, %get-tuple-element.3055, %get-tuple-element.3054, %get-tuple-element.3053, %get-tuple-element.3052, /*index=10*/%get-tuple-element.3051, %get-tuple-element.3050, %get-tuple-element.3049, %get-tuple-element.3048, %get-tuple-element.3047, /*index=15*/%get-tuple-element.3046, %get-tuple-element.3045, %get-tuple-element.3044, %get-tuple-element.3043, %get-tuple-element.3042, /*index=20*/%get-tuple-element.3041, %get-tuple-element.3040, %get-tuple-element.3039, %get-tuple-element.3038, %get-tuple-element.3037, /*index=25*/%get-tuple-element.3036, %get-tuple-element.3035, %get-tuple-element.3034, %get-tuple-element.3033, %get-tuple-element.3032, /*index=30*/%get-tuple-element.3031, %get-tuple-element.3030, %get-tuple-element.3029, %get-tuple-element.3028, %get-tuple-element.3027, /*index=35*/%get-tuple-element.3026, %get-tuple-element.3025, %get-tuple-element.3024, %get-tuple-element.3023, %get-tuple-element.3022, /*index=40*/%get-tuple-element.3021, %get-tuple-element.3020, %get-tuple-element.3019, %get-tuple-element.3018, %get-tuple-element.3017, /*index=45*/%get-tuple-element.3016, %get-tuple-element.3015, %get-tuple-element.3014, %get-tuple-element.3013, %get-tuple-element.3012, /*index=50*/%get-tuple-element.3011, %get-tuple-element.3010, %get-tuple-element.3009, %get-tuple-element.3008, %get-tuple-element.3007, /*index=55*/%get-tuple-element.3006, %get-tuple-element.3005, %get-tuple-element.3004, %get-tuple-element.3003, %get-tuple-element.3002, /*index=60*/%get-tuple-element.3001, %get-tuple-element.3000, %get-tuple-element.2999, %get-tuple-element.2998, %get-tuple-element.2997, /*index=65*/%get-tuple-element.2996, %get-tuple-element.2995, %get-tuple-element.2994, %get-tuple-element.2993, %get-tuple-element.2992, /*index=70*/%get-tuple-element.2991, %get-tuple-element.2990, %get-tuple-element.2989, %get-tuple-element.2988, %get-tuple-element.2987, /*index=75*/%get-tuple-element.2986, %get-tuple-element.2985, %get-tuple-element.2984, %get-tuple-element.2983, %get-tuple-element.2982, /*index=80*/%get-tuple-element.2981, %get-tuple-element.2980, %get-tuple-element.2979, %get-tuple-element.2978, %get-tuple-element.2977, /*index=85*/%get-tuple-element.2976, %get-tuple-element.2975, %get-tuple-element.2974, %get-tuple-element.2973, %get-tuple-element.2972, /*index=90*/%get-tuple-element.2971, %get-tuple-element.2970, %get-tuple-element.2969, %get-tuple-element.2968, %get-tuple-element.2967, /*index=95*/%get-tuple-element.2966, %get-tuple-element.2965, %get-tuple-element.2964, %get-tuple-element.2963, %get-tuple-element.2962, /*index=100*/%get-tuple-element.2961, %get-tuple-element.2960, %get-tuple-element.2959, %get-tuple-element.2958, %get-tuple-element.2957, /*index=105*/%get-tuple-element.2956, %get-tuple-element.2955, %get-tuple-element.2954, %get-tuple-element.2953, %get-tuple-element.2952, /*index=110*/%get-tuple-element.2951, %get-tuple-element.2950, %get-tuple-element.2949, %get-tuple-element.2948, %get-tuple-element.2947, /*index=115*/%get-tuple-element.2946, %get-tuple-element.2945, %get-tuple-element.2944, %get-tuple-element.2943, %get-tuple-element.2942, /*index=120*/%get-tuple-element.2941, %get-tuple-element.2940, %get-tuple-element.2939, %get-tuple-element.2938, %get-tuple-element.2937, /*index=125*/%get-tuple-element.2936, %get-tuple-element.2935, %get-tuple-element.2934, %get-tuple-element.2933, %get-tuple-element.2932, /*index=130*/%get-tuple-element.2931, %get-tuple-element.2930, %get-tuple-element.2929, %get-tuple-element.2928, %get-tuple-element.2927, /*index=135*/%get-tuple-element.2926, %get-tuple-element.2925, %get-tuple-element.2924, %get-tuple-element.2923, %get-tuple-element.2922, /*index=140*/%get-tuple-element.2921, %get-tuple-element.2920, %get-tuple-element.2919, %get-tuple-element.2918, %get-tuple-element.2917, /*index=145*/%get-tuple-element.2916, %get-tuple-element.2915, %get-tuple-element.2914, %get-tuple-element.2913, %get-tuple-element.2912, /*index=150*/%get-tuple-element.2911, %get-tuple-element.2910, %get-tuple-element.2909, %get-tuple-element.2908, %get-tuple-element.2907, /*index=155*/%get-tuple-element.2906, %get-tuple-element.2905, %get-tuple-element.2904, %get-tuple-element.2903, %get-tuple-element.2902, /*index=160*/%get-tuple-element.2901, %get-tuple-element.2900, %get-tuple-element.2899, %get-tuple-element.2898, %get-tuple-element.2897, /*index=165*/%get-tuple-element.2896, %get-tuple-element.2895, %get-tuple-element.2894, %get-tuple-element.2893, %get-tuple-element.2892, /*index=170*/%get-tuple-element.2891, %get-tuple-element.2890, %get-tuple-element.2889, %get-tuple-element.2888, %get-tuple-element.2887, /*index=175*/%get-tuple-element.2886, %get-tuple-element.2885, %get-tuple-element.2884, %get-tuple-element.2883, %get-tuple-element.2882, /*index=180*/%get-tuple-element.2881, %get-tuple-element.2880, %get-tuple-element.2879, %get-tuple-element.2878, %get-tuple-element.2877, /*index=185*/%get-tuple-element.2876, %get-tuple-element.2875, %get-tuple-element.2874, %get-tuple-element.2873, %get-tuple-element.2872, /*index=190*/%get-tuple-element.2871, %get-tuple-element.2870, %get-tuple-element.2869, %get-tuple-element.2868, %get-tuple-element.2867, /*index=195*/%get-tuple-element.2866, %get-tuple-element.2865, %get-tuple-element.2864, %get-tuple-element.2863, %get-tuple-element.2659, /*index=200*/%get-tuple-element.2862, %constant.8052, %copy.2), kind=kLoop, calls=%fused_computation, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=18}, backend_config={"outer_dimension_partitions":["4"]}
+  ROOT %tuple.19 = (s32[], s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=5*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=10*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=15*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=20*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=25*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=30*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=35*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=40*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=45*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=50*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=55*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=60*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=65*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=70*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=75*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=80*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=85*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=90*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=95*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=100*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=105*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=110*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=115*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=120*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=125*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=130*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=135*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=140*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=145*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=150*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=155*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=160*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=165*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=170*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=175*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=180*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=185*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=190*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=195*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=200*/s32[128,128]{1,0}, s32[128,128]{1,0}) tuple(%wrapped_add, %add_add_fusion, %get-tuple-element.2862, %get-tuple-element.2863, %get-tuple-element.2864, /*index=5*/%get-tuple-element.2865, %get-tuple-element.2866, %get-tuple-element.2867, %get-tuple-element.2868, %get-tuple-element.2869, /*index=10*/%get-tuple-element.2870, %get-tuple-element.2871, %get-tuple-element.2872, %get-tuple-element.2873, %get-tuple-element.2874, /*index=15*/%get-tuple-element.2875, %get-tuple-element.2876, %get-tuple-element.2877, %get-tuple-element.2878, %get-tuple-element.2879, /*index=20*/%get-tuple-element.2880, %get-tuple-element.2881, %get-tuple-element.2882, %get-tuple-element.2883, %get-tuple-element.2884, /*index=25*/%get-tuple-element.2885, %get-tuple-element.2886, %get-tuple-element.2887, %get-tuple-element.2888, %get-tuple-element.2889, /*index=30*/%get-tuple-element.2890, %get-tuple-element.2891, %get-tuple-element.2892, %get-tuple-element.2893, %get-tuple-element.2894, /*index=35*/%get-tuple-element.2895, %get-tuple-element.2896, %get-tuple-element.2897, %get-tuple-element.2898, %get-tuple-element.2899, /*index=40*/%get-tuple-element.2900, %get-tuple-element.2901, %get-tuple-element.2902, %get-tuple-element.2903, %get-tuple-element.2904, /*index=45*/%get-tuple-element.2905, %get-tuple-element.2906, %get-tuple-element.2907, %get-tuple-element.2908, %get-tuple-element.2909, /*index=50*/%get-tuple-element.2910, %get-tuple-element.2911, %get-tuple-element.2912, %get-tuple-element.2913, %get-tuple-element.2914, /*index=55*/%get-tuple-element.2915, %get-tuple-element.2916, %get-tuple-element.2917, %get-tuple-element.2918, %get-tuple-element.2919, /*index=60*/%get-tuple-element.2920, %get-tuple-element.2921, %get-tuple-element.2922, %get-tuple-element.2923, %get-tuple-element.2924, /*index=65*/%get-tuple-element.2925, %get-tuple-element.2926, %get-tuple-element.2927, %get-tuple-element.2928, %get-tuple-element.2929, /*index=70*/%get-tuple-element.2930, %get-tuple-element.2931, %get-tuple-element.2932, %get-tuple-element.2933, %get-tuple-element.2934, /*index=75*/%get-tuple-element.2935, %get-tuple-element.2936, %get-tuple-element.2937, %get-tuple-element.2938, %get-tuple-element.2939, /*index=80*/%get-tuple-element.2940, %get-tuple-element.2941, %get-tuple-element.2942, %get-tuple-element.2943, %get-tuple-element.2944, /*index=85*/%get-tuple-element.2945, %get-tuple-element.2946, %get-tuple-element.2947, %get-tuple-element.2948, %get-tuple-element.2949, /*index=90*/%get-tuple-element.2950, %get-tuple-element.2951, %get-tuple-element.2952, %get-tuple-element.2953, %get-tuple-element.2954, /*index=95*/%get-tuple-element.2955, %get-tuple-element.2956, %get-tuple-element.2957, %get-tuple-element.2958, %get-tuple-element.2959, /*index=100*/%get-tuple-element.2960, %get-tuple-element.2961, %get-tuple-element.2962, %get-tuple-element.2963, %get-tuple-element.2964, /*index=105*/%get-tuple-element.2965, %get-tuple-element.2966, %get-tuple-element.2967, %get-tuple-element.2968, %get-tuple-element.2969, /*index=110*/%get-tuple-element.2970, %get-tuple-element.2971, %get-tuple-element.2972, %get-tuple-element.2973, %get-tuple-element.2974, /*index=115*/%get-tuple-element.2975, %get-tuple-element.2976, %get-tuple-element.2977, %get-tuple-element.2978, %get-tuple-element.2979, /*index=120*/%get-tuple-element.2980, %get-tuple-element.2981, %get-tuple-element.2982, %get-tuple-element.2983, %get-tuple-element.2984, /*index=125*/%get-tuple-element.2985, %get-tuple-element.2986, %get-tuple-element.2987, %get-tuple-element.2988, %get-tuple-element.2989, /*index=130*/%get-tuple-element.2990, %get-tuple-element.2991, %get-tuple-element.2992, %get-tuple-element.2993, %get-tuple-element.2994, /*index=135*/%get-tuple-element.2995, %get-tuple-element.2996, %get-tuple-element.2997, %get-tuple-element.2998, %get-tuple-element.2999, /*index=140*/%get-tuple-element.3000, %get-tuple-element.3001, %get-tuple-element.3002, %get-tuple-element.3003, %get-tuple-element.3004, /*index=145*/%get-tuple-element.3005, %get-tuple-element.3006, %get-tuple-element.3007, %get-tuple-element.3008, %get-tuple-element.3009, /*index=150*/%get-tuple-element.3010, %get-tuple-element.3011, %get-tuple-element.3012, %get-tuple-element.3013, %get-tuple-element.3014, /*index=155*/%get-tuple-element.3015, %get-tuple-element.3016, %get-tuple-element.3017, %get-tuple-element.3018, %get-tuple-element.3019, /*index=160*/%get-tuple-element.3020, %get-tuple-element.3021, %get-tuple-element.3022, %get-tuple-element.3023, %get-tuple-element.3024, /*index=165*/%get-tuple-element.3025, %get-tuple-element.3026, %get-tuple-element.3027, %get-tuple-element.3028, %get-tuple-element.3029, /*index=170*/%get-tuple-element.3030, %get-tuple-element.3031, %get-tuple-element.3032, %get-tuple-element.3033, %get-tuple-element.3034, /*index=175*/%get-tuple-element.3035, %get-tuple-element.3036, %get-tuple-element.3037, %get-tuple-element.3038, %get-tuple-element.3039, /*index=180*/%get-tuple-element.3040, %get-tuple-element.3041, %get-tuple-element.3042, %get-tuple-element.3043, %get-tuple-element.3044, /*index=185*/%get-tuple-element.3045, %get-tuple-element.3046, %get-tuple-element.3047, %get-tuple-element.3048, %get-tuple-element.3049, /*index=190*/%get-tuple-element.3050, %get-tuple-element.3051, %get-tuple-element.3052, %get-tuple-element.3053, %get-tuple-element.3054, /*index=195*/%get-tuple-element.3055, %get-tuple-element.3056, %get-tuple-element.3057, %get-tuple-element.3058, %get-tuple-element.3059, /*index=200*/%get-tuple-element.3060, %get-tuple-element.3061)
+}
+
+%wrapped_compare_computation (param_0.7: s32[], param_1.12: s32[]) -> pred[] {
+  %param_0.7 = s32[] parameter(0)
+  %param_1.12 = s32[] parameter(1)
+  ROOT %lt.12 = pred[] compare(%param_0.7, %param_1.12), direction=LT, metadata={op_name="jit(test_rematerialization_patterns)/while/cond/lt" stack_frame_id=3}
+}
+
+%wide.region_1.5.clone.clone (wide.arg_tuple.1: (s32[], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=5*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=10*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=15*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=20*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=25*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=30*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=35*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=40*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=45*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=50*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=55*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=60*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=65*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=70*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=75*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=80*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=85*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=90*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=95*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=100*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=105*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=110*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=115*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=120*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=125*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=130*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=135*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=140*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=145*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=150*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=155*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=160*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=165*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=170*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=175*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=180*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=185*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=190*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=195*/s32[128,128], s32[128,128], s32[128,128], s32[128,128], s32[128,128], /*index=200*/s32[128,128], s32[128,128])) -> pred[] {
+  %wide.arg_tuple.1 = (s32[], s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=5*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=10*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=15*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=20*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=25*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=30*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=35*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=40*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=45*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=50*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=55*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=60*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=65*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=70*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=75*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=80*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=85*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=90*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=95*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=100*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=105*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=110*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=115*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=120*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=125*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=130*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=135*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=140*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=145*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=150*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=155*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=160*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=165*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=170*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=175*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=180*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=185*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=190*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=195*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=200*/s32[128,128]{1,0}, s32[128,128]{1,0}) parameter(0)
+  %constant.8050 = s32[] constant(7)
+  %get-tuple-element.50 = s32[] get-tuple-element(%wide.arg_tuple.1), index=0
+  ROOT %wrapped_compare = pred[] fusion(%get-tuple-element.50, %constant.8050), kind=kLoop, calls=%wrapped_compare_computation, metadata={op_name="jit(test_rematerialization_patterns)/while/cond/lt" stack_frame_id=3}
+}
+
+%fused_computation.1 () -> s32[128,128] {
+  %iota.4602 = s32[128,128]{1,0} iota(), iota_dimension=0, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=6}
+  %iota.4601 = s32[128]{0} iota(), iota_dimension=0, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=8}
+  %sign.2600 = s32[128]{0} sign(%iota.4601), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/sign" stack_frame_id=9}
+  %constant.8064 = s32[] constant(1), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/sign" stack_frame_id=9}
+  %broadcast.20621 = s32[128]{0} broadcast(%constant.8064), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/ne" stack_frame_id=9}
+  %ne.4401 = pred[128]{0} compare(%sign.2600, %broadcast.20621), direction=NE, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/ne" stack_frame_id=9}
+  %constant.8063 = s32[] constant(127), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/rem" stack_frame_id=9}
+  %broadcast.20620 = s32[128]{0} broadcast(%constant.8063), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/rem" stack_frame_id=9}
+  %and.4402 = s32[128]{0} and(%iota.4601, %broadcast.20620), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/rem" stack_frame_id=9}
+  %constant.8065 = s32[] constant(0)
+  %broadcast.20619 = s32[128]{0} broadcast(%constant.8065), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/ne" stack_frame_id=9}
+  %ne.4400 = pred[128]{0} compare(%and.4402, %broadcast.20619), direction=NE, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/ne" stack_frame_id=9}
+  %and.4401 = pred[128]{0} and(%ne.4401, %ne.4400), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/and" stack_frame_id=9}
+  %broadcast.20618 = pred[128,128]{1,0} broadcast(%and.4401), dimensions={1}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=8}
+  %constant.8062 = s32[] constant(7), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/div" stack_frame_id=9}
+  %broadcast.20617 = s32[128]{0} broadcast(%constant.8062), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/div" stack_frame_id=9}
+  %shift-right-logical.1200 = s32[128]{0} shift-right-logical(%iota.4601, %broadcast.20617), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/div" stack_frame_id=9}
+  %constant.8061 = s32[] constant(-1), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)"}
+  %broadcast.20616 = s32[128]{0} broadcast(%constant.8061), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)"}
+  %add.7226 = s32[128]{0} add(%shift-right-logical.1200, %broadcast.20616), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/sub" stack_frame_id=9}
+  %broadcast.20615 = s32[128,128]{1,0} broadcast(%add.7226), dimensions={1}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=8}
+  %broadcast.20614 = s32[128,128]{1,0} broadcast(%shift-right-logical.1200), dimensions={1}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/iota" stack_frame_id=8}
+  %select_n.1608 = s32[128,128]{1,0} select(%broadcast.20618, %broadcast.20615, %broadcast.20614), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/jit(floor_divide)/jit(_where)/select_n" stack_frame_id=9}
+  %constant.8060 = s32[] constant(16), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call"}
+  %broadcast.20613 = s32[128,128]{1,0} broadcast(%constant.8060), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call"}
+  %mul.1200 = s32[128,128]{1,0} multiply(%select_n.1608, %broadcast.20613), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/mul" stack_frame_id=10}
+  ROOT %add.7225 = s32[128,128]{1,0} add(%iota.4602, %mul.1200), metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=11}
+}
+
+%wrapped_broadcast_computation (param_0.5: s32[]) -> s32[128,128] {
+  %param_0.5 = s32[] parameter(0)
+  ROOT %broadcast_in_dim.0 = s32[128,128]{1,0} broadcast(%param_0.5), dimensions={}, metadata={op_name="jit(test_rematerialization_patterns)/broadcast_in_dim" stack_frame_id=2}
+}
+
+%region_2.6 (reduce_sum.3: s32[], reduce_sum.4: s32[]) -> s32[] {
+  %reduce_sum.3 = s32[] parameter(0), metadata={op_name="reduce_sum"}
+  %reduce_sum.4 = s32[] parameter(1), metadata={op_name="reduce_sum"}
+  ROOT %reduce_sum.5 = s32[] add(%reduce_sum.3, %reduce_sum.4), metadata={op_name="jit(test_rematerialization_patterns)/reduce_sum" stack_frame_id=19}
+}
+
+%wrapped_reduce-window_computation (param_0.8: s32[128,128], param_1.13: s32[]) -> s32[4,4] {
+  %param_0.8 = s32[128,128]{1,0} parameter(0)
+  %param_1.13 = s32[] parameter(1)
+  ROOT %reduce-window.1 = s32[4,4]{1,0} reduce-window(%param_0.8, %param_1.13), window={size=32x32 stride=32x32}, to_apply=%region_2.6
+}
+
+%region_2.6.clone (reduce_sum.0: s32[], reduce_sum.1: s32[]) -> s32[] {
+  %reduce_sum.0 = s32[] parameter(0), metadata={op_name="reduce_sum"}
+  %reduce_sum.1 = s32[] parameter(1), metadata={op_name="reduce_sum"}
+  ROOT %reduce_sum.2 = s32[] add(%reduce_sum.0, %reduce_sum.1), metadata={op_name="jit(test_rematerialization_patterns)/reduce_sum" stack_frame_id=19}
+}
+
+%wrapped_reduce_computation (param_0.9: s32[4,4], param_1.14: s32[]) -> s32[] {
+  %param_0.9 = s32[4,4]{1,0} parameter(0)
+  %param_1.14 = s32[] parameter(1)
+  ROOT %reduce_sum.6 = s32[] reduce(%param_0.9, %param_1.14), dimensions={0,1}, to_apply=%region_2.6.clone, metadata={op_name="jit(test_rematerialization_patterns)/reduce_sum" stack_frame_id=19}
+}
+
+ENTRY %main.7 () -> s32[] {
+  %constant.24 = s32[] constant(0)
+  %multiply_add_fusion = s32[128,128]{1,0} fusion(), kind=kLoop, calls=%fused_computation.1, metadata={op_name="jit(test_rematerialization_patterns)/while/body/closed_call/add" stack_frame_id=11}
+  %copy = s32[] copy(%constant.24)
+  %wrapped_broadcast = s32[128,128]{1,0} fusion(%constant.24), kind=kLoop, calls=%wrapped_broadcast_computation, metadata={op_name="jit(test_rematerialization_patterns)/broadcast_in_dim" stack_frame_id=2}
+  %tuple.17 = (s32[], s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=5*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=10*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=15*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=20*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=25*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=30*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=35*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=40*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=45*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=50*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=55*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=60*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=65*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=70*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=75*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=80*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=85*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=90*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=95*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=100*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=105*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=110*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=115*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=120*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=125*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=130*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=135*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=140*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=145*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=150*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=155*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=160*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=165*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=170*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=175*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=180*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=185*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=190*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=195*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=200*/s32[128,128]{1,0}, s32[128,128]{1,0}) tuple(%copy, %wrapped_broadcast, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=5*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=10*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=15*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=20*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=25*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=30*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=35*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=40*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=45*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=50*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=55*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=60*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=65*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=70*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=75*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=80*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=85*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=90*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=95*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=100*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=105*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=110*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=115*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=120*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=125*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=130*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=135*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=140*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=145*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=150*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=155*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=160*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=165*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=170*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=175*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=180*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=185*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=190*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=195*/%multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, %multiply_add_fusion, /*index=200*/%multiply_add_fusion, %multiply_add_fusion)
+  %while.2 = (s32[], s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=5*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=10*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=15*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=20*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=25*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=30*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=35*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=40*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=45*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=50*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=55*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=60*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=65*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=70*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=75*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=80*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=85*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=90*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=95*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=100*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=105*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=110*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=115*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=120*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=125*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=130*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=135*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=140*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=145*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=150*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=155*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=160*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=165*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=170*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=175*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=180*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=185*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=190*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=195*/s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, s32[128,128]{1,0}, /*index=200*/s32[128,128]{1,0}, s32[128,128]{1,0}) while(%tuple.17), condition=%wide.region_1.5.clone.clone, body=%wide.region_0.4.clone.clone.sunk.clone, metadata={op_name="jit(test_rematerialization_patterns)/while" stack_frame_id=3}, backend_config={"known_trip_count":{"n":"7"},"known_init_step":{"init":"0","step":"1"},"known_induction_variable":{"tuple_index":"0"},"dynamic_variable_tuple_indices":[]}
+  %while.9 = s32[128,128]{1,0} get-tuple-element(%while.2), index=1, metadata={op_name="jit(test_rematerialization_patterns)/while" stack_frame_id=3}
+  %wrapped_reduce-window = s32[4,4]{1,0} fusion(%while.9, %constant.24), kind=kLoop, calls=%wrapped_reduce-window_computation
+  ROOT %wrapped_reduce = s32[] fusion(%wrapped_reduce-window, %constant.24), kind=kLoop, calls=%wrapped_reduce_computation, metadata={op_name="jit(test_rematerialization_patterns)/reduce_sum" stack_frame_id=19}
+}
+
