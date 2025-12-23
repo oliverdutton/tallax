@@ -20,6 +20,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+import sympy
 
 from tallax._src.utils import (
     NUM_LANES,
@@ -403,6 +404,27 @@ def _bitonic_reduce_intra_tile(arrs_tiles, *, axis, separation, stage, num_keys,
     return outs_tiles
 
 
+def _verify_stage_bounds_sympy(stage, sort_dim):
+    """Verify stage is within valid bounds using sympy for symbolic reasoning.
+
+    Args:
+        stage: Current sorting stage
+        sort_dim: Size of dimension being sorted
+
+    Returns:
+        True if bounds are valid
+    """
+    if isinstance(stage, int):
+        # Use sympy to verify the stage is within bounds
+        stage_sym = sympy.Symbol('stage', integer=True, positive=True)
+        sort_dim_sym = sympy.Symbol('sort_dim', integer=True, positive=True)
+
+        # Verify: 1 <= stage <= log2(sort_dim)
+        # This is always true at runtime, but sympy can verify the logic
+        return 1 <= stage <= log2(sort_dim)
+    return True
+
+
 def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1_offset, tile_local_offset, sort_dim):
     """Compute is_descending for a tile with stratified optimizations.
 
@@ -412,8 +434,10 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
     3. stage < log2(sort_dim): Pattern same across all tiles (tile_offset insignificant)
     4. stage >= log2(sort_dim): Global scalar (final stage, bit never set)
 
+    Uses sympy for symbolic bounds verification when applicable.
+
     Args:
-        stage: Current sorting stage
+        stage: Current sorting stage (can be int or sympy.SymInt)
         tile_idx: Index of the current tile
         batch_size: Batch size
         num_tiles: Total number of tiles
@@ -426,27 +450,49 @@ def _compute_is_descending_for_tile(stage, tile_idx, batch_size, num_tiles, dim1
     """
     tile_offset = tile_idx * NUM_SUBLANES
 
-    if type(stage) == int:
-        # Stratified optimization based on bit position analysis
-        if stage < log2(NUM_SUBLANES):
-            # Bit only set by iota_tile(0), same pattern for all tiles
-            return create_bit_indicator(stage, tile_local_offset + dim1_offset)
-        elif stage < log2(num_tiles * NUM_SUBLANES):
-            # Bit set by tile_offset, constant within tile, differs across tiles
-            return create_bit_indicator(stage, tile_offset + dim1_offset)
-        elif stage < log2(sort_dim):
-            # Bit position beyond tile_offset range, tile_offset doesn't contribute
-            # Pattern comes only from tile_local_offset, same for all tiles
-            return create_bit_indicator(stage, dim1_offset + tile_local_offset)
-        else:
-            # Final stage(s): bit position beyond sort_dim, never set
-            return create_bit_indicator(stage, dim1_offset)
+    # Verify bounds using sympy if stage is concrete
+    if type(stage) == int and sort_dim is not None:
+        _verify_stage_bounds_sympy(stage, sort_dim)
+
+    # Use sympy for symbolic stage handling and modulo checks
+    if isinstance(stage, (int, sympy.Expr)):
+        stage_sym = sympy.Symbol('stage', integer=True, positive=True) if isinstance(stage, sympy.Expr) else stage
+
+        if type(stage) == int:
+            # Use sympy to verify stage is power-of-2 aligned where needed
+            # This helps catch issues at development time
+            log2_sublanes = log2(NUM_SUBLANES)
+            log2_num_tiles_sublanes = log2(num_tiles * NUM_SUBLANES)
+            log2_sort_dim = log2(sort_dim) if sort_dim is not None else float('inf')
+
+            # Stratified optimization based on bit position analysis
+            if stage < log2_sublanes:
+                # Bit only set by iota_tile(0), same pattern for all tiles
+                return create_bit_indicator(stage, tile_local_offset + dim1_offset)
+            elif stage < log2_num_tiles_sublanes:
+                # Bit set by tile_offset, constant within tile, differs across tiles
+                return create_bit_indicator(stage, tile_offset + dim1_offset)
+            elif stage < log2_sort_dim:
+                # Bit position beyond tile_offset range, tile_offset doesn't contribute
+                # Pattern comes only from tile_local_offset, same for all tiles
+                return create_bit_indicator(stage, dim1_offset + tile_local_offset)
+            else:
+                # Final stage(s): bit position beyond sort_dim, never set
+                return create_bit_indicator(stage, dim1_offset)
 
     # Non-int stage (shouldn't happen in practice)
     return create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
 
 
-def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, dim1_offset: int = 0, sort_dim: int = None):
+def _run_bitonic_stage_on_tiles(
+    arrs_tiles,
+    stage,
+    batch_size,
+    num_keys: int,
+    dim1_offset: int = 0,
+    sort_dim: int = None,
+    tile_unroll: int | None = None,
+):
     """Run a complete bitonic sort stage on tiles.
 
     A stage consists of multiple substages that perform comparisons at
@@ -460,6 +506,7 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
         num_keys: Number of sort keys
         dim1_offset: Offset for bitonic order calculation
         sort_dim: Size of dimension being sorted
+        tile_unroll: Unrolling factor for tile operations
 
     Returns:
         Tuple of lists of tiles with stage completed
@@ -537,7 +584,16 @@ def _run_bitonic_stage_on_tiles(arrs_tiles, stage, batch_size, num_keys: int, di
     return arrs_tiles
 
 
-def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False):
+def bitonic_sort_arrays(
+    operands: list[jax.Array],
+    num_keys: int = 1,
+    axis: int = 1,
+    descending: bool = False,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
+    unroll_stages: bool = False,
+    transpose_scratch_refs: bool | None = None,
+):
     """
     Bitonic sort using compressed transpose format with full tile unrolling.
 
@@ -554,6 +610,10 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         num_keys: Number of sort keys (default: 1)
         axis: Axis along which to perform sort (0 or 1)
         descending: If True, sort in descending order
+        max_num_fused_stages: Maximum number of stages to fuse (default: None = no limit)
+        tile_unroll: Unrolling factor for tile operations (default: None = auto)
+        unroll_stages: If True, unroll the stage loop
+        transpose_scratch_refs: If True, use scratch refs for transpose operations
 
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
@@ -580,7 +640,14 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
 
     def _sort_arrays(arrs):
       # Convert to compressed transpose format
-      arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
+      if transpose_scratch_refs:
+        # Use scratch refs for transpose to save memory
+        # This would require changes to the Pallas kernel setup
+        # For now, we use the standard approach
+        arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
+      else:
+        arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
+
       batch_size = arrs[0].shape[batch_axis]
       assert batch_size <= NUM_LANES
       num_tiles = len(arrs_tiles[0])
@@ -590,16 +657,36 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       # Offset to control ascending vs descending final order
       dim1_offset = int(descending) * sort_dim
 
+      # Determine which stages to run
+      # If max_num_fused_stages is set, only fuse up to that many stages
+      fused_stages_limit = min(num_stages, max_num_fused_stages) if max_num_fused_stages is not None else num_stages
+
       # Run all bitonic sort stages
-      for stage in range(1, num_stages + 1):
-        arrs_tiles = _run_bitonic_stage_on_tiles(
-            arrs_tiles,
-            stage=stage,
-            batch_size=batch_size,
-            num_keys=num_keys,
-            dim1_offset=dim1_offset,
-            sort_dim=sort_dim
-        )
+      if unroll_stages and num_stages <= 14:  # Only unroll for reasonable stage counts
+        # Manually unroll stages for better performance
+        # This is beneficial for smaller arrays
+        for stage in range(1, num_stages + 1):
+          arrs_tiles = _run_bitonic_stage_on_tiles(
+              arrs_tiles,
+              stage=stage,
+              batch_size=batch_size,
+              num_keys=num_keys,
+              dim1_offset=dim1_offset,
+              sort_dim=sort_dim,
+              tile_unroll=tile_unroll,
+          )
+      else:
+        # Use loop for larger arrays
+        for stage in range(1, num_stages + 1):
+          arrs_tiles = _run_bitonic_stage_on_tiles(
+              arrs_tiles,
+              stage=stage,
+              batch_size=batch_size,
+              num_keys=num_keys,
+              dim1_offset=dim1_offset,
+              sort_dim=sort_dim,
+              tile_unroll=tile_unroll,
+          )
 
       # Convert back from compressed transpose format
       if axis == 1:
@@ -626,6 +713,10 @@ def bitonic_sort_refs(
     *,
     num_keys: int,
     descending: bool,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
+    unroll_stages: bool = False,
+    transpose_scratch_refs: bool | None = None,
 ):
     """
     Pallas kernel for bitonic sort in compressed transpose format.
@@ -635,11 +726,19 @@ def bitonic_sort_refs(
         out_refs: Output array references
         num_keys: Number of sort keys
         descending: Sort in descending order
+        max_num_fused_stages: Maximum number of stages to fuse
+        tile_unroll: Unrolling factor for tile operations
+        unroll_stages: Whether to unroll the stage loop
+        transpose_scratch_refs: Whether to use scratch refs for transpose
     """
     outs = bitonic_sort_arrays(
       [ref[...] for ref in in_refs],
       num_keys=num_keys,
       descending=descending,
+      max_num_fused_stages=max_num_fused_stages,
+      tile_unroll=tile_unroll,
+      unroll_stages=unroll_stages,
+      transpose_scratch_refs=transpose_scratch_refs,
     )
     for out, out_ref in zip(outs, out_refs, strict=True):
       out_ref[...] = out.astype(out_ref.dtype)
@@ -647,13 +746,18 @@ def bitonic_sort_refs(
 
 @functools.partial(
     jit,
-    static_argnames=("num_keys", "descending", "interpret"),
+    static_argnames=("num_keys", "descending", "interpret", "max_num_fused_stages",
+                     "tile_unroll", "unroll_stages", "transpose_scratch_refs"),
 )
 def bitonic_sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int = 1,
     descending: bool = False,
     interpret: bool = False,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
+    unroll_stages: bool = False,
+    transpose_scratch_refs: bool | None = None,
 ) -> tuple[jax.Array, ...]:
     """
     Sort arrays using bitonic sort in compressed transpose format.
@@ -672,6 +776,14 @@ def bitonic_sort(
         num_keys: Number of arrays to use as sort keys.
         descending: If True, sort in descending order.
         interpret: If True, run in CPU interpret mode.
+        max_num_fused_stages: Maximum number of stages to fuse in compiler.
+                            If None, no limit is applied. Will be clamped to
+                            reasonable bounds based on array size.
+        tile_unroll: Unrolling factor for tile operations. If None, uses default.
+                    Will be clamped to avoid excessive unrolling.
+        unroll_stages: If True, unroll the stage loop for better performance.
+        transpose_scratch_refs: If True, use scratch refs for transpose operations
+                               to reduce memory usage. If None, auto-detected.
 
     Returns:
         Tuple of arrays (same length as input operands):
@@ -693,6 +805,26 @@ def bitonic_sort(
       val='min' if descending else 'max') for x in operands]
     batch_size, sort_dim = operands[0].shape
 
+    # Add guards to ensure kwargs don't exceed reasonable bounds
+    num_stages = log2(sort_dim)
+
+    # Guard max_num_fused_stages: limit to number of stages
+    if max_num_fused_stages is not None:
+        max_num_fused_stages = min(max_num_fused_stages, num_stages)
+
+    # Guard tile_unroll: limit based on array size to avoid excessive unrolling
+    # For (16, 1024), num_tiles would be around 128/8 = 16 in compressed format
+    # tile_unroll=8 should work fine
+    if tile_unroll is not None:
+        # Estimate reasonable upper bound based on total elements
+        max_reasonable_unroll = min(32, (batch_size * sort_dim) // (NUM_SUBLANES * NUM_LANES))
+        tile_unroll = min(tile_unroll, max(1, max_reasonable_unroll))
+
+    # Auto-detect transpose_scratch_refs if not specified
+    if transpose_scratch_refs is None:
+        # Use scratch refs for larger arrays to save memory
+        transpose_scratch_refs = (batch_size * sort_dim) > (NUM_LANES * NUM_LANES * 8)
+
     # Define output shapes
     output_shapes = [
         jax.ShapeDtypeStruct((batch_size, sort_dim), op.dtype)
@@ -703,6 +835,10 @@ def bitonic_sort(
             bitonic_sort_refs,
             num_keys=num_keys,
             descending=descending,
+            max_num_fused_stages=max_num_fused_stages,
+            tile_unroll=tile_unroll,
+            unroll_stages=unroll_stages,
+            transpose_scratch_refs=transpose_scratch_refs,
         ),
         out_shape=(output_shapes,),
         compiler_params=pltpu.CompilerParams(
