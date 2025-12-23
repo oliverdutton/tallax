@@ -246,7 +246,7 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
   sharded = tuple(2**substage < slice_size for substage in substages)
   if all(sharded):
     pass
-  elif all((not b for b in sharded))
+  elif all((not b for b in sharded)):
     slice_size = compression_length
   else:
     # will switch between them. We do the longest run we can of same slice_size
@@ -260,7 +260,7 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
             
   @pl.loop(0, grid_size)
   def process_block(i):
-    i = SymInt(i) # to track divisors of i for is_descending optimizations
+    #i = SymInt(i) # to track divisors of i for is_descending optimizations
     arrs_tiles = [
         ref[pl.dslice(i * slice_size, slice_size)]
         for ref in transpose_refs
@@ -270,15 +270,16 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
     # Write back to refs
     for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
       ref[pl.dslice(i * slice_size, slice_size)] = arr
-                  
+
+'''                
 class BoundedInt(jax.ndarray):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
   #TODO add lower_bound and upper_bound and tracking of what its a multiple of so % can produce 0 in some cases
+'''
 
 
-
-def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, max_num_fused_stages: int | None = None, tile_unroll: int | None = None, unroll_stages=False, transpose_scratch_refs=None):
+def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, max_num_fused_stages: int | None = None, tile_unroll: int | None = None, unroll_stages=True, transpose_scratch_refs=None):
     """
     Bitonic sort using compressed transpose format with full tile unrolling.
 
@@ -312,6 +313,8 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         )
     else:
         raise ValueError
+        
+    print('Padding {shape} to {padded_shape}')
 
     # Pad both dimensions if needed
     # For ascending sort, pad with 'max' so padding values sort to the end
@@ -380,7 +383,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
             
             # bounds are inclusive on both ends
             # this is used to make optimizations on is_descending inside the code
-            stage = SymInt(stage, lower_bound=stage_lb, upper_bound=stage_ub-1)
+            #stage = SymInt(stage, lower_bound=stage_lb, upper_bound=stage_ub-1)
             
             for substage in range(stage_lb, stage_ub)[::-1]:
               @pl.when(stage > substage)
@@ -393,7 +396,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           _bitonic_sort_substage_refs(
           transpose_scratch_refs, substages=substages, stages=stages, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length,  slice_size=slice_size)
         # back in array flow
-        arrs_tiles = [ref[...] for ref in transpose_scratch_refs]
+        arrs_tiles = [[ref[...]] for ref in transpose_scratch_refs]
 
       # Convert back from compressed transpose format
       if axis == 1:
@@ -433,13 +436,14 @@ def bitonic_sort_refs(
     dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
     dim0 = min(dim0, NUM_LANES)
     transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
+
     @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
     def _(transpose_refs):
         outs = bitonic_sort_arrays(
           [ref[...] for ref in in_refs],
           num_keys=num_keys,
           descending=descending,
-            transpose_scratch_refs=transpose_refs,
+          transpose_scratch_refs=transpose_refs,
         )
         for out, out_ref in zip(outs, out_refs, strict=True):
           out_ref[...] = out.astype(out_ref.dtype)
@@ -511,4 +515,3 @@ def bitonic_sort(
         interpret=interpret,
     )(operands)[0]
     return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
-
