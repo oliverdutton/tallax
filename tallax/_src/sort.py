@@ -114,7 +114,7 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
     return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, dim1_offset=0, stage=None):
+def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, sort_dim_offset=0, stage=None):
   """Perform substage using sublane permutation or cross-tile comparison.
 
   Args:
@@ -122,7 +122,7 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
     substage: Substage index
     batch_size: Batch size (padded, must be power of 2 <= NUM_LANES)
     num_keys: Number of sort keys
-    dim1_offset: Offset for bitonic order calculation
+    sort_dim_offset: Offset for bitonic order calculation
     stage: Current sorting stage (if single stage)
 
   Returns:
@@ -135,11 +135,11 @@ def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, bat
 
   def compute_is_descending(idx):
     tile_offset = idx * NUM_SUBLANES
-    is_desc = create_bit_indicator(stage, dim1_offset + tile_offset + tile_local_offset)
+    is_desc = create_bit_indicator(stage, sort_dim_offset + tile_offset + tile_local_offset)
     if type(stage) == int:
       if stage < log2(NUM_SUBLANES):
         # every tile has same value
-        return create_bit_indicator(stage, tile_local_offset + dim1_offset)
+        return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
       elif stage < log2(num_tiles * NUM_SUBLANES):
         # value constant across tile
         return create_bit_indicator(stage, tile_offset)
@@ -184,13 +184,13 @@ def run_compressed_transpose_format_substages_on_tiles(
     stage: int,
     batch_size: int,
     num_keys: int,
-    dim1_offset: int = 0,
+    sort_dim_offset: int = 0,
 ):
   """Execute multiple substages within tiles."""
   def _sort_tile_stage(arrs_tiles, stage, num_substages):
     for substage in range(num_substages)[::-1]:
       arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
-          arrs_tiles, substage=substage, batch_size=batch_size, dim1_offset=dim1_offset,
+          arrs_tiles, substage=substage, batch_size=batch_size, sort_dim_offset=sort_dim_offset,
           stage=stage, num_keys=num_keys
       )
     return arrs_tiles
@@ -222,7 +222,7 @@ def _run_compressed_transpose_format_substages_on_refs(
     stage: int,
     num_keys: int,
     unroll: int = 256,
-    dim1_offset: int = 0,
+    sort_dim_offset: int = 0,
     slice_dim1: int = None,
 ):
   """Orchestrate subtile sorting with proper blocking."""
@@ -262,7 +262,7 @@ def _run_compressed_transpose_format_substages_on_refs(
         arrs_tiles,
         stage=stage,
         num_substages=num_substages,
-        dim1_offset=dim1_offset + (block_col * slice_dim1),
+        sort_dim_offset=sort_dim_offset + (block_col * slice_dim1),
         batch_size=batch_size,
         num_keys=num_keys,
     )
@@ -284,7 +284,7 @@ def _run_array_substage_on_refs(
     stage: int,
     num_keys: int,
     unroll: int = 16,
-    dim1_offset: int = 0,
+    sort_dim_offset: int = 0,
 ):
   """Perform substage of sort with comparisons between tiles.
 
@@ -294,7 +294,7 @@ def _run_array_substage_on_refs(
     stage: Current sorting stage
     num_keys: Number of arrays to use as keys
     unroll: Loop unrolling factor
-    dim1_offset: Offset for bitonic order calculation
+    sort_dim_offset: Offset for bitonic order calculation
   """
   assert (unroll % 2) == 0, 'Static sort order requires even unroll factor'
 
@@ -321,7 +321,7 @@ def _run_array_substage_on_refs(
                    i * pair_length + 2 * half_length]
                 for v in ref_slices]
 
-      is_descending = create_bit_indicator(stage, dim1_offset + pair_offset)
+      is_descending = create_bit_indicator(stage, sort_dim_offset + pair_offset)
 
       for i, vs in enumerate(compare_and_swap(lefts, rights,
                                       is_descending=is_descending,
@@ -341,7 +341,7 @@ def _run_stages(
     num_keys: int,
     descending: bool | None = None,
     log_n: int | None = None,
-    dim1_offset: int | None = None,
+    sort_dim_offset: int | None = None,
     unroll_crosstile: int = 64,
     unroll_subtile: int = 64,
 ):
@@ -351,8 +351,8 @@ def _run_stages(
   dim1 = refs[0].shape[1]
   if log_n is None:
     log_n = log2(dim1)
-  if dim1_offset is None:
-    dim1_offset = (pl.program_id(1) * dim1 +
+  if sort_dim_offset is None:
+    sort_dim_offset = (pl.program_id(1) * dim1 +
                    int(descending) * pl.num_programs(1) * dim1)
 
   if stage_ref is None:
@@ -373,7 +373,7 @@ def _run_stages(
         refs,
         num_substages=min(log2(NUM_LANES), end_stage),
         stage=None,
-        dim1_offset=dim1_offset,
+        sort_dim_offset=sort_dim_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )
@@ -383,7 +383,7 @@ def _run_stages(
         refs,
         num_substages=start_stage,
         stage=start_stage,
-        dim1_offset=dim1_offset,
+        sort_dim_offset=sort_dim_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )
@@ -404,7 +404,7 @@ def _run_stages(
             substage=substage,
             stage=stage,
             unroll=unroll_crosstile,
-            dim1_offset=dim1_offset,
+            sort_dim_offset=sort_dim_offset,
             num_keys=num_keys,
         )
 
@@ -413,7 +413,7 @@ def _run_stages(
         refs,
         num_substages=log2(NUM_LANES),
         stage=stage,
-        dim1_offset=dim1_offset,
+        sort_dim_offset=sort_dim_offset,
         unroll=unroll_subtile,
         num_keys=num_keys,
     )

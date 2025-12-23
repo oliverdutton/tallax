@@ -231,22 +231,25 @@ def unpack_bf16_u16_from_i32(packed):
 
 ### Tile Operations
 
-def split_array_to_tiles(arr):
-  """Split 2D array into flat list of (NUM_SUBLANES, NUM_LANES) tiles."""
-  tile_rows = arr.shape[0] // NUM_SUBLANES
-  tile_cols = arr.shape[1] // NUM_LANES
-  assert (arr.shape[0] % NUM_SUBLANES == 0)
-  assert (arr.shape[1] % NUM_LANES == 0)
+def split_array_to_tiles(arr, tile_shape=(NUM_SUBLANES, NUM_LANES)):
+  """Split 2D array into flat list of tiles with specified shape.
 
-  tiles = []
-  for row in range(tile_rows):
-    for col in range(tile_cols):
-      tile = arr[
-          row * NUM_SUBLANES: (row + 1) * NUM_SUBLANES,
-          col * NUM_LANES: (col + 1) * NUM_LANES,
-      ]
-      tiles.append(tile)
-  return tiles
+  Args:
+    arr: 2D array to split
+    tile_shape: Shape of each tile (tile_dim0, tile_dim1), defaults to (NUM_SUBLANES, NUM_LANES)
+
+  Returns:
+    List of tiles in row-major order
+  """
+  tile_dim0, tile_dim1 = tile_shape
+  tile_rows = arr.shape[0] // tile_dim0
+  tile_cols = arr.shape[1] // tile_dim1
+  assert (arr.shape[0] % tile_dim0 == 0), f"Array dim0 {arr.shape[0]} not divisible by tile_dim0 {tile_dim0}"
+  assert (arr.shape[1] % tile_dim1 == 0), f"Array dim1 {arr.shape[1]} not divisible by tile_dim1 {tile_dim1}"
+
+  # Use jnp.split for efficient tile extraction
+  return flatten([jnp.split(row_strip, tile_cols, axis=1)
+                  for row_strip in jnp.split(arr, tile_rows, axis=0)])
 
 
 def join_tiles_to_array(tiles, dim0):
@@ -265,9 +268,9 @@ def join_tiles_to_array(tiles, dim0):
   return jnp.concatenate(rows, axis=-2)
 
 
-def iota_tile(dim):
+def iota_tile(dim, tile_shape=(NUM_SUBLANES, NUM_LANES)):
   """Create iota array with tile shape."""
-  return lax.broadcasted_iota(jnp.int32, (NUM_SUBLANES, NUM_LANES), dim)
+  return lax.broadcasted_iota(jnp.int32, tile_shape, dim)
 
 
 def create_bit_indicator(bit_position: int, index=None):
@@ -289,13 +292,14 @@ def to_compressed_transpose_format(arr):
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
   arrs = jnp.split(arr, NUM_LANES // dim0, axis=1)
   arr = jnp.concatenate(arrs, axis=0).T
-  return split_array_to_tiles(arr)
+  return arr
 
 
 def from_compressed_transpose_format(tiles, dim0):
   """Convert from compressed transpose format back to original layout."""
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
-  arr = join_tiles_to_array(tiles, dim0=len(tiles) * NUM_SUBLANES).T
+  arr = jnp.concatenate(tiles, axis=0).T
+  assert arr.shape[0] == NUM_LANES
   arrs = jnp.split(arr, arr.shape[0] // dim0, axis=0)
   return jnp.concatenate(arrs, axis=1)
 
