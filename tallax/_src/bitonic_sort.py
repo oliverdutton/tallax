@@ -430,13 +430,19 @@ def bitonic_sort_refs(
         num_keys: Number of sort keys
         descending: Sort in descending order
     """
-    outs = bitonic_sort_arrays(
-      [ref[...] for ref in in_refs],
-      num_keys=num_keys,
-      descending=descending,
-    )
-    for out, out_ref in zip(outs, out_refs, strict=True):
-      out_ref[...] = out.astype(out_ref.dtype)
+    dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
+    dim0 = min(dim0, NUM_LANES)
+    transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
+    @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
+    def _(transpose_refs):
+        outs = bitonic_sort_arrays(
+          [ref[...] for ref in in_refs],
+          num_keys=num_keys,
+          descending=descending,
+            transpose_scratch_refs=transpose_refs,
+        )
+        for out, out_ref in zip(outs, out_refs, strict=True):
+          out_ref[...] = out.astype(out_ref.dtype)
 
 
 @functools.partial(
