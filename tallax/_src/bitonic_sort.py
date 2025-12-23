@@ -351,38 +351,15 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       assert batch_size <= NUM_LANES
       sort_dim = arrs[0].shape[axis]
       num_stages = log2(sort_dim)
-
-      # Add guards to ensure kwargs don't exceed reasonable bounds
-      # Guard max_num_fused_stages: limit to number of stages
-      if max_num_fused_stages is not None:
-        num_fused_stages = min(max_num_fused_stages, num_stages)
-      else:
-        num_fused_stages = num_stages
-
-      # Guard tile_unroll: limit based on array size to avoid excessive unrolling
-      # For (16, 1024), compression_length would be around 128
-      # tile_unroll=8 should work fine (8 * 8 = 64 elements per slice)
-      compression_length = len(arrs_tiles[0]) * (arrs_tiles[0][0].shape[0] if isinstance(arrs_tiles[0], list) else arrs_tiles[0].shape[0])
-      if tile_unroll is not None:
-        # Estimate reasonable upper bound: don't exceed compression_length / NUM_SUBLANES
-        max_reasonable_unroll = min(32, compression_length // NUM_SUBLANES)
-        tile_unroll_guarded = min(tile_unroll, max(1, max_reasonable_unroll))
-      else:
-        tile_unroll_guarded = None
-
-      # Auto-detect transpose_scratch_refs if not specified
-      if transpose_scratch_refs is None:
-        # Use scratch refs for larger arrays or when not unrolling stages
-        transpose_scratch_refs_used = not unroll_stages or (batch_size * sort_dim) > (NUM_LANES * NUM_LANES * 8)
-      else:
-        transpose_scratch_refs_used = transpose_scratch_refs
+      num_fused_stages = min(max_num_fused_stages, num_stages) if max_num_fused_stages is not None else num_stages
 
       # Offset to control ascending vs descending final order
       sort_dim_offset = int(descending) * sort_dim
 
       # Run all bitonic sort stages
+      compression_length = arrs_tiles[0].shape[0]
       slice_size = min(
-        max(tile_unroll_guarded * NUM_SUBLANES, 2**num_fused_stages), compression_length) if tile_unroll_guarded is not None else compression_length
+        max(tile_unroll * NUM_SUBLANES, 2**num_fused_stages), compression_length) if tile_unroll is not None else compression_length
         
       if unroll_stages:
         out_arrs_tiles = []
@@ -561,26 +538,6 @@ def bitonic_sort(
     operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
       val='min' if descending else 'max') for x in operands]
     batch_size, sort_dim = operands[0].shape
-
-    # Add guards to ensure kwargs don't exceed reasonable bounds (same as in bitonic_sort_arrays)
-    num_stages = log2(sort_dim)
-
-    # Guard max_num_fused_stages: limit to number of stages
-    if max_num_fused_stages is not None:
-        max_num_fused_stages = min(max_num_fused_stages, num_stages)
-
-    # Guard tile_unroll: limit based on array size to avoid excessive unrolling
-    # For (16, 1024), num_tiles would be around 128/8 = 16 in compressed format
-    # tile_unroll=8 should work fine
-    if tile_unroll is not None:
-        # Estimate reasonable upper bound based on total elements
-        max_reasonable_unroll = min(32, (batch_size * sort_dim) // (NUM_SUBLANES * NUM_LANES))
-        tile_unroll = min(tile_unroll, max(1, max_reasonable_unroll))
-
-    # Auto-detect transpose_scratch_refs if not specified
-    if transpose_scratch_refs is None:
-        # Use scratch refs for larger arrays to save memory
-        transpose_scratch_refs = (batch_size * sort_dim) > (NUM_LANES * NUM_LANES * 8)
 
     # Define output shapes
     output_shapes = [
