@@ -325,36 +325,32 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     # For descending sort, pad with 'min' so padding values sort to the end
     arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
-
+    
+    sort_dim = arrs[0].shape[axis]
+    batch_size = arrs[0].shape[batch_axis]
+    num_stages = log2(sort_dim)
+  
     def _sort_arrays(arrs):
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-      batch_size = arrs[0].shape[batch_axis]
       assert batch_size <= NUM_LANES
-      sort_dim = arrs[0].shape[axis]
-      num_stages = log2(sort_dim)
+      
+
       num_fused_stages = min(max_num_fused_stages, num_stages) if max_num_fused_stages is not None else num_stages
 
       # Offset to control ascending vs descending final order
       sort_dim_offset = int(descending) * sort_dim
 
       # Run all bitonic sort stages
-      compression_length = arrs_tiles[0].shape[0]
+      compression_length = arrs_tiles[0].shape[0] 
       slice_size = min(
         max(tile_unroll * NUM_SUBLANES, 2**num_fused_stages), compression_length) if tile_unroll is not None else compression_length
-        
-      if unroll_stages:
-        out_arrs_tiles = []
-        for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
-          for stage in range(1, num_fused_stages+1):
-            for substage in range(stage)[::-1]:
-              arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*slice_size, compression_length = compression_length)
-          out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
-        arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
-        
-        for stage in range(num_fused_stages + 1, num_stages + 1):
-          for substage in range(num_fused_stages, stage)[::-1]:
-            arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
+      
+      for stage in range(1, num_stages + 1):
+        for substage in range(stage)[::-1]:
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
+          
+      '''
           out_arrs_tiles = []
           for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
             for substage in range(num_fused_stages)[::-1]:
@@ -401,7 +397,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           transpose_scratch_refs, substages=substages, stages=stages, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length,  slice_size=slice_size)
         # back in array flow
         arrs_tiles = [[ref[...]] for ref in transpose_scratch_refs]
-
+      '''
       # Convert back from compressed transpose format
       if axis == 1:
         arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
@@ -446,6 +442,19 @@ def bitonic_sort_refs(
     transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
     
     operands = [ref[...] for ref in in_refs]
+    outs = bitonic_sort_arrays(
+        operands,
+        num_keys=num_keys,
+        descending=descending,
+        #max_num_fused_stages=max_num_fused_stages,
+        #unroll_stages=unroll_stages,
+        #tile_unroll=tile_unroll,
+    )
+    for out, out_ref in zip(outs, out_refs, strict=True):
+        out_ref[...] = out.astype(out_ref.dtype)
+    return
+    
+'''
     # Apply CSE to the pure JAX bitonic_sort_arrays function
     # Note: We can't easily apply CSE to the pallas kernel itself,
     # so we extract jaxpr from bitonic_sort_arrays and run it directly
@@ -481,7 +490,7 @@ def bitonic_sort_refs(
         out_ref[...] = out.astype(out_ref.dtype)
     return
 
-'''
+
     def _bitonic_sort(transpose_refs=None):
         outs = bitonic_sort_arrays(
             [ref[...] for ref in in_refs],
