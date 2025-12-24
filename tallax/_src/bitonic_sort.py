@@ -157,8 +157,8 @@ def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim
     # can't optimize
     return is_descending
     
-
-def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None):
+@functools.partial(jax.jit, static_argnames=('substage','stage','num_keys','batch_size','sort_dim_offset','compression_length','concat_threshold'))
+def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -217,7 +217,9 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
             outs_tiles[arr_idx][idx] = out
     else:
       # Comparison between tiles
-      arrs_tiles = _resplit(arrs_tiles, separation if CONCAT_TILES else NUM_SUBLANES)
+      
+      tile_size = concat_threshold if ((concat_threshold is not None) and (separation >= concat_threshold)) else (separation if CONCAT_TILES else NUM_SUBLANES)
+      arrs_tiles = _resplit(arrs_tiles, tile_size)
       tile_shape = arrs_tiles[0][0].shape      
       num_tiles = len(arrs_tiles[0])
       tile_separation = separation // tile_shape[0]
@@ -360,18 +362,18 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
       for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
         for stage in range(1, stage_unroll + 1):
           for substage in range(stage)[::-1]:
-            arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*slice_size, compression_length=compression_length)    
+            arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), compression_length=compression_length)    
         out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
       arrs_tiles = transpose_list_of_lists(out_arrs_tiles)                    
       
       for stage in range(stage_unroll + 1, num_stages + 1):
         for substage in range(stage_unroll, stage)[::-1]:
-          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length=compression_length)            
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length=compression_length, concat_threshold=2**stage_unroll)            
                           
         out_arrs_tiles = []
         for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
           for substage in range(stage_unroll)[::-1]:
-            arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset+i*slice_size, compression_length = compression_length)
+            arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), compression_length = compression_length)
           out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
         arrs_tiles = transpose_list_of_lists(out_arrs_tiles)                    
       
