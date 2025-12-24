@@ -427,7 +427,6 @@ def bitonic_sort_refs(
     *,
     num_keys: int,
     descending: bool,
-    input_shape: tuple[int, int],  # Pass shape explicitly to avoid tracing issues
     max_num_fused_stages: int | None = None,
     tile_unroll: int | None = None,
     unroll_stages=True,
@@ -440,11 +439,8 @@ def bitonic_sort_refs(
         out_refs: Output array references
         num_keys: Number of sort keys
         descending: Sort in descending order
-        input_shape: Shape of input arrays (batch_size, sort_dim)
     """
-    # Use the passed shape instead of trying to infer from refs during tracing
-    shape_dim0, shape_dim1 = input_shape
-    dim0, dim1 = _compute_padded_shape(shape_dim0, shape_dim1, k=NUM_SUBLANES)
+    dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
     dim0 = min(dim0, NUM_LANES)
     transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
 
@@ -528,38 +524,20 @@ def bitonic_sort(
         for op in operands
     ]
 
-    # Create the pallas_call function
-    pallas_fn = pl.pallas_call(
-        functools.partial(
-            bitonic_sort_refs,
-            num_keys=num_keys,
-            descending=descending,
-            input_shape=(batch_size, sort_dim),
-            max_num_fused_stages=max_num_fused_stages,
-            unroll_stages=unroll_stages,
-            tile_unroll=tile_unroll,
-        ),
-        out_shape=(output_shapes,),
-        compiler_params=pltpu.CompilerParams(
-            vmem_limit_bytes=int(0.9 * 2**27)
-        ),
-        interpret=interpret,
-    )
-
     if apply_cse:
         # Apply CSE to the pure JAX bitonic_sort_arrays function
         # Note: We can't easily apply CSE to the pallas kernel itself,
         # so we extract jaxpr from bitonic_sort_arrays and run it directly
         print(f"[CSE] Extracting jaxpr from bitonic_sort_arrays with shape {operands[0].shape}")
 
-        # Create a function that wraps bitonic_sort_arrays with the specific parameters
+        # Force unroll_stages=True for CSE
         def sort_fn(*args):
             return bitonic_sort_arrays(
                 list(args),
                 num_keys=num_keys,
                 descending=descending,
                 max_num_fused_stages=max_num_fused_stages,
-                unroll_stages=unroll_stages,
+                unroll_stages=True,
                 tile_unroll=tile_unroll,
             )
 
@@ -579,6 +557,21 @@ def bitonic_sort(
         outputs = cse_fn(*operands)
     else:
         # Run normally without CSE
+        pallas_fn = pl.pallas_call(
+            functools.partial(
+                bitonic_sort_refs,
+                num_keys=num_keys,
+                descending=descending,
+                max_num_fused_stages=max_num_fused_stages,
+                unroll_stages=unroll_stages,
+                tile_unroll=tile_unroll,
+            ),
+            out_shape=(output_shapes,),
+            compiler_params=pltpu.CompilerParams(
+                vmem_limit_bytes=int(0.9 * 2**27)
+            ),
+            interpret=interpret,
+        )
         outputs = pallas_fn(operands)[0]
 
     return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
