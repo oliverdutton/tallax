@@ -130,10 +130,11 @@ def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim
     
     # is_descending repeats every 2**(stage+1)
     # if the offset divides cleanly it's 0's allowing for CSE in the add of zeros (and hopefully remove of add 0)
-    sort_dim_offset %= (2**(stage+1))
+    #sort_dim_offset %= (2**(stage+1))
     
     # unoptimized is_descending from fully computing indices
     is_descending = create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
+    return is_descending
     
     if type(stage) == int:
       stage_lb = stage
