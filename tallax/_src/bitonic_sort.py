@@ -354,7 +354,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
       '''
       
-      slice_size = max(2**stage_unroll, NUM_SUBLANES)
+      slice_size = min(max(2**stage_unroll, NUM_SUBLANES), compression_length)
       out_arrs_tiles = []
       for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
         for stage in range(1, stage_unroll + 1):
