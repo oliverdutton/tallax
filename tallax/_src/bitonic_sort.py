@@ -279,7 +279,7 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
 class BoundedInt(jax.ndarray):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
-  #TODO add lower_bound and upper_bound and tracking of what its a multiple of so % can produce 0 in some cases
+  add lower_bound and upper_bound and tracking of what its a multiple of so % can produce 0 in some cases
 '''
 
 
@@ -475,7 +475,6 @@ def bitonic_sort_refs(
     # Run the CSE'd version
     cse_closed_jaxpr = ClosedJaxpr(cse_jaxpr, closed_jaxpr.consts)
     
-    closed_jaxpr_to_run = 
     cse_fn = jaxpr_as_fun(cse_closed_jaxpr if apply_cse else closed_jaxpr)
     outs = cse_fn(*operands)
     for out, out_ref in zip(outs, out_refs, strict=True):
