@@ -430,6 +430,7 @@ def bitonic_sort_refs(
     max_num_fused_stages: int | None = None,
     tile_unroll: int | None = None,
     unroll_stages=True,
+    apply_cse=True,
 ):
     """
     Pallas kernel for bitonic sort in compressed transpose format.
@@ -443,7 +444,45 @@ def bitonic_sort_refs(
     dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
     dim0 = min(dim0, NUM_LANES)
     transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
+    
+    operands = [ref[...] for ref in in_refs]
+    # Apply CSE to the pure JAX bitonic_sort_arrays function
+    # Note: We can't easily apply CSE to the pallas kernel itself,
+    # so we extract jaxpr from bitonic_sort_arrays and run it directly
+    print(f"[CSE] Extracting jaxpr from bitonic_sort_arrays with shape {operands[0].shape}")
 
+    # Force unroll_stages=True for CSE
+    def sort_fn(*args):
+        return bitonic_sort_arrays(
+            list(args),
+            num_keys=num_keys,
+            descending=descending,
+            max_num_fused_stages=max_num_fused_stages,
+            unroll_stages=unroll_stages,
+            tile_unroll=tile_unroll,
+        )
+
+    # Extract jaxpr
+    closed_jaxpr = make_jaxpr(sort_fn)(*operands)
+    original_eqns = len(closed_jaxpr.jaxpr.eqns)
+    print(f"[CSE] Original jaxpr has {original_eqns} equations")
+
+    # Apply CSE
+    cse_jaxpr, iterations = cse_until_fixpoint(closed_jaxpr.jaxpr, max_iterations=1)
+    print(f"[CSE] After {iterations} iterations: {len(cse_jaxpr.eqns)} equations")
+    print(f"[CSE] Eliminated {original_eqns - len(cse_jaxpr.eqns)} redundant operations")
+
+    # Run the CSE'd version
+    cse_closed_jaxpr = ClosedJaxpr(cse_jaxpr, closed_jaxpr.consts)
+    
+    closed_jaxpr_to_run = 
+    cse_fn = jaxpr_as_fun(cse_closed_jaxpr if apply_cse else closed_jaxpr)
+    outs = cse_fn(*operands)
+    for out, out_ref in zip(outs, out_refs, strict=True):
+        out_ref[...] = out.astype(out_ref.dtype)
+    return
+
+'''
     def _bitonic_sort(transpose_refs=None):
         outs = bitonic_sort_arrays(
             [ref[...] for ref in in_refs],
@@ -463,7 +502,7 @@ def bitonic_sort_refs(
         @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
         def _(transpose_refs):
             _bitonic_sort(transpose_refs)
-
+'''
 
 @functools.partial(
     jit,
@@ -524,54 +563,23 @@ def bitonic_sort(
         for op in operands
     ]
 
-    if apply_cse:
-        # Apply CSE to the pure JAX bitonic_sort_arrays function
-        # Note: We can't easily apply CSE to the pallas kernel itself,
-        # so we extract jaxpr from bitonic_sort_arrays and run it directly
-        print(f"[CSE] Extracting jaxpr from bitonic_sort_arrays with shape {operands[0].shape}")
-
-        # Force unroll_stages=True for CSE
-        def sort_fn(*args):
-            return bitonic_sort_arrays(
-                list(args),
-                num_keys=num_keys,
-                descending=descending,
-                max_num_fused_stages=max_num_fused_stages,
-                unroll_stages=True,
-                tile_unroll=tile_unroll,
-            )
-
-        # Extract jaxpr
-        closed_jaxpr = make_jaxpr(sort_fn)(*operands)
-        original_eqns = len(closed_jaxpr.jaxpr.eqns)
-        print(f"[CSE] Original jaxpr has {original_eqns} equations")
-
-        # Apply CSE
-        cse_jaxpr, iterations = cse_until_fixpoint(closed_jaxpr.jaxpr, max_iterations=10)
-        print(f"[CSE] After {iterations} iterations: {len(cse_jaxpr.eqns)} equations")
-        print(f"[CSE] Eliminated {original_eqns - len(cse_jaxpr.eqns)} redundant operations")
-
-        # Run the CSE'd version
-        cse_closed_jaxpr = ClosedJaxpr(cse_jaxpr, closed_jaxpr.consts)
-        cse_fn = jaxpr_as_fun(cse_closed_jaxpr)
-        outputs = cse_fn(*operands)
-    else:
-        # Run normally without CSE
-        pallas_fn = pl.pallas_call(
-            functools.partial(
-                bitonic_sort_refs,
-                num_keys=num_keys,
-                descending=descending,
-                max_num_fused_stages=max_num_fused_stages,
-                unroll_stages=unroll_stages,
-                tile_unroll=tile_unroll,
-            ),
-            out_shape=(output_shapes,),
-            compiler_params=pltpu.CompilerParams(
-                vmem_limit_bytes=int(0.9 * 2**27)
-            ),
-            interpret=interpret,
-        )
-        outputs = pallas_fn(operands)[0]
+    # Run normally without CSE
+    pallas_fn = pl.pallas_call(
+        functools.partial(
+            bitonic_sort_refs,
+            num_keys=num_keys,
+            descending=descending,
+            max_num_fused_stages=max_num_fused_stages,
+            unroll_stages=unroll_stages,
+            tile_unroll=tile_unroll,
+            apply_cse=apply_cse,
+        ),
+        out_shape=(output_shapes,),
+        compiler_params=pltpu.CompilerParams(
+            vmem_limit_bytes=int(0.9 * 2**27)
+        ),
+        interpret=interpret,
+    )
+    outputs = pallas_fn(operands)[0]
 
     return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
