@@ -41,6 +41,8 @@ from collections.abc import Sequence
 import jax
 import jax.numpy as jnp
 from jax import jit
+from jax import make_jaxpr
+from jax.extend.core import jaxpr_as_fun, ClosedJaxpr
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -61,6 +63,7 @@ from tallax._src.utils import (
     split_array_to_tiles,
     create_bit_indicator,
 )
+from tallax._src.cse import cse_until_fixpoint
 from tallax._src.sort import (
     compare_and_swap,
     compute_pair_slice_start_index,
@@ -424,8 +427,9 @@ def bitonic_sort_refs(
     *,
     num_keys: int,
     descending: bool,
-    max_num_fused_stages: int | None = None, 
-    tile_unroll: int | None = None, 
+    input_shape: tuple[int, int],  # Pass shape explicitly to avoid tracing issues
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
     unroll_stages=True,
 ):
     """
@@ -436,38 +440,48 @@ def bitonic_sort_refs(
         out_refs: Output array references
         num_keys: Number of sort keys
         descending: Sort in descending order
+        input_shape: Shape of input arrays (batch_size, sort_dim)
     """
-    dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
+    # Use the passed shape instead of trying to infer from refs during tracing
+    shape_dim0, shape_dim1 = input_shape
+    dim0, dim1 = _compute_padded_shape(shape_dim0, shape_dim1, k=NUM_SUBLANES)
     dim0 = min(dim0, NUM_LANES)
     transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
 
-    @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
-    def _(transpose_refs):
+    def _bitonic_sort(transpose_refs=None):
         outs = bitonic_sort_arrays(
-          [ref[...] for ref in in_refs],
-          num_keys=num_keys,
-          descending=descending,
-          transpose_scratch_refs=transpose_refs,
-           max_num_fused_stages=max_num_fused_stages,
-          unroll_stages=unroll_stages,
-          tile_unroll=tile_unroll,
+            [ref[...] for ref in in_refs],
+            num_keys=num_keys,
+            descending=descending,
+            transpose_scratch_refs=transpose_refs,
+            max_num_fused_stages=max_num_fused_stages,
+            unroll_stages=unroll_stages,
+            tile_unroll=tile_unroll,
         )
         for out, out_ref in zip(outs, out_refs, strict=True):
-          out_ref[...] = out.astype(out_ref.dtype)
+            out_ref[...] = out.astype(out_ref.dtype)
+
+    if unroll_stages:
+        _bitonic_sort()
+    else:
+        @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
+        def _(transpose_refs):
+            _bitonic_sort(transpose_refs)
 
 
 @functools.partial(
     jit,
-    static_argnames=("num_keys", "descending", "interpret", "max_num_fused_stages", "tile_unroll", "unroll_stages"),
+    static_argnames=("num_keys", "descending", "interpret", "max_num_fused_stages", "tile_unroll", "unroll_stages", "apply_cse"),
 )
 def bitonic_sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int = 1,
     descending: bool = False,
-    interpret: bool = False,    
-    max_num_fused_stages: int | None = None, 
-    tile_unroll: int | None = None, 
+    interpret: bool = False,
+    max_num_fused_stages: int | None = None,
+    tile_unroll: int | None = None,
     unroll_stages=True,
+    apply_cse: bool = False,
 
 ) -> tuple[jax.Array, ...]:
     """
@@ -513,11 +527,14 @@ def bitonic_sort(
         jax.ShapeDtypeStruct((batch_size, sort_dim), op.dtype)
         for op in operands
     ]
-    outputs = pl.pallas_call(
+
+    # Create the pallas_call function
+    pallas_fn = pl.pallas_call(
         functools.partial(
             bitonic_sort_refs,
             num_keys=num_keys,
             descending=descending,
+            input_shape=(batch_size, sort_dim),
             max_num_fused_stages=max_num_fused_stages,
             unroll_stages=unroll_stages,
             tile_unroll=tile_unroll,
@@ -527,5 +544,41 @@ def bitonic_sort(
             vmem_limit_bytes=int(0.9 * 2**27)
         ),
         interpret=interpret,
-    )(operands)[0]
+    )
+
+    if apply_cse:
+        # Apply CSE to the pure JAX bitonic_sort_arrays function
+        # Note: We can't easily apply CSE to the pallas kernel itself,
+        # so we extract jaxpr from bitonic_sort_arrays and run it directly
+        print(f"[CSE] Extracting jaxpr from bitonic_sort_arrays with shape {operands[0].shape}")
+
+        # Create a function that wraps bitonic_sort_arrays with the specific parameters
+        def sort_fn(*args):
+            return bitonic_sort_arrays(
+                list(args),
+                num_keys=num_keys,
+                descending=descending,
+                max_num_fused_stages=max_num_fused_stages,
+                unroll_stages=unroll_stages,
+                tile_unroll=tile_unroll,
+            )
+
+        # Extract jaxpr
+        closed_jaxpr = make_jaxpr(sort_fn)(*operands)
+        original_eqns = len(closed_jaxpr.jaxpr.eqns)
+        print(f"[CSE] Original jaxpr has {original_eqns} equations")
+
+        # Apply CSE
+        cse_jaxpr, iterations = cse_until_fixpoint(closed_jaxpr.jaxpr, max_iterations=10)
+        print(f"[CSE] After {iterations} iterations: {len(cse_jaxpr.eqns)} equations")
+        print(f"[CSE] Eliminated {original_eqns - len(cse_jaxpr.eqns)} redundant operations")
+
+        # Run the CSE'd version
+        cse_closed_jaxpr = ClosedJaxpr(cse_jaxpr, closed_jaxpr.consts)
+        cse_fn = jaxpr_as_fun(cse_closed_jaxpr)
+        outputs = cse_fn(*operands)
+    else:
+        # Run normally without CSE
+        outputs = pallas_fn(operands)[0]
+
     return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
