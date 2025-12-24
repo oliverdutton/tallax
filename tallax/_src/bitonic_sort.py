@@ -134,7 +134,7 @@ def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim
     
     # unoptimized is_descending from fully computing indices
     is_descending = create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
-    return is_descending
+    #return is_descending
     
     if type(stage) == int:
       stage_lb = stage
