@@ -63,7 +63,7 @@ from tallax._src.utils import (
     split_array_to_tiles,
     create_bit_indicator,
 )
-from tallax._src.cse import cse_until_fixpoint
+#from tallax._src.cse import cse_until_fixpoint
 from tallax._src.sort import (
     compare_and_swap,
     compute_pair_slice_start_index,
