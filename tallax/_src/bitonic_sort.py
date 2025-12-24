@@ -328,15 +328,14 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
     
     sort_dim = arrs[0].shape[axis]
-    batch_size = arrs[0].shape[batch_axis]
     num_stages = log2(sort_dim)
   
     def _sort_arrays(arrs):
+      batch_size = arrs[0].shape[batch_axis]
+      assert batch_size <= NUM_LANES
+
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-      assert batch_size <= NUM_LANES
-      
-
       num_fused_stages = min(max_num_fused_stages, num_stages) if max_num_fused_stages is not None else num_stages
 
       # Offset to control ascending vs descending final order
