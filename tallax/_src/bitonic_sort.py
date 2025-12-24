@@ -181,7 +181,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
     if separation < NUM_SUBLANES or separation >= compression_length:
       # we need to permute within tiles
       axis = int(separation >= compression_length)
-      intra_tile_separation = separation if axis==0 else (separation // compression_length)
+      intra_tile_separation = separation if axis==0 else ((separation * batch_size) // compression_length)
       
       # we need hardware tiles to lower the permute
       arrs_tiles = _resplit(arrs_tiles, NUM_SUBLANES)
