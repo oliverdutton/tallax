@@ -218,7 +218,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
     else:
       # Comparison between tiles
       
-      tile_size = concat_threshold if ((concat_threshold is not None) and (separation >= concat_threshold)) else (separation if CONCAT_TILES else NUM_SUBLANES)
+      tile_size = separation if ((concat_threshold is not None) and (separation >= concat_threshold)) else (separation if CONCAT_TILES else NUM_SUBLANES)
       arrs_tiles = _resplit(arrs_tiles, tile_size)
       tile_shape = arrs_tiles[0][0].shape      
       num_tiles = len(arrs_tiles[0])
