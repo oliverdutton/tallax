@@ -1,0 +1,572 @@
+Profiling bitonic_sort_arrays with shape (16, 8192) and stage_unroll=6
+interpret=False tracing mode (profiling compilation path)
+--------------------------------------------------------------------------------
+
+Adding functions to profile:
+  - tallax._src.bitonic_sort.bitonic_sort_arrays
+  - tallax._src.bitonic_sort._bitonic_sort_substage
+  - tallax._src.bitonic_sort._compute_padded_shape
+  - tallax._src.bitonic_sort._compute_is_descending
+  - tallax._src.bitonic_sort._resplit
+  - tallax._src.bitonic_sort._rejoin
+  - tallax._src.utils.to_compressed_transpose_format
+  - tallax._src.utils.from_compressed_transpose_format
+  - tallax._src.utils.pad
+  - tallax._src.sort.compare_and_swap
+
+================================================================================
+Tracing bitonic_sort_arrays to generate compilation statistics...
+================================================================================
+
+Direct call to bitonic_sort_arrays (without stage_unroll)...
+Padding (16, 8192) to (16, 8192)
+Result shape: (16, 8192)
+
+Manually profiling _bitonic_sort_substage calls (simulating stage_unroll=6)...
+Running stages 1-6 (stage_unroll=6) on smaller test data...
+Completed stage-unrolled substage profiling
+
+================================================================================
+LINE PROFILING RESULTS
+================================================================================
+
+Timer unit: 1e-09 s
+
+Total time: 7.2863e-05 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: _compute_padded_shape at line 74
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    74                                           def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
+    75                                             """Compute padded shape compatible with compressed transpose format requirements.
+    76                                           
+    77                                             This function finds the minimal padded shape that satisfies the constraints:
+    78                                             - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
+    79                                             - dim1 is a multiple of k
+    80                                             - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and
+    81                                               concat on full tiles, subtile concat not supported
+    82                                           
+    83                                             Args:
+    84                                               unpadded_dim0: Original first dimension size
+    85                                               unpadded_dim1: Original second dimension size
+    86                                               k: Target top-k size (must be power of 2 for padding calculation purposes)
+    87                                           
+    88                                             Returns:
+    89                                               Tuple of (padded_dim0, padded_dim1) compatible with compressed transpose format
+    90                                             """
+    91         1       1728.0   1728.0      2.4    if unpadded_dim0 >= NUM_LANES:
+    92                                               dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
+    93                                               dim1 = ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES))
+    94                                               return (dim0, dim1)
+    95                                           
+    96         1      24602.0  24602.0     33.8    dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
+    97                                               if 2**i >= unpadded_dim0]
+    98         2      35145.0  17572.5     48.2    shapes = [
+    99                                               (dim0, ceil_multiple(unpadded_dim1,
+   100                                                 NUM_LANES * NUM_LANES // dim0))
+   101         1        418.0    418.0      0.6      for dim0 in dim0s]
+   102                                             # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
+   103         1      10970.0  10970.0     15.1    return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
+
+Total time: 0.00690702 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: _resplit at line 107
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   107                                           def _resplit(operands, target_tile_dim0: int):    
+   108       113     176927.0   1565.7      2.6      def _resplit_inner(operand):
+   109                                                 tiles = jax.tree.leaves(operand)
+   110                                                 dim0 = tiles[0].shape[0]
+   111                                                 if dim0 == target_tile_dim0:
+   112                                                   return tiles
+   113                                                 elif dim0 > target_tile_dim0:
+   114                                                   return flatten([jnp.split(tile, dim0//target_tile_dim0, axis=0) for tile in tiles])
+   115                                                 else:
+   116                                                   l = target_tile_dim0 // dim0
+   117                                                   return [jnp.concatenate(operand[i*l:(i+1)*l], axis=0) for i in range(len(tiles)//l)]
+   118                                             
+   119       113    6730096.0  59558.4     97.4      return [_resplit_inner(x) for x in operands]
+
+Total time: 0 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: _rejoin at line 121
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   121                                           def _rejoin(operands):
+   122                                             def _inner(operand):
+   123                                               tiles = jax.tree.leaves(operand)
+   124                                               return jnp.concatenate(tiles, axis=0)
+   125                                             return [_inner(x) for x in operands]
+
+Total time: 11.5321 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: _compute_is_descending at line 128
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   128                                           def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length):
+   129                                               #assert isinstance(sort_dim_offset, int)
+   130                                               
+   131                                               # is_descending repeats every 2**(stage+1)
+   132                                               # if the offset divides cleanly it's 0's allowing for CSE in the add of zeros (and hopefully remove of add 0)
+   133      8551    8208051.0    959.9      0.1      if (type(sort_dim_offset) == int) and (type(stage) == int):
+   134      8551    9390725.0   1098.2      0.1        sort_dim_offset %= (2**(stage+1))
+   135                                               
+   136                                               # unoptimized is_descending from fully computing indices
+   137      8551 8242066230.0 963871.6     71.5      is_descending = create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
+   138                                               #return is_descending
+   139                                               
+   140      8551    6789627.0    794.0      0.1      if type(stage) == int:
+   141      8551    2779825.0    325.1      0.0        stage_lb = stage
+   142      8551    3299848.0    385.9      0.0        stage_ub = stage
+   143                                               elif hasattr(stage, 'lower_bound') and hasattr(stage, 'upper_bound'):
+   144                                                 # both bounds are inclusive
+   145                                                 stage_lb = stage.lower_bound
+   146                                                 stage_ub = stage.upper_bound
+   147                                               else:
+   148                                                 # can't optimize
+   149                                                 return is_descending
+   150                                                 
+   151      8551   34902184.0   4081.6      0.3      if (stage_ub < log2(NUM_SUBLANES)) or (stage_lb >= log2(compression_length)):
+   152                                                   # Bit only set by iota_tile(0), same pattern for all tiles
+   153      4513 3207057020.0 710626.4     27.8          return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
+   154      4038    8192918.0   2029.0      0.1      elif (stage_lb >= log2(NUM_SUBLANES)) and (stage_ub < log2(compression_length)):
+   155                                                   # Bit set by tile_offset, constant within tile, differs across tiles
+   156      4038    9417775.0   2332.3      0.1          return create_bit_indicator(stage, tile_start_offset + sort_dim_offset)
+   157                                               # can't optimize
+   158                                               return is_descending
+
+Total time: 25.2083 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: _bitonic_sort_substage at line 160
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   160                                           @functools.partial(jax.jit, static_argnames=('substage','stage','num_keys','batch_size','sort_dim_offset','compression_length','concat_threshold'))
+   161                                           def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None):
+   162                                               """Perform intra-tile bitonic comparison for sort.
+   163                                           
+   164                                               Args:
+   165                                                 arrs_tiles: Tuple of lists of tile arrays
+   166                                                 axis: Axis along which to apply permutation (0 or 1)
+   167                                                 separation: Distance between elements to compare within tile
+   168                                                 stage: Current sorting stage
+   169                                                 num_keys: Number of sort keys
+   170                                                 sort_dim_offset: Offset for bitonic order calculation
+   171                                                 batch_size: Batch size for computing tile offsets
+   172                                           
+   173                                               Returns:
+   174                                                 Tuple of lists of tiles with updated values
+   175                                               """
+   176       112     226290.0   2020.4      0.0      separation = 2**substage
+   177                                               # if still arrays, we make it into one big tile so its sanitized to list[list[jax.ndarray]]
+   178       112    2251917.0  20106.4      0.0      arrs_tiles = list(map(jax.tree.leaves, arrs_tiles))
+   179                                           
+   180       112      54717.0    488.5      0.0      if compression_length is None:
+   181                                                 compression_length = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
+   182       112     126714.0   1131.4      0.0      if separation < NUM_SUBLANES or separation >= compression_length:
+   183                                                 # we need to permute within tiles
+   184        60      74130.0   1235.5      0.0        axis = int(separation >= compression_length)
+   185        60      33817.0    563.6      0.0        intra_tile_separation = separation if axis==0 else ((separation * batch_size) // compression_length)
+   186                                                 
+   187                                                 # we need hardware tiles to lower the permute
+   188        60    6198165.0 103302.8      0.0        arrs_tiles = _resplit(arrs_tiles, NUM_SUBLANES)
+   189                                                 # Compute is_descending for each tile based on bitonic pattern
+   190        60   81542060.0 1.36e+06      0.3        tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * compression_length
+   191        60   39777520.0 662958.7      0.2        is_right_half = create_bit_indicator(log2(intra_tile_separation), iota_tile(axis))
+   192        60   22024865.0 367081.1      0.1        permutation = jnp.bitwise_xor(iota_tile(axis), intra_tile_separation)
+   193                                                 # Apply permutation to all tiles
+   194       120 1089547843.0 9.08e+06      4.3        arrs_tiles_permuted = jax.tree.map(
+   195        60      74499.0   1241.7      0.0          lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
+   196        60      31968.0    532.8      0.0          arrs_tiles
+   197                                                 )
+   198                                             
+   199                                                 # Compare and merge with permuted values
+   200        60    1216252.0  20270.9      0.0        outs_tiles = [[None for _ in t] for t in arrs_tiles]
+   201      5592   24307144.0   4346.8      0.1        for idx, (lefts, rights) in enumerate(zip(
+   202        60      65358.0   1089.3      0.0              *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
+   203        60      14329.0    238.8      0.0              strict=True
+   204                                                   )):
+   205     16236 7447221758.0 458685.7     29.5            for arr_idx, out in enumerate(compare_and_swap(
+   206      5412    1403268.0    259.3      0.0              lefts, rights,
+   207     10824 7183992889.0 663709.6     28.5              is_descending=      _compute_is_descending(
+   208      5412    1247314.0    230.5      0.0                stage=stage, 
+   209      5412    2725218.0    503.6      0.0                tile_start_offset=idx*NUM_SUBLANES, 
+   210      5412    1400459.0    258.8      0.0                tile_local_offset=tile_local_offset, 
+   211      5412    1183426.0    218.7      0.0                sort_dim_offset=sort_dim_offset, 
+   212      5412    1539638.0    284.5      0.0                compression_length=compression_length
+   213                                                       ),
+   214      5412    1552788.0    286.9      0.0              is_right_half=is_right_half,
+   215      5412    1233399.0    227.9      0.0              num_keys=num_keys
+   216                                                     )):
+   217      5412    4424023.0    817.4      0.0              outs_tiles[arr_idx][idx] = out
+   218                                               else:
+   219                                                 # Comparison between tiles
+   220                                                 
+   221        52      42921.0    825.4      0.0        tile_size = separation if ((concat_threshold is not None) and (separation >= concat_threshold)) else (separation if CONCAT_TILES else NUM_SUBLANES)
+   222        52    1174352.0  22583.7      0.0        arrs_tiles = _resplit(arrs_tiles, tile_size)
+   223        52      61487.0   1182.4      0.0        tile_shape = arrs_tiles[0][0].shape      
+   224        52      42797.0    823.0      0.0        num_tiles = len(arrs_tiles[0])
+   225        52      36915.0    709.9      0.0        tile_separation = separation // tile_shape[0]
+   226                                                 
+   227        52   63216193.0 1.22e+06      0.3        tile_local_offset = iota_tile(0, tile_shape) + (iota_tile(1, tile_shape) // batch_size) * compression_length
+   228                                           
+   229        52    1537065.0  29558.9      0.0        outs_tiles = [[None for _ in t] for t in arrs_tiles]
+   230      3191    1480014.0    463.8      0.0        for i in range(num_tiles // 2):
+   231      3139   10516669.0   3350.3      0.0          idx = compute_pair_slice_start_index(i, separation=tile_separation)
+   232      3139  997355017.0 317730.2      4.0          lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + tile_separation))
+   233      9417 3801233131.0 403656.5     15.1          for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
+   234      6278 4402082636.0 701191.9     17.5              lefts, rights, is_descending=_compute_is_descending(
+   235      3139     971044.0    309.3      0.0                stage=stage, 
+   236      3139    1417883.0    451.7      0.0                tile_start_offset=idx*tile_shape[0], 
+   237      3139     789556.0    251.5      0.0                tile_local_offset=tile_local_offset, 
+   238      3139     819856.0    261.2      0.0                sort_dim_offset=sort_dim_offset, 
+   239      3139     892718.0    284.4      0.0                compression_length=compression_length
+   240                                                       ),
+   241      3139     908136.0    289.3      0.0              num_keys=num_keys
+   242                                                   )):
+   243      3139    2588004.0    824.5      0.0            outs_tiles[arr_idx][idx] = out_left
+   244      3139    1807792.0    575.9      0.0            outs_tiles[arr_idx][idx + tile_separation] = out_right
+   245       112    3773906.0  33695.6      0.0      assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
+   246       112      34948.0    312.0      0.0      return outs_tiles
+
+Total time: 69.5063 s
+File: /home/user/tallax/tallax/_src/bitonic_sort.py
+Function: bitonic_sort_arrays at line 290
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   290                                           def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | None = None, tile_unroll: int | None = None, transpose_refs=None):
+   291                                               """
+   292                                               Bitonic sort using compressed transpose format with full tile unrolling.
+   293                                           
+   294                                               Similar to bitonic_topk_arrays but performs full sort without reduction.
+   295                                               Uses the same tiling strategy and format conversion for efficient TPU execution.
+   296                                           
+   297                                               Handles arbitrary sort dimensions efficiently:
+   298                                               - Dimensions ≤ NUM_LANES (128): Uses compressed transpose format substages
+   299                                               - Dimensions > NUM_LANES: Extends with cross-lane permutation substages
+   300                                               - Example: (8, 2048) sorted using stage-based bitonic reduce with full tile unrolling
+   301                                           
+   302                                               Args:
+   303                                                   operands: List of JAX arrays of shape (dim0, dim1)
+   304                                                   num_keys: Number of sort keys (default: 1)
+   305                                                   axis: Axis along which to perform sort (0 or 1)
+   306                                                   descending: If True, sort in descending order
+   307                                           
+   308                                               Returns:
+   309                                                   List of JAX arrays of same shape as input, sorted along specified axis
+   310                                               """
+   311         1       1504.0   1504.0      0.0      if stage_unroll is not None:
+   312                                                 assert transpose_refs is not None
+   313                                             
+   314         1       1336.0   1336.0      0.0      batch_axis = 1 - axis
+   315         1       5671.0   5671.0      0.0      shape = operands[0].shape
+   316                                               #unpadded_sort_dim = shape[axis]
+   317                                           
+   318         1        918.0    918.0      0.0      if axis == 1:
+   319         1      84077.0  84077.0      0.0          padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
+   320                                               elif axis == 0:
+   321                                                   padded_shape = (
+   322                                                     ceil_multiple(shape[0], NUM_SUBLANES),
+   323                                                     ceil_multiple(shape[1], NUM_LANES)
+   324                                                   )
+   325                                               else:
+   326                                                   raise ValueError
+   327                                                   
+   328         1     283370.0 283370.0      0.0      print(f'Padding {shape} to {padded_shape}')
+   329                                           
+   330                                               # Pad both dimensions if needed
+   331                                               # For ascending sort, pad with 'max' so padding values sort to the end
+   332                                               # For descending sort, pad with 'min' so padding values sort to the end
+   333         1     129420.0 129420.0      0.0      arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
+   334         1     172962.0 172962.0      0.0      arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
+   335                                               
+   336         1       6793.0   6793.0      0.0      num_stages = log2(shape[axis])
+   337         1        431.0    431.0      0.0      stage_unroll = min(stage_unroll, num_stages) if stage_unroll is not None else num_stages
+   338                                             
+   339         1       1968.0   1968.0      0.0      def _sort_arrays(arrs):
+   340                                                 batch_size = arrs[0].shape[batch_axis]
+   341                                                 assert batch_size <= NUM_LANES
+   342                                           
+   343                                                 # Convert to compressed transpose format
+   344                                                 arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
+   345                                           
+   346                                                 # Offset to control ascending vs descending final order
+   347                                                 sort_dim_offset = int(descending) * (2**num_stages)
+   348                                           
+   349                                                 # Run all bitonic sort stages
+   350                                                 compression_length = arrs_tiles[0].shape[0] 
+   351                                                 #slice_size = min(
+   352                                                 #  max(tile_unroll * NUM_SUBLANES, 2**stage_unroll), compression_length) if tile_unroll is not None else compression_length
+   353                                                 
+   354                                                 '''
+   355                                                 for stage in range(1, num_stages + 1):
+   356                                                   for substage in range(stage)[::-1]:
+   357                                                     arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length)
+   358                                                 '''
+   359                                                 slice_size = 2**stage_unroll if tile_unroll is None else tile_unroll*NUM_SUBLANES
+   360                                                 slice_size = min(max(slice_size, NUM_SUBLANES), compression_length)
+   361                                                 out_arrs_tiles = []
+   362                                                 for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
+   363                                                   for stage in range(1, stage_unroll + 1):
+   364                                                     for substage in range(stage)[::-1]:
+   365                                                       arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), compression_length=compression_length)    
+   366                                                   out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
+   367                                                 arrs_tiles = transpose_list_of_lists(out_arrs_tiles)                    
+   368                                                 
+   369                                                 for stage in range(stage_unroll + 1, num_stages + 1):
+   370                                                   for substage in range(stage_unroll, stage)[::-1]:
+   371                                                     arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length=compression_length, concat_threshold=2**stage_unroll)            
+   372                                                                     
+   373                                                   out_arrs_tiles = []
+   374                                                   for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
+   375                                                     for substage in range(stage_unroll)[::-1]:
+   376                                                       arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), compression_length = compression_length)
+   377                                                     out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
+   378                                                   arrs_tiles = transpose_list_of_lists(out_arrs_tiles)                    
+   379                                                 
+   380                                                 '''    
+   381                                                 else:
+   382                                                   # enter ref usage
+   383                                                   for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
+   384                                                     ref[...] = arr
+   385                                                     
+   386                                                   num_crosslane_stages = log2(NUM_LANES // batch_size)
+   387                                                   stage_sections = (stage_unroll, num_stages - num_crosslane_stages, num_stages)
+   388                                                   # stages are 1-indexed
+   389                                                   stage_sections = tuple(i+1 for i in stage_sections)
+   390                                                           
+   391                                                   stages, substages = [],[]
+   392                                                   for stage in range(1, stage_sections[0]):
+   393                                                     for substage in range(stage)[::-1]:
+   394                                                       stages.append(stage)
+   395                                                       substages.append(substage)
+   396                                                   _bitonic_sort_substage_refs(
+   397                                                     transpose_refs, substages=substages, stages=stages, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length,  slice_size=slice_size)
+   398                                                   
+   399                                                   for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
+   400                                                     # run the cross tile and cross lane fori_loops separately so we can make optimizations on is_descending
+   401                                                     @pl.loop(stage_lb, stage_ub)
+   402                                                     def run_dynamic_stage(stage):
+   403                                                       
+   404                                                       # bounds are inclusive on both ends
+   405                                                       # this is used to make optimizations on is_descending inside the code
+   406                                                       #stage = SymInt(stage, lower_bound=stage_lb, upper_bound=stage_ub-1)
+   407                                                       
+   408                                                       for substage in range(stage_lb, stage_ub)[::-1]:
+   409                                                         @pl.when(stage > substage)
+   410                                                         def run_substage():
+   411                                                           _bitonic_sort_substage_refs(
+   412                                                             transpose_refs, substages=(substage,), stages=(stage,), num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length,  slice_size=slice_size)
+   413                                                     
+   414                                                     substages = tuple(range(stage_lb)[::-1])
+   415                                                     stages = (stage,)*len(substages)
+   416                                                     _bitonic_sort_substage_refs(
+   417                                                     transpose_refs, substages=substages, stages=stages, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length = compression_length,  slice_size=slice_size)
+   418                                                   # back in array flow
+   419                                                   arrs_tiles = [[ref[...]] for ref in transpose_refs]
+   420                                                 '''
+   421                                                 # Convert back from compressed transpose format
+   422                                                 if axis == 1:
+   423                                                   arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+   424                                                 else:
+   425                                                   arrs = [join_tiles_to_array(tiles, dim0=ceil_multiple(2**num_stages, NUM_SUBLANES)) for tiles in arrs_tiles]
+   426                                                 return arrs
+   427                                           
+   428                                               # wrapping to act on batch_size <= NUM_LANES in the kernel
+   429         2      58821.0  29410.5      0.0      arrs = [
+   430                                                 jnp.concatenate(arr_slices, axis=batch_axis)
+   431         2      54307.0  27153.5      0.0        for arr_slices in transpose_list_of_lists(
+   432         2     6.95e+10 3.47e+10    100.0          [_sort_arrays(arrs)
+   433         2   16232131.0 8.12e+06      0.0          for arrs in transpose_list_of_lists([
+   434         1        235.0    235.0      0.0          jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
+   435                                               ])]
+   436                                               # Unpad to original shape
+   437         1     289763.0 289763.0      0.0      return [arr[:shape[0], :shape[1]] for arr in arrs]
+
+Total time: 11.1596 s
+File: /home/user/tallax/tallax/_src/sort.py
+Function: compare_and_swap at line 39
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    39                                           def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
+    40                                                        has_unique_key=False):
+    41                                             """Compare and conditionally swap array pairs.
+    42                                           
+    43                                             Args:
+    44                                               lefts: Tuple of left arrays to compare
+    45                                               rights: Tuple of right arrays to compare
+    46                                               num_keys: Number of arrays to use as sort keys
+    47                                               is_descending: Boolean mask for sort direction (None implies ascending)
+    48                                               is_right_half: Mask for subtile comparisons. Needed for handling ties in values correctly.
+    49                                               has_unique_key: Whether first key is guaranteed unique (optimizes sort)
+    50                                           
+    51                                             Returns:
+    52                                               Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
+    53                                             """
+    54      8551    6339644.0    741.4      0.1    num_arrs = len(lefts)
+    55                                           
+    56      8551    6034349.0    705.7      0.1    def _compare_pair(i, left, right):
+    57                                               handle_subtile_ties = (
+    58                                                   is_right_half is not None
+    59                                                   and not has_unique_key and num_arrs != num_keys and i == num_keys - 1
+    60                                               )
+    61                                           
+    62                                               if handle_subtile_ties:
+    63                                                 left, right = (
+    64                                                     jnp.where(is_right_half, right, left),
+    65                                                     jnp.where(is_right_half, left, right)
+    66                                                 )
+    67                                           
+    68                                               mask = (left > right if type(is_descending) == bool and is_descending
+    69                                                       else right > left)
+    70                                               mask = mask.astype(jnp.int32)
+    71                                           
+    72                                               if is_right_half is not None and not handle_subtile_ties:
+    73                                                 mask = jnp.bitwise_xor(mask, is_right_half.astype(jnp.int32))
+    74                                               return mask
+    75                                           
+    76     17102 5140361526.0 300570.8     46.1    masks = tuple(
+    77                                                 _compare_pair(i, left, right)
+    78      8551   14324342.0   1675.2      0.1        for i, (left, right) in enumerate(zip(lefts, rights, strict=True))
+    79                                             )
+    80                                           
+    81      8551 1542309560.0 180366.0     13.8    ties = [(left == right) for left, right in zip(lefts, rights, strict=True)]
+    82                                           
+    83      8551    4408107.0    515.5      0.0    mask = masks[0]
+    84      8551   10701289.0   1251.5      0.1    for k in range(1, num_keys):
+    85                                               # Break ties in primary key with secondary key comparison
+    86                                               mask = jnp.where(ties[k - 1], masks[k], mask)
+    87                                               ties[k] &= ties[k - 1]
+    88                                           
+    89      8551    5851673.0    684.3      0.1    if is_descending is not None and type(is_descending) != bool:
+    90                                               # Dynamic descending mask
+    91      4513  632900539.0 140239.4      5.7      mask = mask.astype(bool)
+    92      4513  179751413.0  39829.7      1.6      is_descending = is_descending.astype(bool)
+    93      4513  644815731.0 142879.6      5.8      mask = mask ^ is_descending
+    94                                           
+    95     17102 2964982972.0 173370.5     26.6    return jax.tree.map(
+    96      8551    4277371.0    500.2      0.0        lambda left, right: (
+    97                                                     (jnp.where(mask, left, right), jnp.where(mask, right, left))
+    98                                                     if is_right_half is None else
+    99                                                     jnp.where(mask, left, right)
+   100                                                 ),
+   101      8551    2504906.0    292.9      0.0        lefts, rights
+   102                                             )
+
+Total time: 0.000148654 s
+File: /home/user/tallax/tallax/_src/utils.py
+Function: pad at line 61
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+    61                                           def pad(
+    62                                               arr: jax.Array,
+    63                                               block_shape: tuple[int | str, ...] = None,
+    64                                               prepend: bool | tuple[bool, ...] = False,
+    65                                               val = 'max_nan',
+    66                                           ) -> jax.Array:
+    67                                             """Pad array to satisfy alignment requirements.
+    68                                           
+    69                                             Args:
+    70                                               arr: Input array to pad.
+    71                                               block_shape: Target block shape for each dimension. Can be:
+    72                                                 - int: Pad to be multiple of this value
+    73                                                 - 'power_of_2_lanes': Pad to next power of 2 (at least NUM_LANES)
+    74                                                 Defaults to (NUM_SUBLANES, NUM_LANES).
+    75                                               prepend: Whether to prepend (True) or append (False) padding.
+    76                                                 Can be a single bool or tuple of bools for each dimension.
+    77                                               val: Padding value. If None, uses max value (or nan) for sorting.
+    78                                           
+    79                                             Returns:
+    80                                               Padded array.
+    81                                             """
+    82                                             # Handle default block_shape
+    83         2       1816.0    908.0      1.2    if block_shape is None:
+    84                                               block_shape = (NUM_SUBLANES, NUM_LANES)
+    85                                           
+    86         2      17218.0   8609.0     11.6    if len(block_shape) != arr.ndim:
+    87                                               raise ValueError(
+    88                                                   f"block_shape length {len(block_shape)} must match array ndim {arr.ndim}"
+    89                                               )
+    90                                           
+    91                                             # Normalize prepend to tuple
+    92         2       2369.0   1184.5      1.6    if isinstance(prepend, bool):
+    93         2       5114.0   2557.0      3.4      prepend = (prepend,) * arr.ndim
+    94                                           
+    95         2       3067.0   1533.5      2.1    if len(prepend) != arr.ndim:
+    96                                               raise ValueError(
+    97                                                   f"prepend length {len(prepend)} must match array ndim {arr.ndim}"
+    98                                               )
+    99                                           
+   100                                             # Calculate padding for each dimension
+   101         2        823.0    411.5      0.6    pad_widths = []
+   102         6      11342.0   1890.3      7.6    for i, (dim_size, block_spec) in enumerate(zip(arr.shape, block_shape)):
+   103         4       2974.0    743.5      2.0      if block_spec == 'power_of_2_lanes':
+   104                                                 target_size = max(2**log2(dim_size), NUM_LANES)
+   105         4       2838.0    709.5      1.9      elif isinstance(block_spec, int):
+   106         4      18224.0   4556.0     12.3        target_size = pl.cdiv(dim_size, block_spec) * block_spec
+   107                                               else:
+   108                                                 raise ValueError(f"Invalid block_shape element: {block_spec}")
+   109                                           
+   110         4       1511.0    377.8      1.0      pad_size = target_size - dim_size
+   111         4       1860.0    465.0      1.3      if prepend[i]:
+   112                                                 pad_widths.append((pad_size, 0))
+   113                                               else:
+   114         4       6705.0   1676.2      4.5        pad_widths.append((0, pad_size))
+   115                                           
+   116                                             # Determine padding value
+   117         2       1352.0    676.0      0.9    if isinstance(val, str):
+   118         2      56848.0  28424.0     38.2      info = get_dtype_info(arr)
+   119         2       1055.0    527.5      0.7      if val == 'min':
+   120                                                 pad_val = info.min
+   121         2        601.0    300.5      0.4      elif val == 'max':
+   122         2       3199.0   1599.5      2.2        pad_val = info.max
+   123                                               elif val == 'max_nan':
+   124                                                 pad_val = info.max
+   125                                                 if jnp.issubdtype(arr.dtype, jnp.floating):
+   126                                                   pad_val = jnp.nan
+   127                                               else:
+   128                                                 raise ValueError
+   129                                             else:
+   130                                               pad_val = val
+   131                                           
+   132                                             # Return early if no padding needed
+   133         2       9217.0   4608.5      6.2    if all(w == (0, 0) for w in pad_widths):
+   134         2        521.0    260.5      0.4      return arr
+   135                                           
+   136                                             return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
+
+Total time: 0.231287 s
+File: /home/user/tallax/tallax/_src/utils.py
+Function: to_compressed_transpose_format at line 289
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   289                                           def to_compressed_transpose_format(arr):
+   290                                             """Convert array to sublane-oriented format for faster permutes."""
+   291         2       3589.0   1794.5      0.0    dim0 = arr.shape[0]
+   292         2       2449.0   1224.5      0.0    assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
+   293         2  125903227.0  6.3e+07     54.4    arrs = jnp.split(arr, NUM_LANES // dim0, axis=1)
+   294         2  105376243.0 5.27e+07     45.6    arr = jnp.concatenate(arrs, axis=0).T
+   295         2       1436.0    718.0      0.0    return arr
+
+Total time: 0.130384 s
+File: /home/user/tallax/tallax/_src/utils.py
+Function: from_compressed_transpose_format at line 298
+
+Line #      Hits         Time  Per Hit   % Time  Line Contents
+==============================================================
+   298                                           def from_compressed_transpose_format(tiles, dim0):
+   299                                             """Convert from compressed transpose format back to original layout."""
+   300         1       2068.0   2068.0      0.0    assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
+   301         1   32097580.0 3.21e+07     24.6    arr = jnp.concatenate(tiles, axis=0).T
+   302         1       4218.0   4218.0      0.0    assert arr.shape[0] == NUM_LANES
+   303         1   69524248.0 6.95e+07     53.3    arrs = jnp.split(arr, arr.shape[0] // dim0, axis=0)
+   304         1   28755444.0 2.88e+07     22.1    return jnp.concatenate(arrs, axis=1)
+
