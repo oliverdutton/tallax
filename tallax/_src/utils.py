@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
+from tallax._src.bounded_int import BoundedInt
 
 
 # TPU hardware constants
