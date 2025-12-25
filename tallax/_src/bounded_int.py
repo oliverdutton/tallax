@@ -342,6 +342,107 @@ class BoundedInt:
             )
         return NotImplemented
 
+    def __lshift__(self, other):
+        """Left bitshift: x << other."""
+        if isinstance(other, int) and other >= 0:
+            return BoundedInt(
+                self.value << other,
+                self.lower_bound << other,
+                self.upper_bound << other
+            )
+        return NotImplemented
+
+    def __rshift__(self, other):
+        """Right bitshift: x >> other."""
+        if isinstance(other, int) and other >= 0:
+            return BoundedInt(
+                self.value >> other,
+                self.lower_bound >> other,
+                self.upper_bound >> other
+            )
+        return NotImplemented
+
+    # Reverse bitwise operations (for when BoundedInt is on the right side)
+
+    def __rand__(self, other):
+        """Reverse bitwise AND: other & self."""
+        if isinstance(other, int):
+            return BoundedInt(
+                other & self.value,
+                0,  # Conservative
+                min(other, self.upper_bound)
+            )
+        return NotImplemented
+
+    def __ror__(self, other):
+        """Reverse bitwise OR: other | self."""
+        if isinstance(other, int):
+            return BoundedInt(
+                other | self.value,
+                max(other, self.lower_bound),
+                other | self.upper_bound  # Conservative
+            )
+        return NotImplemented
+
+    def __rxor__(self, other):
+        """Reverse bitwise XOR: other ^ self."""
+        if isinstance(other, int):
+            return BoundedInt(
+                other ^ self.value,
+                0,
+                max(other, self.upper_bound) * 2  # Conservative
+            )
+        return NotImplemented
+
+    def __rlshift__(self, other):
+        """Reverse left bitshift: other << self.
+
+        This is tricky because the result depends exponentially on self.
+        For safety, we use the actual tracer value for computation.
+        """
+        if isinstance(other, int):
+            if self.lower_bound == self.upper_bound:
+                # Concrete shift amount
+                shift = self.lower_bound
+                return BoundedInt(
+                    other << self.value,
+                    other << shift,
+                    other << shift
+                )
+            else:
+                # Dynamic shift - bounds are exponential
+                return BoundedInt(
+                    other << self.value,
+                    other << self.lower_bound,
+                    other << self.upper_bound
+                )
+        # For JAX tracer on the left
+        return other << self.value
+
+    def __rrshift__(self, other):
+        """Reverse right bitshift: other >> self.
+
+        Shifts the other value right by self amount.
+        """
+        if isinstance(other, int):
+            if self.lower_bound == self.upper_bound:
+                # Concrete shift amount
+                shift = self.lower_bound
+                return BoundedInt(
+                    other >> self.value,
+                    other >> shift,
+                    other >> shift
+                )
+            else:
+                # Dynamic shift
+                return BoundedInt(
+                    other >> self.value,
+                    other >> self.upper_bound,  # Right shift: larger shift = smaller result
+                    other >> self.lower_bound
+                )
+        # For JAX tracer on the left
+        return other >> self.value
+
     # Allow use as integer index
 
     def __index__(self):

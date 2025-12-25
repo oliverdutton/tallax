@@ -75,6 +75,36 @@ def test_bounded_int_modulo():
     print("\nModulo tests passed!")
 
 
+def test_bounded_int_bitshift():
+    """Test bitshift operations on BoundedInt."""
+
+    x = BoundedInt(jnp.array(3), lower_bound=2, upper_bound=4)
+
+    print("\nTesting bitshift operations:")
+
+    # Left shift
+    y = x << 1
+    print(f"x << 1: bounds=[{y.lower_bound}, {y.upper_bound}]")  # [4, 8]
+    assert y.lower_bound == 4 and y.upper_bound == 8
+
+    # Right shift
+    y = x >> 1
+    print(f"x >> 1: bounds=[{y.lower_bound}, {y.upper_bound}]")  # [1, 2]
+    assert y.lower_bound == 1 and y.upper_bound == 2
+
+    # Reverse left shift: 16 << x
+    y = 16 << x
+    print(f"16 << x: bounds=[{y.lower_bound}, {y.upper_bound}]")  # [64, 256]
+    assert y.lower_bound == 64 and y.upper_bound == 256
+
+    # Reverse right shift: 64 >> x
+    y = 64 >> x
+    print(f"64 >> x: bounds=[{y.lower_bound}, {y.upper_bound}]")  # [4, 16]
+    assert y.lower_bound == 4 and y.upper_bound == 16
+
+    print("\nBitshift tests passed!")
+
+
 def test_bounded_int_bitonic_use_case():
     """Test the specific use case from bitonic sort."""
 
@@ -141,6 +171,7 @@ if __name__ == "__main__":
     test_bounded_int_comparisons()
     test_bounded_int_arithmetic()
     test_bounded_int_modulo()
+    test_bounded_int_bitshift()
     test_bounded_int_bitonic_use_case()
     test_bounded_int_with_jax_operations()
 
