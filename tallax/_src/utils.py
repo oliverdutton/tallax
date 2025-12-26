@@ -12,11 +12,13 @@ from jax.experimental import pallas as pl
 NUM_SUBLANES = 8
 NUM_LANES = 128
 
+
 def is_cpu_platform():
   is_cpu = jax.default_backend() == "cpu"
   if is_cpu:
     warnings.warn("Running on CPU, interpret=True will be used.")
   return is_cpu
+
 
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
@@ -134,8 +136,6 @@ def pad(
     return arr
 
   return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
-
-
 
 
 def standardize(x):
@@ -273,16 +273,13 @@ def iota_tile(dim, tile_shape=(NUM_SUBLANES, NUM_LANES)):
   return lax.broadcasted_iota(jnp.int32, tile_shape, dim)
 
 
-def create_bit_indicator(bit_position: int, index=None):
+def create_bit_indicator(bit_position: int, index):
   """Create mask indicating which elements have specific bit set.
 
   Returns bool when bit_position is static int, int32 (0 or 1) when dynamic.
   """
-  if index is None:
-    index = iota_tile(1)
   if type(bit_position) == int:
-    bit = (index & (1 << bit_position))
-    return bit > 0
+    return (index & (1 << bit_position)) > 0
   return (index >> bit_position) & 1
 
 
