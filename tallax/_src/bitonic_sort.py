@@ -203,39 +203,56 @@ def _rejoin(operands):
 
 
 def _compute_is_descending(stage, tile_start_offset, tile_local_offset, sort_dim_offset, compression_length, substage=None):
+    # Unwrap SymInt/stage value for create_bit_indicator
+    stage_value = int(stage) if hasattr(stage, 'value') else stage
+
+    # Unwrap sort_dim_offset if it's a SymInt for the final calculation
+    # but keep it as SymInt for modulo optimization
+    sort_dim_offset_value = int(sort_dim_offset) if hasattr(sort_dim_offset, 'value') else sort_dim_offset
+
     # is_descending repeats every 2**(stage+1)
-    # if the offset divides cleanly it's 0's allowing for CSE in the add of zeros (and hopefully remove of add 0)
-    if (type(sort_dim_offset) == int) and (type(stage) == int):
-      sort_dim_offset %= (2**(stage+1))
-    if (type(sort_dim_offset) == int) and (hasattr(stage, 'upper_bound')):
-      sort_dim_offset %= (2**(stage.upper_bound+1))
+    # Optimize sort_dim_offset using modulo when possible
+    # SymInt's __mod__ will return 0 if it knows the value is divisible
+    if isinstance(stage, int):
+        modulo_result = sort_dim_offset % (2**(stage+1))
+        if modulo_result == 0:
+            # Statically known to be 0 - use 0 instead of computing
+            print(f"_compute_is_descending: MODULO OPTIMIZATION - sort_dim_offset % 2^(stage+1) == 0")
+            sort_dim_offset = 0
+            sort_dim_offset_value = 0
+        elif isinstance(sort_dim_offset, int):
+            sort_dim_offset = modulo_result
+            sort_dim_offset_value = modulo_result
 
-    # unoptimized is_descending from fully computing indices
-    is_descending = create_bit_indicator(stage, tile_start_offset + tile_local_offset + sort_dim_offset)
+    # Check if we can optimize based on stage comparisons
+    # Using natural comparisons that leverage SymInt's static evaluation
+    stage_lt_sublanes = stage < log2(NUM_SUBLANES)
+    stage_ge_compression = stage >= log2(compression_length)
 
-    if type(stage) == int:
-      stage_lb = stage
-      stage_ub = stage
-    elif hasattr(stage, 'lower_bound') and hasattr(stage, 'upper_bound'):
-      # both bounds are inclusive
-      stage_lb = stage.lower_bound
-      stage_ub = stage.upper_bound
-      stage = stage.value
-    else:
-      # can't optimize
-      print('cant optimize, shouldnt happen')
-      return is_descending
-
-    #sort_dim_offset = 0
-
-    if (stage_ub < log2(NUM_SUBLANES)) or (stage_lb >= log2(compression_length)):
+    # If comparison resolved to bool True, we can optimize
+    if type(stage_lt_sublanes) == bool and stage_lt_sublanes:
         # Bit only set by iota_tile(0), same pattern for all tiles
-        return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
-    elif (stage_lb >= log2(NUM_SUBLANES)) and (stage_ub < log2(compression_length)):
+        print(f"_compute_is_descending: OPTIMIZED (sublane path) - stage < log2(NUM_SUBLANES)")
+        return create_bit_indicator(stage_value, tile_local_offset + sort_dim_offset_value)
+
+    if type(stage_ge_compression) == bool and stage_ge_compression:
+        # Stage is beyond compression length, same pattern across everything
+        print(f"_compute_is_descending: OPTIMIZED (compression path) - stage >= log2(compression_length)")
+        return create_bit_indicator(stage_value, tile_local_offset + sort_dim_offset_value)
+
+    # Check the middle range where tile_offset is constant within tile but differs across tiles
+    stage_ge_sublanes = stage >= log2(NUM_SUBLANES)
+    stage_lt_compression = stage < log2(compression_length)
+
+    if (type(stage_ge_sublanes) == bool and stage_ge_sublanes and
+        type(stage_lt_compression) == bool and stage_lt_compression):
         # Bit set by tile_offset, constant within tile, differs across tiles
-        return create_bit_indicator(stage, tile_start_offset + sort_dim_offset)
-    # can't optimize
-    return is_descending
+        print(f"_compute_is_descending: OPTIMIZED (tile path) - log2(NUM_SUBLANES) <= stage < log2(compression_length)")
+        return create_bit_indicator(stage_value, tile_start_offset + sort_dim_offset_value)
+
+    # Can't optimize - use full computation
+    print(f"_compute_is_descending: UNOPTIMIZED - using full tile_start_offset + tile_local_offset")
+    return create_bit_indicator(stage_value, tile_start_offset + tile_local_offset + sort_dim_offset_value)
 
 
 def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None):
@@ -364,17 +381,32 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
   grid_size = compression_length // ref_slice_size
 
   def process_block(i):
-    #i = SymInt(i) # to track divisors of i for is_descending optimizations
+    # Wrap i with SymInt to track divisibility for is_descending optimizations
+    # i is loop index, so i * ref_slice_size will be multiple of ref_slice_size
+    i_sym = SymInt(i, lower_bound=0, upper_bound=grid_size-1, multiple_of=1)
+    i_offset = i_sym * ref_slice_size  # This will be multiple of ref_slice_size
+
     arrs_tiles = [
         ref[pl.dslice(i * ref_slice_size, ref_slice_size)]
         for ref in transpose_refs
     ]
     out_arrs_tiles = []
     for j, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
+      # j * slice_size will also be a multiple of slice_size
+      j_offset = SymInt(j * slice_size, lower_bound=j * slice_size, upper_bound=j * slice_size, multiple_of=slice_size)
+      # Combined offset: i_offset + j_offset will be multiple of gcd(ref_slice_size, slice_size)
+      combined_offset = sort_dim_offset + i_offset + j_offset
+
       for substage, stage in zip(substages, stages, strict=True):
-        arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset + i * ref_slice_size + j * slice_size,
-        compression_length=compression_length, concat_threshold=concat_threshold)
-        # way to avoid is_descending for cross tile comparisons
+        arrs_slice_tiles = _bitonic_sort_substage(
+            arrs_slice_tiles,
+            substage=substage,
+            stage=stage,
+            num_keys=num_keys,
+            batch_size=batch_size,
+            sort_dim_offset=combined_offset,
+            compression_length=compression_length,
+            concat_threshold=concat_threshold)
       out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
     arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
 
