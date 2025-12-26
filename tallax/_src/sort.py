@@ -601,6 +601,7 @@ def _sort_in_vmem_bitonic_refs(
     slice_size_unroll: int | None = None,
     ref_slice_size_unroll: int | None = None,
     unroll_stages: bool = True,
+    float_keys_converted_outside: list[bool] | None = None,
 ):
   """Pallas kernel for sorting using bitonic sort."""
   shape = in_refs[0].shape
@@ -625,12 +626,17 @@ def _sort_in_vmem_bitonic_refs(
 
   # Reuse in/out VMEM buffers to reduce memory usage
   # Convert float keys to sortable int first to avoid bitcast issues
+  # Skip conversion if already converted outside (on CPU)
+  if float_keys_converted_outside is None:
+    float_keys_converted_outside = [False] * len(in_refs)
+
   float_keys_mask = []
   for i in range(len(in_refs)):
     is_float_key = jnp.issubdtype(in_refs[i].dtype, jnp.floating) and i < num_keys
     float_keys_mask.append(is_float_key)
 
-    if is_float_key:
+    # Skip conversion if already converted outside (on CPU)
+    if is_float_key and not float_keys_converted_outside[i]:
       # Convert float to sortable int before storing in refs
       refs[i][...] = float_to_sortable_int(in_refs[i][...])
     elif same_shape_dtype(in_refs[i], refs[i]):
@@ -731,6 +737,18 @@ def _sort_in_vmem_bitonic(
   """
   operands, shape = canonicalize_operand(operand)
 
+  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid bitcast issues
+  # On TPU, keep conversion inside Pallas kernel for efficiency
+  float_keys_converted_outside = []
+  if is_cpu_platform() or interpret:
+    for i in range(len(operands)):
+      is_float_key = jnp.issubdtype(operands[i].dtype, jnp.floating) and i < num_keys
+      float_keys_converted_outside.append(is_float_key)
+      if is_float_key:
+        operands[i] = float_to_sortable_int(operands[i])
+  else:
+    float_keys_converted_outside = [False] * len(operands)
+
   if k is None:
     k = shape[-1]
   if block_token is None:
@@ -756,8 +774,9 @@ def _sort_in_vmem_bitonic(
   )
 
   # Allocate scratch refs with int32 for float keys to avoid dtype conversion issues
+  # If float was already converted outside, it's already int32
   scratch_ref_dtypes = [
-      jnp.int32 if (jnp.issubdtype(ref.dtype, jnp.floating) and i < num_keys)
+      jnp.int32 if (not float_keys_converted_outside[i] and jnp.issubdtype(ref.dtype, jnp.floating) and i < num_keys)
       else to_32bit_dtype(ref.dtype)
       for i, ref in enumerate(operands)
   ]
@@ -766,13 +785,14 @@ def _sort_in_vmem_bitonic(
       pltpu.VMEM(block_shape, jnp.int32),
   )
 
-  return pl.pallas_call(
+  outputs = pl.pallas_call(
       functools.partial(_sort_in_vmem_bitonic_refs, descending=descending, num_keys=num_keys,
                         is_stable=is_stable, log_n=log_n,
                         stage_unroll=stage_unroll,
                         slice_size_unroll=slice_size_unroll,
                         ref_slice_size_unroll=ref_slice_size_unroll,
-                        unroll_stages=unroll_stages),
+                        unroll_stages=unroll_stages,
+                        float_keys_converted_outside=float_keys_converted_outside),
       out_shape=(out_shapes,),
       in_specs=in_specs,
       out_specs=(out_specs,),
@@ -783,6 +803,14 @@ def _sort_in_vmem_bitonic(
       ),
       interpret=interpret,
   )(operands)[0]
+
+  # Convert sortable ints back to floats if we converted them outside
+  outputs = list(outputs)
+  for i in range(len(outputs)):
+    if i < len(float_keys_converted_outside) and float_keys_converted_outside[i]:
+      outputs[i] = sortable_int_to_float(outputs[i])
+
+  return tuple(outputs)
 
 
 ### HBM-Based Substage (for large arrays)
