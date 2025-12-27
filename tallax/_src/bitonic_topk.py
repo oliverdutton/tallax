@@ -25,22 +25,17 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
-    flatten,
     ceil_multiple,
-    iota_tile,
     pad,
     canonicalize_operand,
     transpose_list_of_lists,
     to_compressed_transpose_format,
-    from_compressed_transpose_format,
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
-    create_bit_indicator,
 )
-from tallax._src.sort import (
-    compare_and_swap,
-    compute_pair_slice_start_index,
+from tallax._src.bitonic_sort import (
+    bitonic_sort_substage,
 )
 
 
@@ -75,73 +70,6 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
-def _max_reduce_bitonic_inter_tile(
-    arrs_tiles, *, separation, num_keys: int
-):
-  """Perform crosstile comparison keeping max values.
-
-  Args:
-    arrs_tiles: Tuple of lists of tile arrays
-    separation: Distance between tiles to compare
-    num_keys: Number of sort keys
-
-  Returns:
-    Tuple of lists with half the tiles (max halves only), plus remainder if odd
-  """
-  num_tiles = len(arrs_tiles[0])
-  outs_tiles = [[] for t in arrs_tiles]
-  for i in range(num_tiles // 2):
-    idx = compute_pair_slice_start_index(i, separation)
-    lefts, rights = (
-        transpose_list_of_lists(arrs_tiles)[j]
-        for j in (idx, idx + separation)
-    )
-    # Keep only max (left) values, discard min (right)
-    for j, (o_left, _) in enumerate(compare_and_swap(
-        lefts, rights, is_descending=True, num_keys=num_keys
-    )):
-      outs_tiles[j].append(o_left)  
-  return outs_tiles
-
-def _max_reduce_bitonic_intra_tile(arrs_tiles, *, axis, separation, num_keys):
-    """Perform intra-tile comparison keeping max values.
-
-    Args:
-      arrs_tiles: Tuple of lists of tile arrays
-      axis: Axis along which to apply permutation (0 or 1)
-      separation: Distance between elements to compare within tile
-      num_keys: Number of sort keys
-
-    Returns:
-      Tuple of lists of tiles with updated values
-    """
-    # Create permutation indices for tiles using iota_tile
-    permutation = jnp.bitwise_xor(iota_tile(axis), separation)
-    is_right_half = create_bit_indicator(log2(separation), iota_tile(axis))
-
-    # Apply permutation to all tiles
-    arrs_tiles_permuted = jax.tree.map(
-      lambda tile: jnp.take_along_axis(tile, permutation, axis=axis),
-      arrs_tiles
-    )
-
-    # Compare and merge with permuted values
-    outs_tiles = [[None for _ in t] for t in arrs_tiles]
-    for idx, (lefts, rights) in enumerate(zip(
-          *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)),
-          strict=True
-      )):
-        for arr_idx, out in enumerate(compare_and_swap(
-            lefts, rights,
-            is_descending=True,
-            is_right_half=is_right_half,
-            num_keys=num_keys
-        )):
-          outs_tiles[arr_idx][idx] = out
-    assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
-    return outs_tiles
-    
-    
 
 # until pl.cdiv(k, NUM_SUBLANES) tiles left. compare at distance ceil_multiple(k, NUM_SUBLANES)
 # now the number of tiles is set. 
@@ -197,95 +125,66 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    def _max_reduce_bitonic(arrs_tiles, separation, batch_size):
-        # separation is comparison distance
-        assert separation == 2**log2(separation)
-        num_tiles = len(arrs_tiles[0])
-        cross_tile = False
-        if separation < NUM_SUBLANES:
-            # cross sublane
-            reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=0, separation=separation)
-        elif separation < num_tiles * NUM_SUBLANES:
-            # cross tile
-            cross_tile = True
-            tile_separation = separation // NUM_SUBLANES
-            reduce_fn = functools.partial(_max_reduce_bitonic_inter_tile, separation=tile_separation)
-        else:
-            # cross lane (due to compressed transpose format)
-            lane_separation = batch_size * (separation // (num_tiles * NUM_SUBLANES))
-            reduce_fn = functools.partial(_max_reduce_bitonic_intra_tile, axis=1, separation=lane_separation)
-        
-        # special handling for cross tile as tile to compare to may not exist
-        remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
-        if cross_tile and remainder_length:
-          remainder_arrs_tiles = [
-          x[-remainder_length:] for x in arrs_tiles]
-          arrs_tiles = [
-          x[:-remainder_length] for x in arrs_tiles]
-
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-          arrs_tiles,
-          num_substages=log2(k),
-          stage=log2(separation),
-          batch_size=batch_size,
-          num_keys=num_keys,
-        )
-        arrs_tiles = reduce_fn(arrs_tiles, num_keys=num_keys)
-
-        if cross_tile and remainder_length:
-          arrs_tiles = [x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)]
-        return arrs_tiles
-
     def _topk_arrays(arrs):
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
       batch_size = arrs[0].shape[batch_axis]
       assert batch_size <= NUM_LANES
-      log_lanes = log2(NUM_LANES)
+      
+      _bitonic_sort_substage = functools.partial(bitonic_sort_substage, batch_size=batch_size, num_keys=num_keys)
+      def max_reduce_stage(arrs_tiles, reduce_stage):       
+        for substage in range(log2(k))[::-1]:
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=reduce_stage)
+        return _bitonic_sort_substage(arrs_tiles, substage=reduce_stage, max_reduce=True)
+      
       num_tiles = len(arrs_tiles[0])
       num_merges = log2(unpadded_sort_dim) - log2(k)
       num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
       num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
       num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
-      # are intra permutations
   
       # Build bitonic sequences up to length k/2
       for stage in range(1, log2(k)):
-        arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-          arrs_tiles,
-          num_substages=stage,
-          stage=stage,
-          batch_size=batch_size,
-          num_keys=num_keys,
-        )
+        for substage in range(stage)[::-1]:
+          arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage)
   
-      # Progressive merge tiles together as far as possible
+      # Progressive merge tiles together as far as possible first
       for _ in range(num_tile_merges):
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=ceil_multiple(k, NUM_SUBLANES), batch_size=batch_size)
+        # special handling for cross tile as tile to compare to may not exist
+        remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
+        if remainder_length:
+          remainder_arrs_tiles = [
+          x[-remainder_length:] for x in arrs_tiles]
+          arrs_tiles = [
+          x[:-remainder_length] for x in arrs_tiles]
+        arrs_tiles = max_reduce_stage(
+          arrs_tiles,
+          reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES)))
+        if remainder_length:
+          arrs_tiles = [x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)]
+        
       num_tiles = len(arrs_tiles[0])
       assert num_tiles == pl.cdiv(k, NUM_SUBLANES), f'{num_tiles=}, should be {pl.cdiv(k, NUM_SUBLANES)}'
       for i in range(num_lane_merges)[::-1]:
-        separation = num_tiles * NUM_SUBLANES * 2**i
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
+        arrs_tiles = max_reduce_stage(
+          arrs_tiles,
+          reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))+i)
       for i in range(num_sublane_merges)[::-1]:
-        separation = k * (2**i)
-        arrs_tiles = _max_reduce_bitonic(arrs_tiles, separation=separation, batch_size=batch_size)
+        arrs_tiles = max_reduce_stage(
+          arrs_tiles,
+          reduce_stage=log2(k)+i)
+
       # Final sort: convert bitonic sequence to fully descending order
       # Use sort_dim_offset=k to ensure descending direction
-      arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-        arrs_tiles,
-        num_substages=log2(k),
-        stage=log2(k),
-        sort_dim_offset=k,
-        batch_size=batch_size,
-        num_keys=num_keys,
-      )
+      for substage in range(log2(k))[::-1]:
+        arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k)
       
       arrs = [join_tiles_to_array(
         tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
       if axis == 1:
         arrs = [x.T for x in arrs]
       return arrs
+
     # wrapping to act on batch_size <= NUM_LANES in the kernel 
     arrs = [
       jnp.concatenate(arr_slices, axis=batch_axis)
