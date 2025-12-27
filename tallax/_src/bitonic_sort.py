@@ -250,7 +250,7 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
     Returns:
       Tuple of lists of tiles with updated values
     """
-    assert (not max_reduce) and stage is None
+    assert max_reduce or stage is not None
     separation = 2**substage
     # if still arrays, we make it into one big tile so its sanitized to list[list[jax.ndarray]]
     arrs_tiles = list(map(jax.tree.leaves, arrs_tiles))
