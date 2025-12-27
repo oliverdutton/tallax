@@ -57,7 +57,6 @@ def _sort_in_vmem_bitonic_refs(
     slice_size_unroll: int | None = None,
     ref_slice_size_unroll: int | None = None,
     unroll_stages: bool = True,
-    float_keys_converted_outside: list[bool] | None = None,
 ):
   """Pallas kernel for sorting using bitonic sort."""
   shape = in_refs[0].shape
