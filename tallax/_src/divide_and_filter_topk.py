@@ -7,7 +7,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax._src.bitonic_topk_core import bitonic_topk_arrays
 from tallax.divide_and_filter_topk_convergence_theory import calculate_depth_thresholds
-from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
+from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype, ceil_multiple
 
 def binned_topk(
     logits,
@@ -448,7 +448,7 @@ def top_dynamic_k(
     raise NotImplementedError
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
-  k = pad(k, (num_tokens,), val=0)
+  k = pad(k, (ceil_multiple(num_tokens, block_token),), val=0)
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
