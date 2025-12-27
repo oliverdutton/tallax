@@ -343,16 +343,18 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
   else:
     # will switch between running on ref slices and whole ref. We do the longest run we can of same slice_size to minimize ref read/writes
     split_i = next(i for i, v in enumerate(sharded) if v!=sharded[0])
-    _bitonic_sort_substage_refs(
-          transpose_refs, substages=substages[:split_i], stages=stages[:split_i], num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length=compression_length,  ref_slice_size=ref_slice_size,
-          slice_size=slice_size,
-          concat_threshold=concat_threshold,
-          )
-    _bitonic_sort_substage_refs(
-          transpose_refs, substages=substages[split_i:], stages=stages[split_i:], num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, compression_length=compression_length,  ref_slice_size=ref_slice_size,
-          concat_threshold=concat_threshold, slice_size=slice_size)
+    [_bitonic_sort_substage_refs(
+        transpose_refs,
+        substages=substages, stages=stages,
+        num_keys=num_keys, batch_size=batch_size,
+        sort_dim_offset=sort_dim_offset, compression_length=compression_length,
+        ref_slice_size=ref_slice_size,
+        slice_size=slice_size,
+        concat_threshold=concat_threshold,
+    ) for substages, stages in [
+        (substages[:split_i], stages[:split_i]),
+        (substages[split_i:], stages[split_i:])]]
     return
-
 
   #print(f'{any(sharded)=} {substages=} {slice_size=} {ref_slice_size=} {stages=}')
   grid_size = compression_length // ref_slice_size
