@@ -235,7 +235,7 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     return create_bit_indicator(unwrap(stage), tile_start_offset + tile_local_offset + unwrap(sort_dim_offset))
 
 
-def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None):
+def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None, max_reduce: bool = False):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -287,7 +287,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
               sort_dim_offset=sort_dim_offset,
               compression_length=compression_length,
               substage=substage,
-            ),
+            ) if not max_reduce else True,
             is_right_half=is_right_half,
             num_keys=num_keys
           )):
@@ -317,11 +317,15 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
               sort_dim_offset=sort_dim_offset,
               compression_length=compression_length,
               substage=substage,
-            ),
+            ) if not max_reduce else True,
             num_keys=num_keys
         )):
           outs_tiles[arr_idx][idx] = out_left
-          outs_tiles[arr_idx][idx + tile_separation] = out_right
+          if not max_reduce:
+            outs_tiles[arr_idx][idx + tile_separation] = out_right
+    if max_reduce:
+      # remove the Nones, the lower half we discard for top-k usage
+      outs_tiles = [[v for v in out_tiles if v is not None] for out_tiles in outs_tiles]
     assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
     return outs_tiles
 
