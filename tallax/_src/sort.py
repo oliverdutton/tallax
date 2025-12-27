@@ -109,10 +109,8 @@ def bitonic_sort_in_vmem_refs(
 
   # Compute sort_dim_offset outside of run_scoped to avoid grid context issues
   sort_dim_offset = (
-      # local
-      SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] +
-      # global
-      int(descending) * pl.num_programs(1) * shape[1])
+      (SymInt(pl.program_id(1), 0, pl.num_programs(1)-1)  + 
+       int(descending) * pl.num_programs(1)) * padded_shape[1])
   if k == shape[1]:
     # sort
     operands = bitonic_sort_maybe_rolled(
