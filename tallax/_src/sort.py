@@ -9,21 +9,13 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax._src.utils import (
-    is_cpu_platform,
     log2,
-    max_int,
-    all_concrete_ints,
     pad,
     float_to_sortable_int,
     sortable_int_to_float,
     pack_bf16_u16_to_i32,
     unpack_bf16_u16_from_i32,
-    split_array_to_tiles,
-    join_tiles_to_array,
-    iota_tile,
     create_bit_indicator,
-    to_compressed_transpose_format,
-    from_compressed_transpose_format,
     transpose_list_of_lists,
     to_32bit_dtype,
     same_shape_dtype,
@@ -31,75 +23,86 @@ from tallax._src.utils import (
     is_32bit,
     NUM_LANES,
     NUM_SUBLANES,
+    ceil_multiple,
 )
 from tallax._src.bitonic_sort import (
     bitonic_sort_maybe_rolled,
-    _compute_padded_shape,
-    compute_pair_slice_start_index,
+    _compute_padded_shape as _compute_padded_shape_for_sort,
+    compute_pair_slice_start_index as _compute_pair_slice_start_index,
     compare_and_swap,
+)
+from tallax._src.bitonic_topk import (
+  bitonic_topk_arrays,
+  _compute_padded_shape as _compute_padded_shape_for_topk
 )
 from tallax._src.symint import SymInt
 
 
 ### VMEM-Based Sort (fits in VMEM)
-def _sort_in_vmem_bitonic_refs(
+def bitonic_sort_in_vmem_refs(
     in_refs,
     stage_ref,
     out_refs,
-    refs,  # scratch refs operated on
-    indices_ref,
+    transpose_refs,  # scratch refs operated on
+    tranpose_indices_ref,
     *,
     descending: bool,
     is_stable: bool,
     num_keys: int,
-    num_stages: int | None = None,
+    k: int | None = None,
     stage_unroll: int | None = None,
     slice_size_unroll: int | None = None,
     ref_slice_size_unroll: int | None = None,
     unroll_stages: bool = True,
+    # int key operands may contain INT_MAX (ascending sort) or INT_MIN (descending sort) requiring stable sort to avoid padding leakage
+    int_key_operands_may_contain_int_max_or_min: bool = True,
 ):
   """Pallas kernel for sorting using bitonic sort."""
-  shape = in_refs[0].shape
+  operands = [ref[...] for ref in in_refs]
+  shape = operands[0].shape
   assert len(shape) == 2
-  k = out_refs[0].shape[-1]
-
-  if 2**log2(shape[1]) != shape[1]:
-    raise ValueError("Size along sort dimension must be a power of 2")
-
+  padded_shape = _compute_padded_shape_for_sort(*shape) if k!=shape[1] else _compute_padded_shape_for_topk(*shape, k=k)
+  
   return_argsort = len(out_refs) > len(in_refs)
   assert len(out_refs) == (len(in_refs) + int(return_argsort))
 
+  if int_key_operands_may_contain_int_max_or_min and (shape[1] != padded_shape[1]) and any(not jnp.issubdtype(x.dtype, jnp.floating) for x in operands):
+    # Floats handled by standardizing 'in bounds' nans to a lower bit value to padding nans in the i32 format theyre sorted in 
+    # But integer values of INT_MAX/INT_MIN in padding may leak unless comparison is stable
+    is_stable = True
+
   use_indices = is_stable or return_argsort
-  indices = indices_ref[...]
+  indices = jax.lax.broadcasted_iota(jnp.int32, shape, 1)
 
   if descending and is_stable:
     # Maintain order by sorting indices ascending while keys descending
     # Reverse indices (negate relative to array length), then reverse back before write out
     indices = indices.shape[1] - 1 - indices
 
-  # Reuse in/out VMEM buffers to reduce memory usage
-  for i in range(len(in_refs)):
-    if same_shape_dtype(in_refs[i], refs[i]):
-      refs[i] = in_refs[i]
-    else:
-      refs[i][...] = in_refs[i][...].astype(refs[i].dtype)
-
-  if jnp.issubdtype(refs[i].dtype, jnp.floating) and i < num_keys:
-    f32_in_sortable_i32 = float_to_sortable_int(refs[i][...])
-    refs[i] = refs[i].bitcast(jnp.int32)
-    refs[i][...] = f32_in_sortable_i32
+  # Optimize bf16 + u16 case by packing into single i32
+  use_packed_bf16_u16 = (
+      len(operands) == 2 and operands[0].dtype == jnp.bfloat16 and 
+      (operands[1].dtype == jnp.uint16 or
+       (use_indices and shape[1] <= 2**16))
+  )
+  if use_packed_bf16_u16:
+    operands = [pack_bf16_u16_to_i32(*operands)]
+    transpose_refs = transpose_refs[:1]
+    num_keys = 1
+    is_stable = False # itll be stable by default
+  
+  for i in range(num_keys):
+    if jnp.issubdtype(operands[i].dtype, jnp.floating):
+      operands[i] = float_to_sortable_int(operands[i])    
 
   if use_indices:
-    if same_shape_dtype(indices_ref, out_refs[-1]):
-      indices_ref = out_refs[-1]
-    indices_ref[...] = indices
-    refs.insert(num_keys, indices_ref)
-
-  # Use bitonic sort instead of _run_stages
-  # Create transpose refs for bitonic sort
-  dim0, dim1 = _compute_padded_shape(*refs[0].shape, k=NUM_SUBLANES)
-  dim0 = min(dim0, NUM_LANES)
-  transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
+    operands.insert(num_keys, indices)
+    transpose_refs.insert(num_keys, tranpose_indices_ref)
+  num_keys += int(is_stable)
+  
+  # Most TPU generations only allow 32,32->1 bit comparisons,
+  # not bf16,bf16->i1 so we upcast everything to 32bit
+  operands = [x.astype(to_32bit_dtype(x.dtype)) for x in operands]
 
   # Compute sort_dim_offset outside of run_scoped to avoid grid context issues
   sort_dim_offset = (
@@ -107,18 +110,13 @@ def _sort_in_vmem_bitonic_refs(
       SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] +
       # global
       int(descending) * pl.num_programs(1) * shape[1])
-
-  @functools.partial(pl.run_scoped, transpose_refs=[
-      pltpu.VMEM(transpose_shape, to_32bit_dtype(ref.dtype)) for ref in refs
-  ])
-  def _run_bitonic(transpose_refs):
-    outs = bitonic_sort_maybe_rolled(
-        [ref[...] for ref in refs],
-        num_keys=num_keys + int(is_stable),
+  if k == shape[1]:
+    # sort
+    operands = bitonic_sort_maybe_rolled(
+        num_keys=num_keys,
         axis=1,
-        descending=descending,
-        single_stage=stage_ref[0] if stage_ref is not None else None,
-        num_stages=num_stages,
+        descending=False, # handled already
+        single_stage=None if stage_ref is None else stage_ref[0],
         stage_unroll=stage_unroll,
         slice_size_unroll=slice_size_unroll,
         ref_slice_size_unroll=ref_slice_size_unroll,
@@ -127,38 +125,55 @@ def _sort_in_vmem_bitonic_refs(
         transpose_refs=transpose_refs,
         sort_dim_offset=sort_dim_offset
     )
+  else:
+    # top-k
+    # this is fully unrolled and supports only certain k
+    def _maybe_invert(operands):
+      if not descending:
+        for i in range(num_keys):
+          # all keys should be ints, we flip them
+          assert jnp.isdtype(operands[i].dtype, 'integral')
+          operands[i] = jnp.invert(operands[i])
 
-    if use_indices:
-      indices = outs.pop(num_keys)
-    if return_argsort:
-      if descending and is_stable:
-        indices = indices.shape[1] - 1 - indices
-      refs.append(indices)
-  
-    for i, (out, out_ref) in enumerate(zip(outs, out_refs, strict=True)):
-      if jnp.issubdtype(out.dtype, jnp.integer) and jnp.issubdtype(out_ref.dtype, jnp.floating):
-        # Check if this was a float key that we converted
-        out = sortable_int_to_float(out)
-      out_ref[...] = out.astype(out_ref.dtype)
+    _maybe_invert(operands)
+    operands = bitonic_topk_arrays(operands=operands, k=k, num_keys=num_keys, axis=1)
+    _maybe_invert(operands)
+    
+  # Unpack bf16-u16 if used
+  if use_packed_bf16_u16:
+    operands = unpack_bf16_u16_from_i32(operands[0])
+
+  if use_indices:
+    indices = operands.pop(num_keys - int(is_stable))
+  if return_argsort:
+    if descending and is_stable:
+      indices = indices.shape[1] - 1 - indices
+    operands.append(indices)
+
+  for i, (out, out_ref) in enumerate(zip(operands, out_refs, strict=True)):
+    if jnp.issubdtype(out.dtype, jnp.integer) and jnp.issubdtype(out_ref.dtype, jnp.floating):
+      # Check if this was a float key that we converted
+      out = sortable_int_to_float(out)
+    out_ref[...] = out.astype(out_ref.dtype)
 
 
 @functools.partial(
     jit,
-    static_argnames=("num_keys", "return_argsort", "descending", "is_stable",
+    static_argnames=("num_keys", "return_argsort", "descending", "is_stable", "k",
                      "num_stages", "interpret", "block_token", "block_seq",
                      "compile_fast", "stage_unroll", "slice_size_unroll",
                      "ref_slice_size_unroll", "unroll_stages")
 )
-def _sort_in_vmem_bitonic(
+def bitonic_sort_in_vmem(
     operand: jax.Array | Sequence[jax.Array],
     # behavior control
     num_keys: int,
     return_argsort: bool = False,
     descending: bool = False,
     is_stable: bool = False,
+    k: int | None = None,
     # niche behavior for larger than vmem inputs
     stage: int | jax.Array | None = None,
-    num_stages: int | None = None,
     interpret: bool = False,
     # implementation details
     block_token: int | None = None,
@@ -172,11 +187,6 @@ def _sort_in_vmem_bitonic(
     unroll_stages: bool = True,
 ) -> tuple[jax.Array, ...]:
   """Sort arrays that fit in VMEM using bitonic sort.
-      Supports arbitrary input shapes - padding is handled automatically to
-    nearest power of 2.
-
-    Fully unrolled compilation (the default behavior) takes about a minute for 2**19 elements in array, e.g. (16, 32768) or (128, 4096) with approx N^2 compilation time scaling.
-    The `fast_compile` option sets a variety of unroll controls to reduce compile times, but incurs a 50% increase in runtime.
 
   Args:
     operand: Input array(s) to sort (2D)
@@ -205,58 +215,66 @@ def _sort_in_vmem_bitonic(
     stage_unroll = 6
   if compile_fast is None:
     # if projected compilation time expected to be more than a minute, compile fast
-    compile_fast = (shape[0] * shape[1] * (len(operands) + int(return_argsort or is_stable)) > 2**19
+    compile_fast = (shape[0] * shape[1] * (len(operands) + int(return_argsort or is_stable))) > 2**19
   if compile_fast:
     # reduces compilation time scaling to linear
     stage_unroll, slice_size_unroll, ref_slice_size_unroll, unroll_stages = (6, 7, 8, False)
-      
-  k = shape[1]  # For compatibility with block_seq checks
 
   unconverted_operands = tuple(operands)
-  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency
+  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency (and it can allow bf16-u16 packing)
   if interpret:
-    for i in range(len(operands)):
-      if jnp.issubdtype(operands[i].dtype, jnp.floating) and i < num_keys:
+    for i in range(num_keys):
+      if jnp.issubdtype(operands[i].dtype, jnp.floating):
         operands[i] = float_to_sortable_int(operands[i])
 
   if block_token is None:
-    block_token = min(max(NUM_SUBLANES, (2**14) // shape[0]), shape[0])
+    # heuristic for fitting in VMEM
+    # multiple of NUM_SUBLANES, between NUM_SUBLANES and NUM_LANES
+    block_token = min(
+      ceil_multiple(
+        min((2**14) // shape[0], shape[0]), NUM_SUBLANES), NUM_LANES)
   if block_seq is None:
     block_seq = shape[1]
+  if shape[1] % block_seq != 0:
+    raise ValueError
+  if k is None:
+    k = shape[1]
   if k != shape[1] and block_seq != shape[1]:
     raise ValueError('k is not compatible with subsorting')
 
   block_shape = (block_token, block_seq)
 
   out_shapes = jax.tree.map(
-      lambda v: jax.ShapeDtypeStruct(shape, v.dtype),
+      lambda v: jax.ShapeDtypeStruct((shape[0], k), v.dtype),
       unconverted_operands
   )
   if return_argsort:
-    out_shapes += (jax.ShapeDtypeStruct(shape, jnp.int32),)
+    out_shapes += (jax.ShapeDtypeStruct((shape[0], k), jnp.int32),)
 
   in_specs = (
       [pl.BlockSpec(block_shape, lambda i, j: (i, j)) for _ in operands],
       pl.BlockSpec(memory_space=pltpu.SMEM) if stage is not None else None
   )
   out_specs = tuple(
-      pl.BlockSpec((block_token, block_seq), lambda i, j: (i, j))
+      pl.BlockSpec((block_token, min(k, block_seq)), lambda i, j: (i, j))
       for _ in out_shapes
   )
 
-  # Allocate scratch refs with int32 for float keys to avoid dtype conversion issues
-  # If float was already converted outside, it's already int32
+  # Create transpose scratch refs for bitonic sort
+  dim0, dim1 = _compute_padded_shape_for_sort(*block_shape)
+  transpose_block_shape = (dim1 // pl.cdiv(NUM_LANES, dim0), NUM_LANES)
   scratch_shapes = (
-      [pltpu.VMEM(block_shape, to_32bit_dtype(ref.dtype)) for ref in operands],
-      pltpu.VMEM(block_shape, jnp.int32),
+      [pltpu.VMEM(transpose_block_shape, jnp.int32 if i < num_keys else to_32bit_dtype(ref.dtype)) for i, ref in operands],
+      pltpu.VMEM(transpose_block_shape, jnp.int32),
   )
 
   if stage is not None:
     stage = stage[None]
 
   return pl.pallas_call(
-      functools.partial(_sort_in_vmem_bitonic_refs, descending=descending, num_keys=num_keys,
-                        is_stable=is_stable, num_stages=num_stages,
+      functools.partial(bitonic_sort_in_vmem_refs, descending=descending, num_keys=num_keys,
+                        is_stable=is_stable,
+                        k=k,
                         stage_unroll=stage_unroll,
                         slice_size_unroll=slice_size_unroll,
                         ref_slice_size_unroll=ref_slice_size_unroll,
@@ -266,12 +284,30 @@ def _sort_in_vmem_bitonic(
       in_specs=in_specs,
       out_specs=(out_specs,),
       scratch_shapes=scratch_shapes,
-      grid=(shape[0] // block_token, shape[1] // block_seq),
+      grid=(pl.cdiv(shape[0], block_token), shape[1] // block_seq),
       compiler_params=pltpu.CompilerParams(
           vmem_limit_bytes=int(0.9 * 2**27),
       ),
       interpret=interpret,
   )(operands, stage)[0]
+  
+
+@functools.partial(
+    jit,
+    static_argnames=("k", "num_keys", "return_argsort", "descending", "is_stable", "k",
+                     "interpret", "block_token")
+)
+def bitonic_topk_in_vmem(
+    operand: jax.Array | Sequence[jax.Array],
+    k: int,
+    num_keys: int = 1,
+    return_argsort: bool = True,
+    descending: bool = True,
+    is_stable: bool = False,
+    block_token: int | None = None,
+    interpret: bool = False,
+) -> tuple[jax.Array, ...]:
+  return bitonic_sort_in_vmem(operand, num_keys=num_keys, return_argsort=return_argsort, descending=descending, is_stable=is_stable, k=k, block_token=block_token, interpret=interpret)
 
 
 ### HBM-Based Substage (for large arrays)
@@ -315,12 +351,11 @@ def _run_array_substage_on_hbm_refs(
   stage = stage_ref[0]
   slice_length = input_vmem_refs[0].shape[-1]
   pair_length = 2 ** (substage + 1)
-  slices_per_pair = (pair_length // 2) // slice_length
 
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
+    left_start = _compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
@@ -348,7 +383,7 @@ def _run_array_substage_on_hbm_refs(
 
   def compute(loop_idx):
     """Perform comparison and swap logic."""
-    start_idx = compute_pair_slice_start_index(loop_idx)
+    start_idx = _compute_pair_slice_start_index(loop_idx)
     slot = lax.rem(loop_idx, 2)
 
     refs = []
@@ -463,7 +498,7 @@ def _run_array_substage_in_hbm(
     static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
                      'is_stable', 'num_keys', 'block_token', 'interpret')
 )
-def experimental_hbm_sort(
+def bitonic_sort_large_shapes(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int,
     is_stable: bool = False,
@@ -548,7 +583,7 @@ def experimental_hbm_sort(
   # Sort based on array size
   if num_stages <= num_vmem_substages:
     # Array fits in VMEM
-    operands = _sort_in_vmem_bitonic(
+    operands = bitonic_sort_in_vmem(
         operands,
         descending=descending,
         num_keys=num_keys,
@@ -574,7 +609,7 @@ def experimental_hbm_sort(
       )
 
       # VMEM-based substages for within-block operations
-      return _sort_in_vmem_bitonic(
+      return bitonic_sort_in_vmem(
           operands,
           block_seq=2**num_vmem_substages,
           stage=stage,
@@ -585,7 +620,7 @@ def experimental_hbm_sort(
       )
 
     # Initial bitonic sorting of VMEM-sized blocks
-    operands = _sort_in_vmem_bitonic(
+    operands = bitonic_sort_in_vmem(
         tuple(operands),
         block_seq=2**num_vmem_substages,
         stage=None,
@@ -641,9 +676,6 @@ def xla_equivalent_sort(
     is_stable: bool = False,
     return_argsort: bool = False,
     descending: bool = False,
-    num_vmem_substages: int | None = None,
-    block_token: int | None = None,
-    interpret: bool | None = None,
 ) -> tuple[jax.Array, ...]:
   """Reference implementation using XLA sort for correctness testing.
 
@@ -660,7 +692,6 @@ def xla_equivalent_sort(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
-  del num_vmem_substages, block_token, interpret
   operands = jax.tree.leaves(operand)
 
   if return_argsort:
