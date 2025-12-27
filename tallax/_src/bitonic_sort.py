@@ -168,14 +168,14 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
   """
   if unpadded_dim0 >= NUM_LANES:
     dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
-    dim1 = ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES))
+    dim1 = 2**log2(ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES)))
     return (dim0, dim1)
 
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
     if 2**i >= unpadded_dim0]
   shapes = [
-    (dim0, ceil_multiple(unpadded_dim1,
-      NUM_LANES * NUM_LANES // dim0))
+    (dim0, 2**log2(ceil_multiple(unpadded_dim1,
+      NUM_LANES * NUM_LANES // dim0)))
     for dim0 in dim0s]
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
@@ -436,12 +436,11 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     else:
         raise ValueError
 
-    print(f'Padding {shape} to {padded_shape}')
-
     # Pad both dimensions if needed
     # For ascending sort, pad with 'max' so padding values sort to the end
     # For descending sort, pad with 'min' so padding values sort to the end
-    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
+    # we put it at the neccessary side to avoid padding leakage in stable sorts
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max', prepend=(False, descending)) for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     num_stages = log2(shape[axis]) if num_stages is None else num_stages
@@ -565,7 +564,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
     # Unpad to original shape
-    return [arr[:shape[0], :shape[1]] for arr in arrs]
+    return [(arr[:shape[0], :shape[1]] if descending else arr[:shape[0], -shape[1]:]) for arr in arrs]
 
 
 def bitonic_sort_refs(
