@@ -173,6 +173,11 @@ def _sort_in_vmem_bitonic(
     unroll_stages: bool = True,
 ) -> tuple[jax.Array, ...]:
   """Sort arrays that fit in VMEM using bitonic sort.
+      Supports arbitrary input shapes - padding is handled automatically to
+    nearest power of 2.
+
+    Fully unrolled compilation (the default behavior) takes about a minute for 2**19 elements in array, e.g. (16, 32768) or (128, 4096) with approx N^2 compilation time scaling.
+    The `fast_compile` option sets a variety of unroll controls to reduce compile times, but incurs a 50% increase in runtime.
 
   Args:
     operand: Input array(s) to sort (2D)
