@@ -80,7 +80,7 @@ def bitonic_sort_in_vmem_refs(
   if descending and is_stable:
     # Maintain order by sorting indices ascending while keys descending
     # Reverse indices (negate relative to array length), then reverse back before write out
-    indices = indices.shape[1] - 1 - indices
+    indices = shape[1] - 1 - indices
 
   # Optimize bf16 + u16 case by packing into single i32
   use_packed_bf16_u16 = (
@@ -151,7 +151,7 @@ def bitonic_sort_in_vmem_refs(
     indices = operands.pop(num_keys - int(is_stable))
   if return_argsort:
     if descending and is_stable:
-      indices = indices.shape[1] - 1 - indices
+      indices = shape[1] - 1 - indices
     operands.append(indices)
 
   for i, (out, out_ref) in enumerate(zip(operands, out_refs, strict=True)):
