@@ -7,6 +7,9 @@ allow concrete determination, reducing compilation overhead in Pallas kernels.
 import math
 import jax.numpy as jnp
 
+# Helper to unwrap SymInt to value for use in expressions
+def unwrap(x):
+    return x.value if isinstance(x, SymInt) else x
 
 class SymInt:
     """Integer wrapper with lower and upper bound and divisibility metadata.
