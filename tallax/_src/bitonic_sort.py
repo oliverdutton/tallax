@@ -235,7 +235,7 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     return create_bit_indicator(unwrap(stage), tile_start_offset + tile_local_offset + unwrap(sort_dim_offset))
 
 
-def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None, max_reduce: bool = False):
+def _bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: int, stage: SymInt | int | None = None, sort_dim_offset: int = 0, compression_length:int=None, concat_threshold: int | None = None, max_reduce: bool = False):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -250,6 +250,7 @@ def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_
     Returns:
       Tuple of lists of tiles with updated values
     """
+    assert (not max_reduce) and stage is None
     separation = 2**substage
     # if still arrays, we make it into one big tile so its sanitized to list[list[jax.ndarray]]
     arrs_tiles = list(map(jax.tree.leaves, arrs_tiles))
