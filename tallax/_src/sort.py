@@ -321,7 +321,7 @@ def _run_array_substage_on_hbm_refs(
   def perform_dma(i, is_load):
     """Perform DMA operation (load or store)."""
     buffer_slot = lax.rem(i, 2)
-    left_start = _compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
+    left_start = compute_pair_slice_start_index(i, separation=pair_length, slice_length=slice_length)
     right_start = left_start + (pair_length // 2)
     sems = input_semaphores if is_load else output_semaphores
     copies = []
@@ -349,7 +349,7 @@ def _run_array_substage_on_hbm_refs(
 
   def compute(loop_idx):
     """Perform comparison and swap logic."""
-    start_idx = _compute_pair_slice_start_index(loop_idx)
+    start_idx = compute_pair_slice_start_index(loop_idx)
     slot = lax.rem(loop_idx, 2)
 
     refs = []
