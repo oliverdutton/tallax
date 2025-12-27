@@ -5,6 +5,7 @@ allow concrete determination, reducing compilation overhead in Pallas kernels.
 """
 
 import math
+import jax.numpy as jnp
 
 
 class SymInt:

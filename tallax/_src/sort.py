@@ -111,7 +111,7 @@ def _sort_in_vmem_bitonic_refs(
         num_keys=num_keys + int(is_stable),
         axis=1,
         descending=descending,
-        stage=stage_ref[0] if stage_ref is not None else None,
+        single_stage=stage_ref[0] if stage_ref is not None else None,
         num_stages=num_stages,
         stage_unroll=stage_unroll,
         slice_size_unroll=slice_size_unroll,
@@ -121,7 +121,7 @@ def _sort_in_vmem_bitonic_refs(
         transpose_refs=transpose_refs,
         sort_dim_offset=(
           # local
-          SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] + 
+          SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] +
           # global
           int(descending) * pl.num_programs(1) * shape[1])
     )
@@ -481,8 +481,8 @@ def sort(
   """
   operands, shape = canonicalize_operand(operand)
   num_stages = log2(shape[1])
-  
-  if not any(jnp.isdtype(x, 'bool') for x in operands):
+
+  if any(jnp.isdtype(x.dtype, 'bool') for x in operands):
     raise NotImplementedError('Please cast bool operands to integer')
 
   if (shape[1] != 2**num_stages and
