@@ -675,9 +675,3 @@ def xla_equivalent_sort(
     outs = tuple(x[..., ::-1] for x in outs)
 
   return tuple(outs)
-
-
-# Re-export functions for backwards compatibility with modules that import from sort
-compute_pair_slice_start_index = _compute_pair_slice_start_index
-# compare_and_swap is already imported without renaming, so it's available
-# _run_compressed_transpose_format_substage_on_tiles is not in the new implementation
