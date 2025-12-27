@@ -3,9 +3,9 @@ import pytest
 import jax
 import jax.numpy as jnp
 
+from tallax import tax
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_sort_output
-from tallax._src.sort import bitonic_sort_in_vmem
 
 
 def _should_skip_on_cpu(size):
@@ -53,7 +53,7 @@ def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
     interpret = is_cpu_platform()
 
     # Run sort
-    outputs = bitonic_sort_in_vmem(
+    outputs = tax.sort(
         operands,
         num_keys=num_keys,
         return_argsort=return_argsort,
