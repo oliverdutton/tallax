@@ -8,12 +8,12 @@ from tallax._src.test_utils import verify_sort_output
 
 
 def _should_skip_on_cpu(size):
-    """Skip tests on CPU for large sizes (> 256) to avoid slow tests."""
-    return is_cpu_platform() and size > 256
+    """Skip tests on CPU for large sizes (> 1024) to avoid slow tests."""
+    return is_cpu_platform() and size > 1024
 
 
 @pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
-@pytest.mark.parametrize("size", [128, 256, 2048, 131072])
+@pytest.mark.parametrize("size", [128, 256, 1024, 2048, 131072])
 @pytest.mark.parametrize("variant", [
     "standard",
     "return_argsort",
