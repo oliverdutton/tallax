@@ -131,7 +131,6 @@ def standardize(x):
 
   Converts NaNs to a specific value and normalizes +/-0.
   """
-  x = x.astype(jnp.float32)
   nan_val = sortable_int_to_float(jnp.iinfo(jnp.int32).max - 1)
   x = jnp.where(jnp.isnan(x), nan_val, x)
   x = jnp.where(x == 0, 0, x)
@@ -181,7 +180,7 @@ def float_to_sortable_int(x: jnp.ndarray, standardize_input=True) -> jnp.ndarray
   Positive floats map to [0, INT_MAX].
   """
   if standardize_input:
-    x = standardize(x)
+    x = standardize(x.astype(jnp.float32))
   i = x.view(jnp.int32)
   return jnp.where(i < 0, i ^ 0x7FFFFFFF, i)
 
