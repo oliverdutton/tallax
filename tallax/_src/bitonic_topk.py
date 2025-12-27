@@ -66,7 +66,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
   shapes = [
     (dim0, ceil_multiple(
     ceil_multiple(unpadded_dim1,
-      NUM_LANES * NUM_LANES // dim0), max(k, NUM_SUBLANES))
+      NUM_LANES * NUM_LANES // dim0), max(k, NUM_SUBLANES)))
     for dim0 in dim0s]
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
