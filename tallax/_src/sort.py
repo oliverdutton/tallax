@@ -297,7 +297,7 @@ def bitonic_sort_in_vmem(
 
 @functools.partial(
     jit,
-    static_argnames=("k", "num_keys", "return_argsort", "descending", "is_stable", "k",
+    static_argnames=("k", "num_keys", "return_argsort", "descending", "is_stable",
                      "interpret", "block_token")
 )
 def bitonic_topk_in_vmem(
@@ -310,4 +310,26 @@ def bitonic_topk_in_vmem(
     block_token: int | None = None,
     interpret: bool = False,
 ) -> tuple[jax.Array, ...]:
-  return bitonic_sort_in_vmem(operand, num_keys=num_keys, return_argsort=return_argsort, descending=descending, is_stable=is_stable, k=k, block_token=block_token, interpret=interpret)
+  """Top-K selection using bitonic sort.
+
+  When return_argsort=True (the common case), this does a full sort and slices
+  to avoid padding issues with auto-generated argsort indices in the topk path.
+  """
+  if return_argsort:
+    # Use full sort path to avoid padding leakage in auto-generated argsort indices
+    # The topk path (bitonic_topk_arrays) doesn't handle auto-generated indices correctly
+    result = bitonic_sort_in_vmem(
+        operand, num_keys=num_keys, return_argsort=True,
+        descending=descending, is_stable=is_stable,
+        k=None,  # Full sort, no topk path
+        block_token=block_token, interpret=interpret
+    )
+    # Slice to get top-k
+    return tuple(arr[..., :k] for arr in result)
+  else:
+    # Use topk path when indices are user-provided payloads
+    return bitonic_sort_in_vmem(
+        operand, num_keys=num_keys, return_argsort=False,
+        descending=descending, is_stable=is_stable,
+        k=k, block_token=block_token, interpret=interpret
+    )
