@@ -165,7 +165,7 @@ def _sort_in_vmem_bitonic(
     block_token: int | None = None,
     block_seq: int | None = None,
 
-    compile_fast: bool = False,
+    compile_fast: bool | None = None,
     # specialist unroll controls, suggest setting just fast_compile=True if compilation is too slow, it will overwrite and set these other unrolls
     stage_unroll: int | None = None,
     slice_size_unroll: int | None = None,
@@ -194,14 +194,18 @@ def _sort_in_vmem_bitonic(
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
+  operands, shape = canonicalize_operand(operand)
+  
   if stage_unroll is None:
     # heuristic, likely reduces register pressure as it reorder operations into groups of 2**6/NUM_SUBLANES=8 tiles
     stage_unroll = 6
+  if compile_fast is None:
+    # if projected compilation time expected to be more than a minute, compile fast
+    compile_fast = (shape[0] * shape[1] * (len(operands) + int(return_argsort or is_stable)) > 2**19
   if compile_fast:
     # reduces compilation time scaling to linear
     stage_unroll, slice_size_unroll, ref_slice_size_unroll, unroll_stages = (6, 7, 8, False)
       
-  operands, shape = canonicalize_operand(operand)
   k = shape[1]  # For compatibility with block_seq checks
 
   unconverted_operands = tuple(operands)
@@ -455,7 +459,7 @@ def _run_array_substage_in_hbm(
     static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
                      'is_stable', 'num_keys', 'block_token', 'interpret')
 )
-def sort(
+def experimental_hbm_sort(
     operand: jax.Array | Sequence[jax.Array],
     num_keys: int,
     is_stable: bool = False,
