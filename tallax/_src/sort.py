@@ -32,413 +32,38 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
 )
+from tallax._src.bitonic_sort import (
+    bitonic_sort_arrays,
+    _compute_padded_shape as _bitonic_compute_padded_shape,
+    compute_pair_slice_start_index as _compute_pair_slice_start_index,
+    compare_and_swap,
+)
+from tallax._src.symint import SymInt
 
 
-### Bitonic Sort Core Operations
-
-def compare_and_swap(lefts, rights, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
-             has_unique_key=False):
-  """Compare and conditionally swap array pairs.
-
-  Args:
-    lefts: Tuple of left arrays to compare
-    rights: Tuple of right arrays to compare
-    num_keys: Number of arrays to use as sort keys
-    is_descending: Boolean mask for sort direction (None implies ascending)
-    is_right_half: Mask for subtile comparisons. Needed for handling ties in values correctly.
-    has_unique_key: Whether first key is guaranteed unique (optimizes sort)
-
-  Returns:
-    Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
-  """
-  num_arrs = len(lefts)
-
-  def _compare_pair(i, left, right):
-    handle_subtile_ties = (
-        is_right_half is not None
-        and not has_unique_key and num_arrs != num_keys and i == num_keys - 1
-    )
-
-    if handle_subtile_ties:
-      left, right = (
-          jnp.where(is_right_half, right, left),
-          jnp.where(is_right_half, left, right)
-      )
-
-    mask = (left > right if type(is_descending) == bool and is_descending
-            else right > left)
-    mask = mask.astype(jnp.int32)
-
-    if is_right_half is not None and not handle_subtile_ties:
-      mask = jnp.bitwise_xor(mask, is_right_half.astype(jnp.int32))
-    return mask
-
-  masks = tuple(
-      _compare_pair(i, left, right)
-      for i, (left, right) in enumerate(zip(lefts, rights, strict=True))
-  )
-
-  ties = [(left == right) for left, right in zip(lefts, rights, strict=True)]
-
-  mask = masks[0]
-  for k in range(1, num_keys):
-    # Break ties in primary key with secondary key comparison
-    mask = jnp.where(ties[k - 1], masks[k], mask)
-    ties[k] &= ties[k - 1]
-
-  if is_descending is not None and type(is_descending) != bool:
-    # Dynamic descending mask
-    mask = mask.astype(bool)
-    is_descending = is_descending.astype(bool)
-    mask = mask ^ is_descending
-
-  return jax.tree.map(
-      lambda left, right: (
-          (jnp.where(mask, left, right), jnp.where(mask, right, left))
-          if is_right_half is None else
-          jnp.where(mask, left, right)
-      ),
-      lefts, rights
-  )
-
-
-def compute_pair_slice_start_index(i, separation, slice_length=1):
-    """Compute start index for pair-wise array slicing."""
-    if slice_length > separation:
-      raise ValueError(
-          f'Separation must be at least slice length, {separation=} {slice_length=}'
-      )
-    slices_per_pair = separation // slice_length
-    pair_idx = i // slices_per_pair
-    slice_idx = i % slices_per_pair
-    return pair_idx * 2 * separation + slice_idx * slice_length
-
-
-def _run_compressed_transpose_format_substage_on_tiles(arrs_tiles, substage, batch_size, num_keys: int, sort_dim_offset=0, stage=None):
-  """Perform substage using sublane permutation or cross-tile comparison.
-
-  Args:
-    arrs_tiles: Tuple of lists of tile arrays
-    substage: Substage index
-    batch_size: Batch size (padded, must be power of 2 <= NUM_LANES)
-    num_keys: Number of sort keys
-    sort_dim_offset: Offset for bitonic order calculation
-    stage: Current sorting stage (if single stage)
-
-  Returns:
-    Tuple of lists of tiles with updated values
-  """
-  assert batch_size <= NUM_LANES and batch_size == 2**log2(batch_size)
-  num_tiles = len(arrs_tiles[0])
-  assert substage < log2(num_tiles * NUM_SUBLANES), 'Due to compressed format this substage would require cross lane comparison which is not implemented. Operation can be done in the original untransposed format efficiently'
-  tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * num_tiles * NUM_SUBLANES
-
-  def compute_is_descending(idx):
-    tile_offset = idx * NUM_SUBLANES
-    is_desc = create_bit_indicator(stage, sort_dim_offset + tile_offset + tile_local_offset)
-    if type(stage) == int:
-      if stage < log2(NUM_SUBLANES):
-        # every tile has same value
-        return create_bit_indicator(stage, tile_local_offset + sort_dim_offset)
-      elif stage < log2(num_tiles * NUM_SUBLANES):
-        # value constant across tile
-        return create_bit_indicator(stage, tile_offset)
-    return is_desc
-
-  outs_tiles = [[None for _ in t] for t in arrs_tiles]
-
-  if substage < log2(NUM_SUBLANES):
-    # Comparison within tile
-    permutation = jnp.bitwise_xor(iota_tile(0), 1 << substage)
-    arrs_tiles_permuted = jax.tree.map(
-        lambda tile: jnp.take_along_axis(tile, permutation, axis=0), arrs_tiles
-    )
-    is_right_half = create_bit_indicator(substage, iota_tile(0))
-    for idx, (lefts, rights) in enumerate(zip(
-        *map(transpose_list_of_lists, (arrs_tiles, arrs_tiles_permuted)), strict=True
-    )):
-      for arr_idx, out in enumerate(compare_and_swap(
-          lefts, rights, is_descending=compute_is_descending(idx),
-          is_right_half=is_right_half, num_keys=num_keys
-      )):
-        outs_tiles[arr_idx][idx] = out
-  else:
-    # Comparison between tiles
-    separation = 2**substage // NUM_SUBLANES
-    for i in range(num_tiles // 2):
-      idx = compute_pair_slice_start_index(i, separation=separation)
-      lefts, rights = (transpose_list_of_lists(arrs_tiles)[j] for j in (idx, idx + separation))
-      for arr_idx, (out_left, out_right) in enumerate(compare_and_swap(
-          lefts, rights, is_descending=compute_is_descending(idx), num_keys=num_keys
-      )):
-        outs_tiles[arr_idx][idx] = out_left
-        outs_tiles[arr_idx][idx + separation] = out_right
-
-  assert all(not any([v is None for v in out_tiles]) for out_tiles in outs_tiles)
-  return outs_tiles
-
-
-def run_compressed_transpose_format_substages_on_tiles(
-    arrs_tiles,
-    num_substages: int,
-    stage: int,
-    batch_size: int,
-    num_keys: int,
-    sort_dim_offset: int = 0,
-):
-  """Execute multiple substages within tiles."""
-  def _sort_tile_stage(arrs_tiles, stage, num_substages):
-    for substage in range(num_substages)[::-1]:
-      arrs_tiles = _run_compressed_transpose_format_substage_on_tiles(
-          arrs_tiles, substage=substage, batch_size=batch_size, sort_dim_offset=sort_dim_offset,
-          stage=stage, num_keys=num_keys
-      )
-    return arrs_tiles
-
-  if stage is not None:
-    # Run single stage
-    arrs_tiles = _sort_tile_stage(
-        arrs_tiles,
-        num_substages=num_substages,
-        stage=stage,
-    )
-  else:
-    # Run all stages 1 to num_substages (allows compiler fusion)
-    num_stages = num_substages
-    for stage_ in range(1, num_stages + 1):
-      arrs_tiles = _sort_tile_stage(
-          arrs_tiles,
-          num_substages=stage_,
-          stage=stage_,
-      )
-
-  return arrs_tiles
-
-
-def _run_compressed_transpose_format_substages_on_refs(
-    refs,
-    *,
-    num_substages: int,
-    stage: int,
-    num_keys: int,
-    unroll: int = 256,
-    sort_dim_offset: int = 0,
-    slice_dim1: int = None,
-):
-  """Orchestrate subtile sorting with proper blocking."""
-  shape = refs[0].shape
-  if slice_dim1 is None:
-    slice_dim1 = min(unroll * NUM_LANES, shape[1])
-
-  unroll_dim0 = (unroll * NUM_LANES) // slice_dim1
-  slice_dim0 = min(unroll_dim0 * NUM_SUBLANES, shape[0])
-  unroll = (slice_dim0 * slice_dim1) // (NUM_SUBLANES * NUM_LANES)
-
-  grid_dim0 = shape[0] // slice_dim0
-  grid_dim1 = shape[1] // slice_dim1
-
-  @pl.loop(0, grid_dim0 * grid_dim1)
-  def process_block(loop_idx):
-    block_row = loop_idx // grid_dim1
-    block_col = loop_idx % grid_dim1
-
-    ref_slices = [
-        ref.at[
-            pl.dslice(block_row * slice_dim0, slice_dim0),
-            pl.dslice(block_col * slice_dim1, slice_dim1)
-        ]
-        for ref in refs
-    ]
-
-    slice_shape = ref_slices[0].shape
-
-    # pad in dim0 (if needed)
-    arrs = [pad(ref_slice[...], block_shape=(
-        pl.cdiv(NUM_LANES * NUM_LANES, slice_shape[1]), slice_shape[1])) for ref_slice in ref_slices]
-    batch_size = arrs[0].shape[0]
-    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
-    arrs_tiles = jax.tree.map(lambda x: jnp.split(x, x.shape[0] // NUM_SUBLANES, axis=0), arrs_tiles)
-
-    arrs_tiles = run_compressed_transpose_format_substages_on_tiles(
-        arrs_tiles,
-        stage=stage,
-        num_substages=num_substages,
-        sort_dim_offset=sort_dim_offset + (block_col * slice_dim1),
-        batch_size=batch_size,
-        num_keys=num_keys,
-    )
-
-    outs = [
-        from_compressed_transpose_format(tiles, dim0=batch_size)[:slice_shape[0]]
-        for tiles in arrs_tiles
-    ]
-
-    for ref_slice, out in zip(ref_slices, outs, strict=True):
-      ref_slice[...] = out
-
-
-### Cross-Tile Substage
-
-def _run_array_substage_on_refs(
-    refs,
-    substage: int,
-    stage: int,
-    num_keys: int,
-    unroll: int = 16,
-    sort_dim_offset: int = 0,
-):
-  """Perform substage of sort with comparisons between tiles.
-
-  Args:
-    refs: References to arrays being sorted
-    substage: Current substage within stage
-    stage: Current sorting stage
-    num_keys: Number of arrays to use as keys
-    unroll: Loop unrolling factor
-    sort_dim_offset: Offset for bitonic order calculation
-  """
-  assert (unroll % 2) == 0, 'Static sort order requires even unroll factor'
-
-  num_pairs = refs[0].shape[-1] // 2 ** (substage + 1)
-  unroll = min(unroll, num_pairs)
-
-  @pl.loop(0, pl.cdiv(num_pairs, unroll))
-  def process_pairs(loop_idx):
-    pair_length = 2 ** (substage + 1)
-    slice_length = unroll * pair_length
-    ref_slices = [
-        ref.at[:, pl.dslice(loop_idx * slice_length, slice_length)]
-        for ref in refs
-    ]
-
-    outs = [[] for _ in refs]
-    for i in range(unroll):
-      pair_offset = (loop_idx * unroll + i) * pair_length
-      half_length = 2 ** substage
-
-      lefts = [v[:, i * pair_length: i * pair_length + half_length]
-               for v in ref_slices]
-      rights = [v[:, i * pair_length + half_length:
-                   i * pair_length + 2 * half_length]
-                for v in ref_slices]
-
-      is_descending = create_bit_indicator(stage, sort_dim_offset + pair_offset)
-
-      for i, vs in enumerate(compare_and_swap(lefts, rights,
-                                      is_descending=is_descending,
-                                      num_keys=num_keys)):
-        outs[i].extend(vs)
-
-    for ref_slice, out in zip(ref_slices, outs, strict=True):
-      ref_slice[...] = jnp.concatenate(out, axis=-1)
-
-
-### Stage Execution
-
-def _run_stages(
-    refs,
-    stage_ref,
-    *,
-    num_keys: int,
-    descending: bool | None = None,
-    log_n: int | None = None,
-    sort_dim_offset: int | None = None,
-    unroll_crosstile: int = 64,
-    unroll_subtile: int = 64,
-):
-  """Execute bitonic sorting stages."""
-  # Track global index for bitonic sort order (for array sub-sorting)
-  # Second term controls whether final stage is descending or ascending
-  dim1 = refs[0].shape[1]
-  if log_n is None:
-    log_n = log2(dim1)
-  if sort_dim_offset is None:
-    sort_dim_offset = (pl.program_id(1) * dim1 +
-                   int(descending) * pl.num_programs(1) * dim1)
-
-  if stage_ref is None:
-    # Execute full bitonic sort
-    start_stage = 1
-    end_stage = log_n + 1
-    start_stage_static_lower_bound = 1
-  else:
-    # Run single stage (for large arrays that don't fit in VMEM)
-    stage = stage_ref[0]
-    start_stage = stage
-    end_stage = stage + 1
-    start_stage_static_lower_bound = log_n
-
-  # Run stages 1 to 7 (if large enough), compiler fused
-  if start_stage_static_lower_bound == 1:
-    _run_compressed_transpose_format_substages_on_refs(
-        refs,
-        num_substages=min(log2(NUM_LANES), end_stage),
-        stage=None,
-        sort_dim_offset=sort_dim_offset,
-        unroll=unroll_subtile,
-        num_keys=num_keys,
-    )
-  elif (all_concrete_ints(start_stage, end_stage)
-        and start_stage <= log2(NUM_LANES) and end_stage == start_stage + 1):
-    _run_compressed_transpose_format_substages_on_refs(
-        refs,
-        num_substages=start_stage,
-        stage=start_stage,
-        sort_dim_offset=sort_dim_offset,
-        unroll=unroll_subtile,
-        num_keys=num_keys,
-    )
-    return
-  else:
-    assert start_stage_static_lower_bound > log2(NUM_LANES), \
-        'stages 1 to log2(NUM_LANES) only triggered as fully unrolled code block'
-
-  # Run stages 8 and upwards
-  @pl.loop(max_int(start_stage, log2(NUM_LANES) + 1), end_stage)
-  def run_stage(stage):
-    for substage in range(log2(NUM_LANES), log_n)[::-1]:
-      # Run substages 7 and up
-      @pl.when(stage > substage)
-      def _():
-        _run_array_substage_on_refs(
-            refs,
-            substage=substage,
-            stage=stage,
-            unroll=unroll_crosstile,
-            sort_dim_offset=sort_dim_offset,
-            num_keys=num_keys,
-        )
-
-    # Run substages 0-6 inclusive
-    _run_compressed_transpose_format_substages_on_refs(
-        refs,
-        num_substages=log2(NUM_LANES),
-        stage=stage,
-        sort_dim_offset=sort_dim_offset,
-        unroll=unroll_subtile,
-        num_keys=num_keys,
-    )
-
-
-def _sort_refs(
+### VMEM-Based Sort (fits in VMEM)
+def _sort_in_vmem_bitonic_refs(
     in_refs,
     stage_ref,
     out_refs,
-    refs, # scratch refs operated on
+    refs,  # scratch refs operated on
     indices_ref,
     *,
     descending: bool,
     is_stable: bool,
     num_keys: int,
-    log_n: int | None = None,
+    num_stages: int | None = None,
+    stage_unroll: int | None = None,
+    slice_size_unroll: int | None = None,
+    ref_slice_size_unroll: int | None = None,
+    unroll_stages: bool = True,
+    float_keys_converted_outside: list[bool] | None = None,
 ):
-  """Pallas kernel for sorting."""
+  """Pallas kernel for sorting using bitonic sort."""
   shape = in_refs[0].shape
   assert len(shape) == 2
   k = out_refs[0].shape[-1]
 
-  if log_n is None:
-    log_n = log2(shape[1])
   if 2**log2(shape[1]) != shape[1]:
     raise ValueError("Size along sort dimension must be a power of 2")
 
@@ -471,67 +96,118 @@ def _sort_refs(
     indices_ref[...] = indices
     refs.insert(num_keys, indices_ref)
 
-  _run_stages(
-      refs,
-      stage_ref,
-      descending=descending,
-      num_keys=num_keys + int(is_stable),
-      log_n=log_n,
-  )
+  # Use bitonic sort instead of _run_stages
+  # Create transpose refs for bitonic sort
+  dim0, dim1 = _bitonic_compute_padded_shape(*refs[0].shape, k=NUM_SUBLANES)
+  dim0 = min(dim0, NUM_LANES)
+  transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
 
-  if use_indices:
-    refs.pop(num_keys)
-  if return_argsort:
-    if descending and is_stable:
-      indices_ref[...] = indices_ref.shape[1] - 1 - indices_ref[...]
-    refs.append(indices_ref)
+  @functools.partial(pl.run_scoped, transpose_refs=[
+      pltpu.VMEM(transpose_shape, to_32bit_dtype(ref.dtype)) for ref in refs
+  ])
+  def _run_bitonic(transpose_refs):
+    outs = bitonic_sort_arrays(
+        [ref[...] for ref in refs],
+        num_keys=num_keys + int(is_stable),
+        axis=1,
+        descending=descending,
+        stage=stage_ref[0] if stage_ref is not None else None,
+        num_stages=num_stages,
+        stage_unroll=stage_unroll,
+        slice_size_unroll=slice_size_unroll,
+        ref_slice_size_unroll=ref_slice_size_unroll,
+        unroll_stages=unroll_stages if stage_ref is None else False,
+        # only used if unroll_stages, then this ceases to be an _arrays method
+        transpose_refs=transpose_refs,
+        sort_dim_offset=(
+          # local
+          SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] + 
+          # global
+          int(descending) * pl.num_programs(1) * shape[1])
+    )
 
-  for ref, out_ref in zip(refs, out_refs, strict=True):
-    if ref is not out_ref:
-      out_ref[...] = ref[..., :k].astype(out_ref.dtype)
+    if use_indices:
+      indices = outs.pop(num_keys)
+    if return_argsort:
+      if descending and is_stable:
+        indices = indices.shape[1] - 1 - indices
+      refs.append(indices)
+  
+    for i, (out, out_ref) in enumerate(zip(outs, out_refs, strict=True)):
+      if jnp.issubdtype(out.dtype, jnp.integer) and jnp.issubdtype(out_ref.dtype, jnp.floating):
+        # Check if this was a float key that we converted
+        out = sortable_int_to_float(out)
+      out_ref[...] = out.astype(out_ref.dtype)
 
-
-### VMEM-Based Sort (fits in VMEM)
 
 @functools.partial(
     jit,
-    static_argnames=("k", "block_token", "block_seq", "return_argsort",
-                     "descending", "num_keys", "is_stable", "log_n", "interpret")
+    static_argnames=("num_keys", "return_argsort", "descending", "is_stable",
+                     "num_stages", "interpret", "block_token", "block_seq",
+                     "compile_fast", "stage_unroll", "slice_size_unroll",
+                     "ref_slice_size_unroll", "unroll_stages")
 )
-def _sort_in_vmem(
+def _sort_in_vmem_bitonic(
     operand: jax.Array | Sequence[jax.Array],
+    # behavior control
     num_keys: int,
-    k: int | None = None,
-    block_token: int | None = None,
-    block_seq: int | None = None,
     return_argsort: bool = False,
     descending: bool = False,
     is_stable: bool = False,
-    stage: int | None = None,
-    log_n: int | None = None,
+    # niche behavior for larger than vmem inputs
+    stage: int | jax.Array | None = None,
+    num_stages: int | None = None,
     interpret: bool = False,
+    # implementation details
+    block_token: int | None = None,
+    block_seq: int | None = None,
+
+    compile_fast: bool = False,
+    # specialist unroll controls, suggest setting just fast_compile=True if compilation is too slow, it will overwrite and set these other unrolls
+    stage_unroll: int | None = None,
+    slice_size_unroll: int | None = None,
+    ref_slice_size_unroll: int | None = None,
+    unroll_stages: bool = True,
 ) -> tuple[jax.Array, ...]:
-  """Sort arrays that fit in VMEM using Pallas.
+  """Sort arrays that fit in VMEM using bitonic sort.
 
   Args:
     operand: Input array(s) to sort (2D)
     num_keys: Number of arrays to use as sort keys
-    k: Return only first k elements from sorted arrays
-    block_token: Token blocking size for memory efficiency
-    block_seq: Sequence blocking size for use if subsorting operands
     return_argsort: Whether to return argsort indices
     descending: Sort in descending order
     is_stable: Whether to perform stable sort
     stage: Specific stage to run (for multi-stage sorting)
-    log_n: Length of sorted axis if array is padded
+    num_stages: Number of stages in the bitonic sort
+    interpret: Run in interpret mode
+    block_token: Token blocking size for memory efficiency
+    block_seq: Sequence blocking size for use if subsorting operands
+    compile_fast: Use faster compilation settings (reduced unrolling)
+    stage_unroll: Number of stages to unroll in bitonic sort
+    slice_size_unroll: Slice size unroll parameter for bitonic sort
+    ref_slice_size_unroll: Ref slice size unroll parameter for bitonic sort
+    unroll_stages: Whether to unroll stages in bitonic sort
 
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)
   """
+  if stage_unroll is None:
+    # heuristic, likely reduces register pressure as it reorder operations into groups of 2**6/NUM_SUBLANES=8 tiles
+    stage_unroll = 6
+  if compile_fast:
+    # reduces compilation time scaling to linear
+    stage_unroll, slice_size_unroll, ref_slice_size_unroll, unroll_stages = (6, 7, 8, False)
+      
   operands, shape = canonicalize_operand(operand)
+  k = shape[1]  # For compatibility with block_seq checks
 
-  if k is None:
-    k = shape[-1]
+  unconverted_operands = tuple(operands)
+  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency
+  if interpret:
+    for i in range(len(operands)):
+      if jnp.issubdtype(operands[i].dtype, jnp.floating) and i < num_keys:
+        operands[i] = float_to_sortable_int(operands[i])
+
   if block_token is None:
     block_token = min(max(NUM_SUBLANES, (2**14) // shape[0]), shape[0])
   if block_seq is None:
@@ -542,21 +218,23 @@ def _sort_in_vmem(
   block_shape = (block_token, block_seq)
 
   out_shapes = jax.tree.map(
-      lambda v: jax.ShapeDtypeStruct((shape[0], k), v.dtype),
-      tuple(operands)
+      lambda v: jax.ShapeDtypeStruct(shape, v.dtype),
+      unconverted_operands
   )
   if return_argsort:
-    out_shapes += (jax.ShapeDtypeStruct((shape[0], k), jnp.int32),)
+    out_shapes += (jax.ShapeDtypeStruct(shape, jnp.int32),)
 
   in_specs = (
       [pl.BlockSpec(block_shape, lambda i, j: (i, j)) for _ in operands],
       pl.BlockSpec(memory_space=pltpu.SMEM) if stage is not None else None
   )
   out_specs = tuple(
-      pl.BlockSpec((block_token, min(k, block_seq)), lambda i, j: (i, j))
+      pl.BlockSpec((block_token, block_seq), lambda i, j: (i, j))
       for _ in out_shapes
   )
 
+  # Allocate scratch refs with int32 for float keys to avoid dtype conversion issues
+  # If float was already converted outside, it's already int32
   scratch_shapes = (
       [pltpu.VMEM(block_shape, to_32bit_dtype(ref.dtype)) for ref in operands],
       pltpu.VMEM(block_shape, jnp.int32),
@@ -566,8 +244,13 @@ def _sort_in_vmem(
     stage = stage[None]
 
   return pl.pallas_call(
-      functools.partial(_sort_refs, descending=descending, num_keys=num_keys,
-                        is_stable=is_stable, log_n=log_n),
+      functools.partial(_sort_in_vmem_bitonic_refs, descending=descending, num_keys=num_keys,
+                        is_stable=is_stable, num_stages=num_stages,
+                        stage_unroll=stage_unroll,
+                        slice_size_unroll=slice_size_unroll,
+                        ref_slice_size_unroll=ref_slice_size_unroll,
+                        unroll_stages=unroll_stages,
+                        ),
       out_shape=(out_shapes,),
       in_specs=in_specs,
       out_specs=(out_specs,),
@@ -798,10 +481,13 @@ def sort(
   """
   operands, shape = canonicalize_operand(operand)
   num_stages = log2(shape[1])
+  
+  if not any(jnp.isdtype(x, 'bool') for x in operands):
+    raise NotImplementedError('Please cast bool operands to integer')
 
   if (shape[1] != 2**num_stages and
       any(not jnp.issubdtype(x.dtype, jnp.floating) for x in operands)):
-    # If padded, integer/bool values in padding may leak unless stable
+    # If padded, integer values in padding may leak unless stable
     # Floats handled by standardizing nans and padding with largest nan
     is_stable = True
 
@@ -851,15 +537,15 @@ def sort(
   # Sort based on array size
   if num_stages <= num_vmem_substages:
     # Array fits in VMEM
-    operands = _sort_in_vmem(
+    operands = _sort_in_vmem_bitonic(
         operands,
         descending=descending,
         num_keys=num_keys,
         is_stable=False,
         return_argsort=False,
         block_token=block_token,
-        log_n=num_stages,
-        interpret=interpret
+        num_stages=num_stages,
+        interpret=interpret,
     )
   else:
     def _run_stage(stage, operands):
@@ -877,7 +563,7 @@ def sort(
       )
 
       # VMEM-based substages for within-block operations
-      return _sort_in_vmem(
+      return _sort_in_vmem_bitonic(
           operands,
           block_seq=2**num_vmem_substages,
           stage=stage,
@@ -888,7 +574,7 @@ def sort(
       )
 
     # Initial bitonic sorting of VMEM-sized blocks
-    operands = _sort_in_vmem(
+    operands = _sort_in_vmem_bitonic(
         tuple(operands),
         block_seq=2**num_vmem_substages,
         stage=None,
