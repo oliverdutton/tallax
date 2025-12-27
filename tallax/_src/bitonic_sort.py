@@ -60,7 +60,7 @@ from tallax._src.utils import (
     split_array_to_tiles,
     create_bit_indicator,
 )
-from tallax._src.symint import SymInt
+from tallax._src.symint import SymInt, unwrap
 
 
 def set_cummax(vs):
@@ -221,9 +221,6 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     ):
       sort_dim_offset = 2**stage
 
-    # Helper to unwrap SymInt to value for use in expressions
-    def unwrap(x):
-        return x.value if isinstance(x, SymInt) else x
 
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
