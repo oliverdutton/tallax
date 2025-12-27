@@ -443,12 +443,13 @@ def top_dynamic_k(
   # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
   logits = pad(logits, (1, NUM_LANES), val='min')
   num_tokens, vocab_size = logits.shape
+  num_tokens_padded = ceil_multiple(num_tokens, block_token)
     
   if max_k > NUM_LANES:
     raise NotImplementedError
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
-  k = pad(k, (ceil_multiple(num_tokens, block_token),), val=0)
+  k = pad(k, (num_tokens_padded,), val=0)
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -467,22 +468,23 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),
+      jax.ShapeDtypeStruct((num_tokens_padded,), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens_padded,), to_32bit_dtype(logits.dtype)),
   )
 
   output_specs = (
-      pl.BlockSpec(),
-      pl.BlockSpec(),
+      pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
+      pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
   # Add scratch shapes
+  
   scratch_shapes = [
-      pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
-      pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
+      pltpu.VMEM((num_tokens_padded, buffer_size), to_32bit_dtype(logits.dtype)),
+      pltpu.VMEM((num_tokens_padded, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
   ]
 
