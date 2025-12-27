@@ -107,10 +107,13 @@ def bitonic_sort_in_vmem_refs(
   # not bf16,bf16->i1 so we upcast everything to 32bit
   operands = [x.astype(to_32bit_dtype(x.dtype)) for x in operands]
 
-  # Compute sort_dim_offset outside of run_scoped to avoid grid context issues
-  sort_dim_offset = (
+  # If subsorting an input (for hybrid HBM-VMEM sorting) we deal with grid context related offset here
+  if pl.num_programs(1) != 1:
+    sort_dim_offset = (
       (SymInt(pl.program_id(1), 0, pl.num_programs(1)-1)  + 
        int(descending) * pl.num_programs(1)) * padded_shape[1])
+  else:
+    sort_dim_offset = None
   if k == shape[1]:
     # sort
     operands = bitonic_sort_maybe_rolled(
