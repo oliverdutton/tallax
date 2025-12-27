@@ -567,5 +567,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
     # Unpad to original shape
-    return [(arr[:shape[0], :shape[1]] if descending else arr[:shape[0], -shape[1]:]) for arr in arrs]
+    # For ascending sort: padding is appended at end, so take from beginning
+    # For descending sort: padding is prepended at beginning, so take from end
+    return [(arr[:shape[0], -shape[1]:] if descending else arr[:shape[0], :shape[1]]) for arr in arrs]
 

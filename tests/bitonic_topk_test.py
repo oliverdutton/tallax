@@ -4,17 +4,9 @@ import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from tallax._src.sort import bitonic_topk_in_vmem
-from tallax._src.bitonic_topk_core import bitonic_topk_arrays, max_arrays
+from tallax._src.bitonic_topk_core import max_arrays
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_topk_output
-
-
-def bitonic_topk(operands, k, num_keys=1, descending=True, interpret=False):
-    """Wrapper for bitonic_topk_in_vmem to match old API."""
-    result = bitonic_topk_in_vmem(
-        operands, k=k, num_keys=num_keys, descending=descending, interpret=interpret
-    )
-    return result
 
 
 @pytest.mark.parametrize("shape", [(8, 64), (17, 37), (8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
@@ -37,13 +29,8 @@ def test_bitonic_topk(shape, dtype, axis, k):
     indices = jax.lax.broadcasted_iota(jnp.int32, shape, axis)
 
     k = min(k, shape[axis])
-    # On CPU, call bitonic_topk_arrays directly (Pallas causes segfaults)
-    # On TPU/GPU, use the full bitonic_topk with Pallas
-    # Note: bitonic_topk_arrays only works on axis=1, so we only test axis=1
-    if interpret:
-        result_values, result_indices = bitonic_topk_arrays([arr, indices], k=k, num_keys=1)
-    else:
-        result_values, result_indices = bitonic_topk([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
+    # Use the full bitonic_topk_in_vmem API
+    result_values, result_indices = bitonic_topk_in_vmem([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
 
     valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}, axis {axis}"

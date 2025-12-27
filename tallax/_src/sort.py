@@ -64,7 +64,7 @@ def bitonic_sort_in_vmem_refs(
   operands = [ref[...] for ref in in_refs]
   shape = operands[0].shape
   assert len(shape) == 2
-  padded_shape = _compute_padded_shape_for_sort(*shape) if k!=shape[1] else _compute_padded_shape_for_topk(*shape, k=k)
+  padded_shape = _compute_padded_shape_for_topk(*shape, k=k) if k!=shape[1] else _compute_padded_shape_for_sort(*shape)
 
   return_argsort = len(out_refs) > len(in_refs)
   assert len(out_refs) == (len(in_refs) + int(return_argsort))
