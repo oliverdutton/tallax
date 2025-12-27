@@ -12,9 +12,6 @@ def _should_skip_on_cpu(size):
     """Skip tests on CPU for large sizes (> 1024) to avoid slow tests."""
     return is_cpu_platform() and size > 1024
 
-
-@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
-@pytest.mark.parametrize("size", [128, 256, 1024, 2048, 131072])
 @pytest.mark.parametrize("variant", [
     "standard",
     "return_argsort",
@@ -23,18 +20,21 @@ def _should_skip_on_cpu(size):
     "descending_argsort",
     "descending_stable"
 ])
+@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
 @pytest.mark.parametrize("num_arrays,num_keys", [
     (1, 1),
     (2, 1),
     (2, 2)
 ])
-def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
+@pytest.mark.parametrize("size", [17, 128, 173, 256, 1024, 2048, 131072])
+@pytest.mark.parametrize("batch_size", [16, 3, 19, 157])
+def test_sort_comprehensive(dtype, batch_size, size, variant, num_arrays, num_keys):
     """Comprehensive sort tests with various configurations."""
     # Skip large sizes on CPU
     if _should_skip_on_cpu(size):
         pytest.skip("Skipping large size on CPU - interpret mode is too slow")
 
-    shape = (16, size)
+    shape = (batch_size, size)
     key = jax.random.key(0)
 
     # Generate operands using split instead of fold_in
@@ -73,4 +73,4 @@ def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
         interpret=interpret
     )
 
-    assert valid, f"Sort validation failed for {variant}, num_arrays={num_arrays}, num_keys={num_keys}"
+    assert valid, f"Sort validation failed for {shape=} {variant}, {num_arrays=}, {num_keys=}"
