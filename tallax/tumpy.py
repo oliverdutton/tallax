@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from tallax._src.sort import sort as lax_sort_pallas
+from tallax._src.sort import bitonic_sort_in_vmem as lax_sort_pallas
 from tallax._src.gather import take_along_axis as _take_along_axis
 from tallax._src.utils import is_cpu_platform
 

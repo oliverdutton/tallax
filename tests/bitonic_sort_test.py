@@ -1,7 +1,7 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax._src.bitonic_topk import bitonic_sort, bitonic_sort_arrays
+from tallax._src.sort import bitonic_sort_in_vmem
 from tallax._src.utils import is_cpu_platform
 
 
@@ -27,7 +27,7 @@ def test_bitonic_sort_arrays(shape, dtype, descending):
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
     # Run bitonic sort
-    result = bitonic_sort_arrays([arr], num_keys=1, descending=descending)
+    result = bitonic_sort_in_vmem([arr], num_keys=1, descending=descending, interpret=interpret)
     sorted_arr = result[0]
 
     # Verify shape
@@ -67,12 +67,7 @@ def test_bitonic_sort_pallas(shape, dtype, descending):
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
     # Run bitonic sort through Pallas
-    if interpret:
-        # On CPU, call bitonic_sort_arrays directly to avoid Pallas issues
-        result = bitonic_sort_arrays([arr], num_keys=1, descending=descending)
-    else:
-        result = bitonic_sort(arr, num_keys=1, descending=descending, interpret=interpret)
-
+    result = bitonic_sort_in_vmem([arr], num_keys=1, descending=descending, interpret=interpret)
     sorted_arr = result[0]
 
     # Verify shape
@@ -99,20 +94,14 @@ def test_bitonic_sort_multi_key(num_keys):
     arr2 = jax.random.randint(key, shape, 0, 100, dtype=jnp.int32)  # Secondary key
 
     if num_keys == 1:
-        if interpret:
-            result = bitonic_sort_arrays([arr1], num_keys=1, descending=False)
-        else:
-            result = bitonic_sort(arr1, num_keys=1, descending=False, interpret=interpret)
+        result = bitonic_sort_in_vmem([arr1], num_keys=1, descending=False, interpret=interpret)
         sorted_arr1 = result[0]
 
         # Verify against reference
         expected = jnp.sort(arr1, axis=1)
         assert jnp.allclose(sorted_arr1, expected)
     else:
-        if interpret:
-            result = bitonic_sort_arrays([arr1, arr2], num_keys=2, descending=False)
-        else:
-            result = bitonic_sort([arr1, arr2], num_keys=2, descending=False, interpret=interpret)
+        result = bitonic_sort_in_vmem([arr1, arr2], num_keys=2, descending=False, interpret=interpret)
         sorted_arr1, sorted_arr2 = result
 
         # Verify that arr1 is sorted

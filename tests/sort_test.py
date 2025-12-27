@@ -5,6 +5,7 @@ import jax.numpy as jnp
 
 from tallax._src.utils import is_cpu_platform
 from tallax._src.test_utils import verify_sort_output
+from tallax._src.sort import bitonic_sort_in_vmem
 
 
 def _should_skip_on_cpu(size):
@@ -51,7 +52,8 @@ def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
     # Use interpret mode on CPU
     interpret = is_cpu_platform()
 
-    verify_sort_output(
+    # Run sort
+    outputs = bitonic_sort_in_vmem(
         operands,
         num_keys=num_keys,
         return_argsort=return_argsort,
@@ -59,3 +61,16 @@ def test_sort_comprehensive(dtype, size, variant, num_arrays, num_keys):
         descending=descending,
         interpret=interpret
     )
+
+    # Verify outputs
+    valid = verify_sort_output(
+        operands,
+        outputs,
+        num_keys=num_keys,
+        return_argsort=return_argsort,
+        is_stable=is_stable,
+        descending=descending,
+        interpret=interpret
+    )
+
+    assert valid, f"Sort validation failed for {variant}, num_arrays={num_arrays}, num_keys={num_keys}"

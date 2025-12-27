@@ -12,7 +12,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.bitonic_topk import bitonic_topk_arrays, bitonic_topk, max_arrays
+from tallax._src.bitonic_topk_core import bitonic_topk_arrays, max_arrays
 from tallax._src.top_p_and_sample import top_p_and_sample
 from tallax._src.divide_and_filter_topk import top_dynamic_k
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
@@ -22,7 +22,7 @@ def _topk_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
       if logits.shape[-1] <= 0:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
-        topk_logits, topk_idxs = bitonic_topk([logits, idxs], NUM_LANES)
+        topk_logits, topk_idxs = bitonic_topk_arrays([logits, idxs], k=NUM_LANES)
         topk_logits = jnp.where(
           jnp.arange(NUM_LANES)[None, :] < k[:,None],
           topk_logits,

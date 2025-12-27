@@ -59,16 +59,9 @@ from tallax._src.utils import (
     join_tiles_to_array,
     split_array_to_tiles,
     create_bit_indicator,
+    set_cummax,
 )
 from tallax._src.symint import SymInt, unwrap
-
-
-def set_cummax(vs):
-  o = [vs[0]]
-  for v in vs[1:]:
-    if v > o[-1]:
-      o.append(v)
-  return type(vs)(o)
 
 
 def compare_and_swap(lefts, rights, *, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
@@ -155,21 +148,20 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
 
   This function finds the minimal padded shape that satisfies the constraints:
   - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
-  - dim1 is a multiple of k
+  - dim1 must satisfy divisibility requirements
   - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and
     concat on full tiles, subtile concat not supported
 
   Args:
     unpadded_dim0: Original first dimension size
     unpadded_dim1: Original second dimension size
-    k: Target top-k size (must be power of 2 for padding calculation purposes)
 
   Returns:
     Tuple of (padded_dim0, padded_dim1) compatible with compressed transpose format
   """
   if unpadded_dim0 >= NUM_LANES:
     dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
-    dim1 = 2**log2(ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES)))
+    dim1 = 2**log2(ceil_multiple(unpadded_dim1, NUM_SUBLANES))
     return (dim0, dim1)
 
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
@@ -504,7 +496,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), compression_length) for size in (slice_size, ref_slice_size))
 
       if unroll_stages:
-        arrs_tiles = _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, slice_size, **kwargs)
+        arrs_tiles = _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, slice_size, **sort_kwargs)
       else:
         # use the transpose refs
         for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
@@ -575,5 +567,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
     # Unpad to original shape
-    return [(arr[:shape[0], :shape[1]] if descending else arr[:shape[0], -shape[1]:]) for arr in arrs]
+    # For ascending sort: padding is appended at end, so take from beginning
+    # For descending sort: padding is prepended at beginning, so take from end
+    return [(arr[:shape[0], -shape[1]:] if descending else arr[:shape[0], :shape[1]]) for arr in arrs]
 

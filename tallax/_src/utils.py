@@ -37,18 +37,6 @@ def ceil_multiple(i, n):
   return pl.cdiv(i, n) * n
 
 
-def max_int(a, b):
-  """Max of two values, accepts both static and dynamic ints."""
-  if not all(map(lambda v: type(v) == int, (a, b))):
-    return jnp.maximum(a, b)
-  return max(a, b)
-
-
-def all_concrete_ints(*args):
-  """Check if all arguments are concrete Python integers."""
-  return all(map(lambda v: type(v) == int, args))
-
-
 def get_dtype_info(x):
   """Get finfo or iinfo for array dtype."""
   dtype = x.dtype
@@ -326,3 +314,12 @@ def transpose_list_of_lists(tree):
   outer = jax.tree.structure(type(tree)('*') * len(tree))
   inner = jax.tree.structure(type(tree[0])('*') * len(tree[0]))
   return jax.tree.transpose(outer, inner, tree)
+
+
+def set_cummax(vs):
+  """Compute cumulative maximum of a sequence."""
+  o = [vs[0]]
+  for v in vs[1:]:
+    if v > o[-1]:
+      o.append(v)
+  return type(vs)(o)

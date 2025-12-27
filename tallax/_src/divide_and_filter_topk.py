@@ -5,9 +5,9 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.bitonic_topk import bitonic_topk_refs, bitonic_topk_arrays
+from tallax._src.bitonic_topk_core import bitonic_topk_arrays
 from tallax.divide_and_filter_topk_convergence_theory import calculate_depth_thresholds
-from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
+from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype, ceil_multiple
 
 def binned_topk(
     logits,
@@ -362,12 +362,11 @@ def dynamic_topk_refs(
       ))
       def _():
         # Sort the binned superset
-        bitonic_topk_refs(
-          [ref.at[:, :depth_upper * num_bins]
-            for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)],
-          [topk_vals_ref, topk_idxs_ref],
+        vals_input = bins_topm_vals_ref[:, :depth_upper * num_bins]
+        idxs_input = bins_topm_idxs_ref[:, :depth_upper * num_bins]
+        topk_vals_ref[...], topk_idxs_ref[...] = bitonic_topk_arrays(
+          [vals_input, idxs_input],
           num_keys=1,
-          descending=True,
           k=max_k,
         )
         if replace_val is not None:
@@ -438,18 +437,17 @@ def top_dynamic_k(
           - topk_vals: Top-k values of shape [num_tokens, max_k].
           - topk_idxs: Top-k indices of shape [num_tokens, max_k].
   """
-  unpadded_num_tokens = logits.shape[0]
 
   # pad in first dimension for block spec
   # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
-  logits = pad(logits, (block_token, NUM_LANES), val='min')
   num_tokens, vocab_size = logits.shape
+  num_tokens_padded = ceil_multiple(num_tokens, block_token)
     
   if max_k > NUM_LANES:
     raise NotImplementedError
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
-  k = pad(k, (num_tokens,), val=0)
+  k = pad(k, (num_tokens_padded,), val=0)
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
@@ -468,22 +466,23 @@ def top_dynamic_k(
       jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),
       jax.ShapeDtypeStruct((num_tokens, max_k), jnp.int32),
       jax.ShapeDtypeStruct((1,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), jnp.int32),
-      jax.ShapeDtypeStruct((num_tokens,), to_32bit_dtype(logits.dtype)),
+      jax.ShapeDtypeStruct((num_tokens_padded,), jnp.int32),
+      jax.ShapeDtypeStruct((num_tokens_padded,), to_32bit_dtype(logits.dtype)),
   )
 
   output_specs = (
-      pl.BlockSpec(),
-      pl.BlockSpec(),
+      pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
+      pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
       pl.BlockSpec(memory_space=pltpu.SMEM),
   )
 
   # Add scratch shapes
+  
   scratch_shapes = [
-      pltpu.VMEM((num_tokens, buffer_size), to_32bit_dtype(logits.dtype)),
-      pltpu.VMEM((num_tokens, buffer_size), jnp.int32),
+      pltpu.VMEM((num_tokens_padded, buffer_size), to_32bit_dtype(logits.dtype)),
+      pltpu.VMEM((num_tokens_padded, buffer_size), jnp.int32),
       pltpu.SMEM((1,), jnp.int32),
   ]
 
@@ -514,12 +513,12 @@ def top_dynamic_k(
   )(logits, k, k)
   topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
-  topk_vals, topk_idxs = (x[:unpadded_num_tokens,:max_k] for x in (topk_vals, topk_idxs))
+  topk_vals, topk_idxs = (x[:num_tokens,:max_k] for x in (topk_vals, topk_idxs))
   valid = valid.squeeze().astype(bool)
 
   if guarantee_convergence:
     return topk_vals, topk_idxs
-  return topk_vals, topk_idxs, valid, depths[:unpadded_num_tokens], cutoff_vals[:unpadded_num_tokens]
+  return topk_vals, topk_idxs, valid, depths[:num_tokens], cutoff_vals[:num_tokens]
 
 @functools.partial(
     jit,

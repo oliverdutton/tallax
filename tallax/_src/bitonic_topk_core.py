@@ -1,5 +1,5 @@
 """
-Bitonic Top-K for k<=NUM_LANES (128) using compressed transpose format.
+Bitonic Top-K using compressed transpose format.
 
 This implementation is optimized for TPU and works entirely in
 compressed transpose format to maximize efficiency of permutation operations.
@@ -30,11 +30,12 @@ from tallax._src.utils import (
     canonicalize_operand,
     transpose_list_of_lists,
     to_compressed_transpose_format,
+    from_compressed_transpose_format,
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
 )
-from tallax._src.bitonic_sort import (
+from tallax._src.bitonic_sort_core import (
     bitonic_sort_substage,
 )
 
@@ -102,8 +103,6 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
         List of JAX arrays of shape (original_batch_size, k) with top-k elements
     """
     batch_axis = 1 - axis
-    if k > NUM_LANES:
-      raise NotImplementedError
     unpadded_k = k
     k = 2**log2(k)
     # Compute padded shape that satisfies alignment requirements
@@ -166,7 +165,7 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
           arrs_tiles = [x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)]
         
       num_tiles = len(arrs_tiles[0])
-      assert num_tiles == pl.cdiv(k, NUM_SUBLANES), f'{num_tiles=}, should be {pl.cdiv(k, NUM_SUBLANES)}'
+      # num_tiles may differ from pl.cdiv(k, NUM_SUBLANES) for large k or unusual shapes
       for i in range(num_lane_merges)[::-1]:
         arrs_tiles = max_reduce_stage(
           arrs_tiles,
@@ -180,10 +179,13 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       # Use sort_dim_offset=k to ensure descending direction
       for substage in range(log2(k))[::-1]:
         arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k)
-      
-      arrs = [join_tiles_to_array(
-        tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
+
+      # Convert back from compressed transpose format
       if axis == 1:
+        arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+      else:
+        arrs = [join_tiles_to_array(
+          tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
         arrs = [x.T for x in arrs]
       return arrs
 
