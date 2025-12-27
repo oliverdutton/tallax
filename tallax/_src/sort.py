@@ -102,6 +102,13 @@ def _sort_in_vmem_bitonic_refs(
   dim0 = min(dim0, NUM_LANES)
   transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
 
+  # Compute sort_dim_offset outside of run_scoped to avoid grid context issues
+  sort_dim_offset = (
+      # local
+      SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] +
+      # global
+      int(descending) * pl.num_programs(1) * shape[1])
+
   @functools.partial(pl.run_scoped, transpose_refs=[
       pltpu.VMEM(transpose_shape, to_32bit_dtype(ref.dtype)) for ref in refs
   ])
@@ -119,11 +126,7 @@ def _sort_in_vmem_bitonic_refs(
         unroll_stages=unroll_stages if stage_ref is None else False,
         # only used if unroll_stages, then this ceases to be an _arrays method
         transpose_refs=transpose_refs,
-        sort_dim_offset=(
-          # local
-          SymInt(pl.program_id(1), 0, pl.num_programs(1)-1) * shape[1] +
-          # global
-          int(descending) * pl.num_programs(1) * shape[1])
+        sort_dim_offset=sort_dim_offset
     )
 
     if use_indices:
