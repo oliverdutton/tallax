@@ -150,7 +150,7 @@ def compute_pair_slice_start_index(i, separation, slice_length=1):
     return pair_idx * 2 * separation + slice_idx * slice_length
 
 
-def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
+def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
 
   This function finds the minimal padded shape that satisfies the constraints:
@@ -462,7 +462,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     #unpadded_sort_dim = shape[axis]
 
     if axis == 1:
-      padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
+      padded_shape = _compute_padded_shape(shape[0], shape[1])
     elif axis == 0:
       padded_shape = (
         ceil_multiple(shape[0], NUM_SUBLANES),
