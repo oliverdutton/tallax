@@ -505,7 +505,7 @@ def top_dynamic_k(
       ),
       out_shape=output_shapes,
       scratch_shapes=tuple(scratch_shapes),
-      grid=(num_tokens // block_token,),
+      grid=(pl.cdiv(num_tokens, block_token),),
       out_specs=output_specs,
       compiler_params=pltpu.CompilerParams(
         vmem_limit_bytes=int(0.9 * 2**27)
