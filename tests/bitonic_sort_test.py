@@ -1,8 +1,25 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax._src.bitonic_topk import bitonic_sort, bitonic_sort_arrays
+from tallax._src.sort import bitonic_sort_in_vmem
+from tallax._src.bitonic_sort_core import bitonic_sort_maybe_rolled
 from tallax._src.utils import is_cpu_platform
+
+
+def bitonic_sort_arrays(operands, num_keys=1, descending=False):
+    """Wrapper for bitonic_sort_maybe_rolled to match old API."""
+    result = bitonic_sort_maybe_rolled(
+        operands, num_keys=num_keys, axis=1, descending=descending
+    )
+    return result
+
+
+def bitonic_sort(operand, num_keys=1, descending=False, interpret=False):
+    """Wrapper for bitonic_sort_in_vmem to match old API."""
+    result = bitonic_sort_in_vmem(
+        operand, num_keys=num_keys, descending=descending, interpret=interpret
+    )
+    return result
 
 
 @pytest.mark.parametrize("shape", [

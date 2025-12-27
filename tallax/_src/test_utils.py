@@ -8,9 +8,8 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from tallax import tax
 from tallax._src.utils import is_cpu_platform
-from tallax._src.sort import xla_equivalent_sort
+from tallax._src.bitonic_sort_beyond_vmem import xla_equivalent_sort
 
 
 @jax.jit
@@ -22,88 +21,87 @@ def exact_match(xs, ys):
 
 
 def verify_sort_output(
-    operand,
+    operands,
+    outputs,
     num_keys: int,
-    block_token: int | None = None,
     return_argsort: bool = False,
     descending: bool = False,
     is_stable: bool = False,
-    print_outputs: bool = False,
     interpret: bool | None = None,
 ):
-  """Validate sort against XLA reference implementation."""
+  """Validate sort outputs against XLA reference implementation.
+
+  Args:
+      operands: Input operand(s) that were sorted
+      outputs: Output from sort function to validate
+      num_keys: Number of arrays to use as sort keys
+      return_argsort: Whether argsort indices were returned
+      descending: Sort in descending order
+      is_stable: Whether sort should be stable
+      interpret: Run in interpret mode
+
+  Returns:
+      Boolean indicating if outputs are valid
+  """
   if interpret is None:
     interpret = is_cpu_platform()
 
   kwargs = dict(
-      block_token=block_token,
       return_argsort=return_argsort,
       descending=descending,
       num_keys=num_keys,
       is_stable=is_stable,
-      interpret=interpret
   )
-  out_pallas = tax.sort(operand, **kwargs)
 
   if is_stable:
     # Exact match required for stable sort
-    kwargs_for_xla = kwargs.copy()
-    out_xla = xla_equivalent_sort(operand, **kwargs_for_xla)
-    valid = bool(exact_match(out_pallas, out_xla))
+    out_xla = xla_equivalent_sort(operands, **kwargs)
+    valid = bool(exact_match(outputs, out_xla))
 
     if not valid:
       m = jnp.zeros(out_xla[0].shape, dtype=bool)
-      for ox, op in zip(out_xla, out_pallas):
+      for ox, op in zip(out_xla, outputs):
         m |= ~((ox == op) | (jnp.isnan(ox) & jnp.isnan(op)))
       debug_msg = []
-      for ox, op in zip(out_xla, out_pallas):
-        debug_msg.append(f'xla {ox[m]}\npallas {op[m]}')
+      for ox, op in zip(out_xla, outputs):
+        debug_msg.append(f'xla {ox[m]}\noutput {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      error_msg = f"Pallas output does not match XLA output for stable sort:\n{debug_output}"
-    else:
-      error_msg = "Pallas output does not match XLA output for stable sort"
+      print(f"Output does not match XLA output for stable sort:\n{debug_output}")
 
-    assert valid, error_msg
+    return valid
 
   else:
     # Check output is valid permutation with correct relative order
-    out_pallas_stable_sorted = xla_equivalent_sort(
-        out_pallas,
+    outputs_stable_sorted = xla_equivalent_sort(
+        outputs,
         num_keys=num_keys,
         is_stable=True,
         descending=descending,
-        interpret=interpret,
     )
-    valid = bool(exact_match(out_pallas, out_pallas_stable_sorted))
+    valid = bool(exact_match(outputs, outputs_stable_sorted))
     if not valid:
-      m = jnp.zeros(out_pallas_stable_sorted[0].shape, dtype=bool)
-      for ox, op in zip(out_pallas_stable_sorted, out_pallas):
+      m = jnp.zeros(outputs_stable_sorted[0].shape, dtype=bool)
+      for ox, op in zip(outputs_stable_sorted, outputs):
         m |= ~((ox == op) | (jnp.isnan(ox) & jnp.isnan(op)))
       debug_msg = []
-      for ox, op in zip(out_pallas_stable_sorted, out_pallas):
-        debug_msg.append(f'sorted {ox[m]}\npallas {op[m]}')
+      for ox, op in zip(outputs_stable_sorted, outputs):
+        debug_msg.append(f'sorted {ox[m]}\noutput {op[m]}')
       debug_output = '\n'.join(debug_msg)
-      error_msg = f"Pallas output is not sorted:\n{debug_output}"
-    else:
-      error_msg = "out_pallas must be sorted (verified by re-sorting stably)"
+      print(f"Output is not sorted:\n{debug_output}")
+      return False
 
-    assert valid, error_msg
-
-    narrs = len(out_pallas)
-    kwargs_for_xla = kwargs.copy()
+    narrs = len(outputs)
     operands_fully_sorted = xla_equivalent_sort(
-        operand, **{**kwargs_for_xla, 'num_keys': narrs}
+        operands, **{**kwargs, 'num_keys': narrs}
     )
-    out_pallas_fully_sorted = xla_equivalent_sort(
-        out_pallas, **{**kwargs_for_xla, 'num_keys': narrs, 'return_argsort': False}
+    outputs_fully_sorted = xla_equivalent_sort(
+        outputs, **{**kwargs, 'num_keys': narrs, 'return_argsort': False}
     )
-    valid_permute = bool(exact_match(operands_fully_sorted, out_pallas_fully_sorted))
-    assert valid_permute, "out_pallas is not a valid permutation of input"
-    valid &= valid_permute
+    valid_permute = bool(exact_match(operands_fully_sorted, outputs_fully_sorted))
+    if not valid_permute:
+      print("Output is not a valid permutation of input")
 
-  if print_outputs:
-    o_pallas, o_xla = xla_equivalent_sort(operand, **kwargs)
-    print(f'Pallas: {o_pallas}\nXLA: {o_xla}')
+    return valid and valid_permute
 
 
 def verify_topk_output(x, outs, axis=1, approximate=False):
