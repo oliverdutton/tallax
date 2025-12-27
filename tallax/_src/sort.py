@@ -33,9 +33,9 @@ from tallax._src.utils import (
     NUM_SUBLANES,
 )
 from tallax._src.bitonic_sort import (
-    bitonic_sort_arrays,
-    _compute_padded_shape as _bitonic_compute_padded_shape,
-    compute_pair_slice_start_index as _compute_pair_slice_start_index,
+    bitonic_sort_maybe_rolled,
+    _compute_padded_shape,
+    compute_pair_slice_start_index,
     compare_and_swap,
 )
 from tallax._src.symint import SymInt
@@ -98,7 +98,7 @@ def _sort_in_vmem_bitonic_refs(
 
   # Use bitonic sort instead of _run_stages
   # Create transpose refs for bitonic sort
-  dim0, dim1 = _bitonic_compute_padded_shape(*refs[0].shape, k=NUM_SUBLANES)
+  dim0, dim1 = _compute_padded_shape(*refs[0].shape, k=NUM_SUBLANES)
   dim0 = min(dim0, NUM_LANES)
   transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
 
@@ -113,7 +113,7 @@ def _sort_in_vmem_bitonic_refs(
       pltpu.VMEM(transpose_shape, to_32bit_dtype(ref.dtype)) for ref in refs
   ])
   def _run_bitonic(transpose_refs):
-    outs = bitonic_sort_arrays(
+    outs = bitonic_sort_maybe_rolled(
         [ref[...] for ref in refs],
         num_keys=num_keys + int(is_stable),
         axis=1,
