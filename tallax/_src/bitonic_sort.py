@@ -211,7 +211,7 @@ def concrete_and_true(b):
 
 def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, compression_length: int, substage: int | None=None):
     # is_descending repeats every 2**(stage+1)
-    # Optimize sort_dim_offset if 
+    # Optimize sort_dim_offset if
     if concrete_and_true(
         (sort_dim_offset % (2**(stage+1))) < 2**stage
     ):
@@ -220,18 +220,22 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
         (sort_dim_offset % (2**(stage+1))) >= 2**stage
     ):
       sort_dim_offset = 2**stage
-  
+
+    # Helper to unwrap SymInt to value for use in expressions
+    def unwrap(x):
+        return x.value if isinstance(x, SymInt) else x
+
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
       # Same pattern for all tiles
-      return create_bit_indicator(int(stage), tile_local_offset + int(sort_dim_offset))
+      return create_bit_indicator(unwrap(stage), tile_local_offset + unwrap(sort_dim_offset))
 
     if concrete_and_true(stage >= log2(NUM_SUBLANES)) and concrete_and_true(stage < log2(compression_length)):
         # Bit set by tile_offset, constant within tile, differs across tiles
-        return create_bit_indicator(int(stage), tile_start_offset + int(sort_dim_offset))
+        return create_bit_indicator(unwrap(stage), tile_start_offset + unwrap(sort_dim_offset))
 
     # Can't optimize - use full computation
-    return create_bit_indicator(int(stage), tile_start_offset + tile_local_offset + int(sort_dim_offset))
+    return create_bit_indicator(unwrap(stage), tile_start_offset + tile_local_offset + unwrap(sort_dim_offset))
 
 
 def _bitonic_sort_substage(arrs_tiles, *, substage, stage, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, concat_threshold: int | None = None):
