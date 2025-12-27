@@ -26,11 +26,10 @@ def test_bitonic_topk(shape, dtype, axis, k):
     else:
         arr = jax.random.randint(key, shape, 0, 1000).astype(dtype)
 
-    indices = jax.lax.broadcasted_iota(jnp.int32, shape, axis)
-
     k = min(k, shape[axis])
     # Use the full bitonic_topk_in_vmem API
-    result_values, result_indices = bitonic_topk_in_vmem([arr, indices], k=k, num_keys=1, descending=True, interpret=interpret)
+    # Pass only arr - the function will automatically create and return argsort indices
+    result_values, result_indices = bitonic_topk_in_vmem(arr, k=k, num_keys=1, descending=True, interpret=interpret)
 
     valid = verify_topk_output(arr, (result_values, result_indices), axis=axis)
     assert valid.all(), f"Top-k validation failed for shape {shape}, dtype {dtype}, axis {axis}"
