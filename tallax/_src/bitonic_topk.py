@@ -41,7 +41,6 @@ from tallax._src.utils import (
 from tallax._src.sort import (
     compare_and_swap,
     compute_pair_slice_start_index,
-    _run_compressed_transpose_format_substage_on_tiles,
 )
 
 
