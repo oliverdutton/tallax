@@ -392,8 +392,7 @@ def bitonic_sort_large_shapes(
 
 @functools.partial(
     jax.jit,
-    static_argnames=('num_vmem_substages', 'descending', 'return_argsort',
-                     'is_stable', 'num_keys', 'block_token', 'interpret')
+    static_argnames=('descending', 'return_argsort', 'is_stable', 'num_keys')
 )
 def xla_equivalent_sort(
     operand,
@@ -410,9 +409,6 @@ def xla_equivalent_sort(
     is_stable: Whether to perform stable sort
     return_argsort: Whether to return argsort indices
     descending: Sort in descending order
-    num_vmem_substages: Ignored (compatibility arg)
-    block_token: Ignored (compatibility arg)
-    interpret: Ignored (compatibility arg)
 
   Returns:
     Tuple of sorted arrays (and optionally argsort indices)

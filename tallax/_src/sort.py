@@ -164,7 +164,7 @@ def bitonic_sort_in_vmem_refs(
 @functools.partial(
     jit,
     static_argnames=("num_keys", "return_argsort", "descending", "is_stable", "k",
-                     "num_stages", "interpret", "block_token", "block_seq",
+                     "interpret", "block_token", "block_seq",
                      "compile_fast", "stage_unroll", "slice_size_unroll",
                      "ref_slice_size_unroll", "unroll_stages")
 )
@@ -199,7 +199,6 @@ def bitonic_sort_in_vmem(
     descending: Sort in descending order
     is_stable: Whether to perform stable sort
     stage: Specific stage to run (for multi-stage sorting)
-    num_stages: Number of stages in the bitonic sort
     interpret: Run in interpret mode
     block_token: Token blocking size for memory efficiency
     block_seq: Sequence blocking size for use if subsorting operands
