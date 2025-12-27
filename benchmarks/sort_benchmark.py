@@ -4,11 +4,10 @@ import jax
 import jax.numpy as jnp
 
 # Import benchmark utils (assuming running from benchmarks dir or added to path)
-from tallax._src.test_utils import benchmark
+from tallax._src.test_utils import benchmark, xla_equivalent_sort
 
 from tallax import tax
 from tallax._src.utils import is_cpu_platform
-from tallax._src.sort import xla_equivalent_sort
 
 def run_benchmarks():
   ntoken = 8
