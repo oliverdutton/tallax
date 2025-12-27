@@ -59,16 +59,9 @@ from tallax._src.utils import (
     join_tiles_to_array,
     split_array_to_tiles,
     create_bit_indicator,
+    set_cummax,
 )
 from tallax._src.symint import SymInt, unwrap
-
-
-def set_cummax(vs):
-  o = [vs[0]]
-  for v in vs[1:]:
-    if v > o[-1]:
-      o.append(v)
-  return type(vs)(o)
 
 
 def compare_and_swap(lefts, rights, *, num_keys: int, is_descending: jax.Array | None, is_right_half=None,

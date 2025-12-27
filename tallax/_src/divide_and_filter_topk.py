@@ -5,7 +5,7 @@ from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.bitonic_topk import bitonic_topk_refs, bitonic_topk_arrays
+from tallax._src.bitonic_topk_core import bitonic_topk_arrays
 from tallax.divide_and_filter_topk_convergence_theory import calculate_depth_thresholds
 from tallax._src.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype
 
@@ -362,12 +362,11 @@ def dynamic_topk_refs(
       ))
       def _():
         # Sort the binned superset
-        bitonic_topk_refs(
-          [ref.at[:, :depth_upper * num_bins]
-            for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)],
-          [topk_vals_ref, topk_idxs_ref],
+        vals_input = bins_topm_vals_ref[:, :depth_upper * num_bins]
+        idxs_input = bins_topm_idxs_ref[:, :depth_upper * num_bins]
+        topk_vals_ref[...], topk_idxs_ref[...] = bitonic_topk_arrays(
+          [vals_input, idxs_input],
           num_keys=1,
-          descending=True,
           k=max_k,
         )
         if replace_val is not None:

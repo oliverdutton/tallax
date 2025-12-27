@@ -34,7 +34,7 @@ from tallax._src.utils import (
     join_tiles_to_array,
     split_array_to_tiles,
 )
-from tallax._src.bitonic_sort import (
+from tallax._src.bitonic_sort_core import (
     bitonic_sort_substage,
 )
 

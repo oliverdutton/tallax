@@ -326,3 +326,12 @@ def transpose_list_of_lists(tree):
   outer = jax.tree.structure(type(tree)('*') * len(tree))
   inner = jax.tree.structure(type(tree[0])('*') * len(tree[0]))
   return jax.tree.transpose(outer, inner, tree)
+
+
+def set_cummax(vs):
+  """Compute cumulative maximum of a sequence."""
+  o = [vs[0]]
+  for v in vs[1:]:
+    if v > o[-1]:
+      o.append(v)
+  return type(vs)(o)
