@@ -70,6 +70,7 @@ def set_cummax(vs):
       o.append(v)
   return type(vs)(o)
 
+
 def compare_and_swap(lefts, rights, *, num_keys: int, is_descending: jax.Array | None, is_right_half=None,
              has_unique_key=False):
   """Compare and conditionally swap array pairs.
@@ -195,19 +196,23 @@ def _resplit(operands, target_tile_dim0: int):
 
     return [_resplit_inner(x) for x in operands]
 
+
 def _rejoin(operands):
   def _inner(operand):
     tiles = jax.tree.leaves(operand)
     return jnp.concatenate(tiles, axis=0)
   return [_inner(x) for x in operands]
 
+
 def reverse_tiles(arr):
   return jnp.concatenate(
     jnp.split(arr, arr.shape[0]//NUM_SUBLANES, 0)[::-1],
     axis=0)
 
+
 def concrete_and_true(b):
   return (type(b)==bool and b)
+
 
 def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, compression_length: int, substage: int | None=None):
     # is_descending repeats every 2**(stage+1)
@@ -331,11 +336,40 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
     return outs_tiles
 
 
-def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, slice_size=None, ref_slice_size=None, concat_threshold=None):
+def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, slice_size, num_keys, batch_size, compression_length):
+  
+  sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size, compression_length=compression_length)
+  out_arrs_tiles = []
+  for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
+    for stage in range(1, stage_unroll + 1):
+      for substage in range(stage)[::-1]:
+        arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, **sort_kwargs, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), )
+    out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
+  arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+
+  for stage in range(stage_unroll + 1, num_stages + 1):
+    for substage in range(stage_unroll, stage)[::-1]:
+      arrs_tiles = bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, sort_dim_offset=sort_dim_offset,
+      concat_threshold=slice_size,
+      **sort_kwargs,
+      )
+
+    out_arrs_tiles = []
+    for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
+      for substage in range(stage_unroll)[::-1]:
+        arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), **sort_kwargs)
+      out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
+    arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+  return arrs_tiles
+
+
+def _bitonic_sort_substages_refs(transpose_refs, *, substages, stages, num_keys: int, batch_size: int, sort_dim_offset: int = 0, compression_length=None, slice_size=None, ref_slice_size=None, concat_threshold=None):
   if ref_slice_size is None:
     ref_slice_size = compression_length
   if slice_size is None:
     slice_size = ref_slice_size
+  if concat_threshold is None:
+    concat_threshold = slice_size
   slice_size = min(slice_size, ref_slice_size)
 
   # checks if the sharding of input is compatible with the substage comparison separation, splitting it up into subsections if not
@@ -394,9 +428,10 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
     pl.loop(0, grid_size)(process_block)
 
 
-def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | None = None, slice_size_unroll: int | None = None, unroll_stages: bool = True, ref_slice_size_unroll: int | None = None, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | None = None, slice_size_unroll: int | None = None, unroll_stages: bool = True, ref_slice_size_unroll: int | None = None, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
-    Bitonic sort using compressed transpose format with full tile unrolling.
+    Bitonic sort using compressed transpose format, , offers both rolled and
+    fully unrolled implementation.
 
     Similar to bitonic_topk_arrays but performs full sort without reduction.
     Uses the same tiling strategy and format conversion for efficient TPU execution.
@@ -427,14 +462,14 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     #unpadded_sort_dim = shape[axis]
 
     if axis == 1:
-        padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
+      padded_shape = _compute_padded_shape(shape[0], shape[1], k=NUM_SUBLANES)
     elif axis == 0:
-        padded_shape = (
-          ceil_multiple(shape[0], NUM_SUBLANES),
-          ceil_multiple(shape[1], NUM_LANES)
-        )
+      padded_shape = (
+        ceil_multiple(shape[0], NUM_SUBLANES),
+        ceil_multiple(shape[1], NUM_LANES)
+      )
     else:
-        raise ValueError
+      raise ValueError
 
     # Pad both dimensions if needed
     # For ascending sort, pad with 'max' so padding values sort to the end
@@ -467,32 +502,11 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           ref_slice_size)
       # clip the slice size
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), compression_length) for size in (slice_size, ref_slice_size))
-      concat_threshold=slice_size
 
       if unroll_stages:
-        out_arrs_tiles = []
-        for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
-          for stage in range(1, stage_unroll + 1):
-            for substage in range(stage)[::-1]:
-              arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, **sort_kwargs, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), )
-          out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
-        arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
-
-        for stage in range(stage_unroll + 1, num_stages + 1):
-          for substage in range(stage_unroll, stage)[::-1]:
-            arrs_tiles = bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, sort_dim_offset=sort_dim_offset,
-            concat_threshold=concat_threshold,
-            **sort_kwargs,
-            )
-
-          out_arrs_tiles = []
-          for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
-            for substage in range(stage_unroll)[::-1]:
-              arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), **sort_kwargs)
-            out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
-          arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
+        arrs_tiles = _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, slice_size, **kwargs)
       else:
-        # enter ref usage
+        # use the transpose refs
         for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
           ref[...] = arr
 
@@ -518,10 +532,9 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           stages = (single_stage,)*num_stages
           stage_sections = (0,)
   
-        _bitonic_sort_substage_refs(
+        _bitonic_sort_substages_refs(
           transpose_refs, substages=substages, stages=stages, **sort_kwargs, sort_dim_offset=sort_dim_offset, slice_size=slice_size,
           ref_slice_size=ref_slice_size,
-          concat_threshold=concat_threshold,
         )
 
         for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
@@ -535,18 +548,16 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
             for substage in range(stage_lb, stage_ub)[::-1]:
               @pl.when(stage > substage)
               def run_substage():
-                _bitonic_sort_substage_refs(
+                _bitonic_sort_substages_refs(
                   transpose_refs, substages=(substage,), stages=(stage,), sort_dim_offset=sort_dim_offset, **sort_kwargs, slice_size=slice_size, ref_slice_size=ref_slice_size,
-                  concat_threshold=concat_threshold,
                 )
 
             substages = tuple(range(stage_lb)[::-1])
             stages = (stage,)*len(substages)
-            _bitonic_sort_substage_refs(
+            _bitonic_sort_substages_refs(
             transpose_refs, substages=substages, stages=stages, sort_dim_offset=sort_dim_offset, **sort_kwargs, slice_size=slice_size, ref_slice_size=ref_slice_size)
         # back in array flow
         arrs_tiles = [[ref[...]] for ref in transpose_refs]
-
 
       # Convert back from compressed transpose format
       if axis == 1:
@@ -566,133 +577,3 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
     # Unpad to original shape
     return [(arr[:shape[0], :shape[1]] if descending else arr[:shape[0], -shape[1]:]) for arr in arrs]
 
-
-def bitonic_sort_refs(
-    in_refs,
-    out_refs,
-    *,
-    num_keys: int,
-    descending: bool,
-    slice_size_unroll: int | None = None,
-    ref_slice_size_unroll: int | None = None,
-    stage_unroll: int | None = None,
-    unroll_stages: bool = True,
-):
-    """
-    Pallas kernel for bitonic sort in compressed transpose format.
-
-    Args:
-        in_refs: Input array references
-        out_refs: Output array references
-        num_keys: Number of sort keys
-        descending: Sort in descending order
-    """
-    dim0, dim1 = _compute_padded_shape(*in_refs[0].shape, k=NUM_SUBLANES)
-    dim0 = min(dim0, NUM_LANES)
-    transpose_shape = (dim1 // (NUM_LANES // dim0), NUM_LANES)
-
-    @functools.partial(pl.run_scoped, transpose_refs=[pltpu.VMEM(transpose_shape, to_32bit_dtype(x.dtype)) for x in in_refs])
-    def _(transpose_refs):
-      operands = [ref[...] for ref in in_refs]
-      outs = bitonic_sort_arrays(
-        operands,
-        num_keys=num_keys,
-        descending=descending,
-        stage_unroll=stage_unroll,
-        slice_size_unroll=slice_size_unroll,
-        ref_slice_size_unroll=ref_slice_size_unroll,
-        unroll_stages=unroll_stages,
-        transpose_refs=transpose_refs,
-      )
-      for out, out_ref in zip(outs, out_refs, strict=True):
-        out_ref[...] = out.astype(out_ref.dtype)
-
-
-@functools.partial(
-    jit,
-    static_argnames=("num_keys", "descending", "interpret", "slice_size_unroll", "ref_slice_size_unroll","stage_unroll", "unroll_stages"),
-)
-def bitonic_sort(
-    operand: jax.Array | Sequence[jax.Array],
-    num_keys: int = 1,
-    descending: bool = False,
-    interpret: bool = False,
-    compile_fast: bool = False,
-    # specialist unroll controls, suggest setting just fast_compile=True if compilation is too slow, it will overwrite and set these other unrolls
-    stage_unroll: int | None = None,
-    slice_size_unroll: int | None = None,
-    ref_slice_size_unroll: int | None = None,
-    unroll_stages: bool = True,
-) -> tuple[jax.Array, ...]:
-    """
-    Sort arrays using bitonic sort in compressed transpose format.
-
-    Optimized for sorting power-of-2 sized arrays on TPU. Works entirely in
-    compressed transpose format for maximum efficiency. Similar to bitonic_topk
-    but performs full sort.
-
-    Supports arbitrary input shapes - padding is handled automatically to
-    nearest power of 2.
-
-    Fully unrolled compilation (the default behavior) takes about a minute for 2**19 elements in array, e.g. (16, 32768) or (128, 4096) with approx N^2 compilation time scaling.
-    The `fast_compile` option sets a variety of unroll controls to reduce compile times, but incurs a 50% increase in runtime.
-
-    Args:
-        operand: Input array(s) of shape [batch, sort_dim].
-                Can be a single array or sequence of arrays.
-                Any sort_dim is supported (will be padded automatically).
-        num_keys: Number of arrays to use as sort keys.
-        descending: If True, sort in descending order.
-        interpret: If True, run in CPU interpret mode.
-
-    Returns:
-        Tuple of arrays (same length as input operands):
-            - Each array has same shape as input, sorted along axis 1
-
-    Example:
-        >>> import jax.numpy as jnp
-        >>> from tallax._src.bitonic_topk import bitonic_sort
-        >>> x = jnp.array([[3, 1, 4, 2], [8, 5, 7, 6]], dtype=jnp.int32)
-        >>> result = bitonic_sort(x, descending=False)
-        >>> print(result[0])
-        [[1 2 3 4]
-         [5 6 7 8]]
-    """
-    if stage_unroll is None:
-      # heuristic, likely reduces register pressure as it reorder operations into groups of 2**6/NUM_SUBLANES=8 tiles
-      stage_unroll = 6
-    if compile_fast:
-      # reduces compilation time scaling to linear
-      stage_unroll, slice_size_unroll, ref_slice_size_unroll, unroll_stages = (6, 7, 8, False)
-
-    operands, unpadded_shape = canonicalize_operand(operand)
-    # For ascending sort, pad with 'max' so padding values sort to the end
-    # For descending sort, pad with 'min' so padding values sort to the end
-    operands = [pad(x, (NUM_SUBLANES, NUM_LANES),
-      val='min' if descending else 'max') for x in operands]
-    batch_size, sort_dim = operands[0].shape
-
-    # Define output shapes
-    output_shapes = [
-        jax.ShapeDtypeStruct((batch_size, sort_dim), op.dtype)
-        for op in operands
-    ]
-
-    outputs = pl.pallas_call(
-        functools.partial(
-            bitonic_sort_refs,
-            num_keys=num_keys,
-            descending=descending,
-            stage_unroll=stage_unroll,
-            slice_size_unroll=slice_size_unroll,
-            ref_slice_size_unroll=ref_slice_size_unroll,
-            unroll_stages=unroll_stages,
-        ),
-        out_shape=(output_shapes,),
-        compiler_params=pltpu.CompilerParams(
-            vmem_limit_bytes=int(0.9 * 2**27)
-        ),
-        interpret=interpret,
-    )(operands)[0]
-
-    return tuple(x[:unpadded_shape[0], :unpadded_shape[1]] for x in outputs)
