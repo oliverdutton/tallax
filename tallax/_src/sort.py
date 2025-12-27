@@ -246,7 +246,6 @@ def bitonic_sort_in_vmem(
     raise ValueError('k is not compatible with subsorting')
 
   block_shape = (block_token, block_seq)
-
   out_shapes = jax.tree.map(
       lambda v: jax.ShapeDtypeStruct((shape[0], k), v.dtype),
       unconverted_operands
@@ -297,7 +296,7 @@ def bitonic_sort_in_vmem(
 
 @functools.partial(
     jit,
-    static_argnames=("k", "num_keys", "return_argsort", "descending", "is_stable",
+    static_argnames=("k", "num_keys", "return_argsort", "is_stable",
                      "interpret", "block_token")
 )
 def bitonic_topk_in_vmem(
@@ -305,14 +304,13 @@ def bitonic_topk_in_vmem(
     k: int,
     num_keys: int = 1,
     return_argsort: bool = True,
-    descending: bool = True,
     is_stable: bool = False,
     block_token: int | None = None,
     interpret: bool = False,
 ) -> tuple[jax.Array, ...]:
   """Top-K selection using bitonic sort."""
   return bitonic_sort_in_vmem(
-        operand, num_keys=num_keys, return_argsort=return_argsort,
-        descending=descending, is_stable=is_stable,
-        k=k, block_token=block_token, interpret=interpret
-    )
+    operand, num_keys=num_keys, return_argsort=return_argsort,
+    descending=True, is_stable=is_stable,
+    k=k, block_token=block_token, interpret=interpret
+  )
