@@ -126,17 +126,18 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     def _topk_arrays(arrs):
-      # Convert to compressed transpose format
-      arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
       batch_size = arrs[0].shape[batch_axis]
       assert batch_size <= NUM_LANES
-      
       _bitonic_sort_substage = functools.partial(bitonic_sort_substage, batch_size=batch_size, num_keys=num_keys)
       def max_reduce_stage(arrs_tiles, reduce_stage):       
         for substage in range(log2(k))[::-1]:
           arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=reduce_stage)
         return _bitonic_sort_substage(arrs_tiles, substage=reduce_stage, max_reduce=True)
-      
+
+      # Convert to compressed transpose format
+      if axis==1:
+        arrs = jax.tree.map(to_compressed_transpose_format, arrs)
+      arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
       num_tiles = len(arrs_tiles[0])
       num_merges = log2(unpadded_sort_dim) - log2(k)
       num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
