@@ -311,7 +311,7 @@ def bitonic_topk_in_vmem(
     interpret: bool = False,
 ) -> tuple[jax.Array, ...]:
   """Top-K selection using bitonic sort."""
-    return bitonic_sort_in_vmem(
+  return bitonic_sort_in_vmem(
         operand, num_keys=num_keys, return_argsort=return_argsort,
         descending=descending, is_stable=is_stable,
         k=k, block_token=block_token, interpret=interpret
