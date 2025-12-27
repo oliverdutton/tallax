@@ -372,7 +372,7 @@ def _bitonic_sort_substage_refs(transpose_refs, *, substages, stages, num_keys: 
     for j, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
       tile_offset = sort_dim_offset + SymInt(i, 0, grid_size-1) * ref_slice_size + SymInt(j) * slice_size
       for substage, stage in zip(substages, stages, strict=True):
-        arrs_slice_tiles = _bitonic_sort_substage(
+        arrs_slice_tiles = bitonic_sort_substage(
             arrs_slice_tiles,
             substage=substage,
             stage=stage,
@@ -475,13 +475,13 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
         for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
           for stage in range(1, stage_unroll + 1):
             for substage in range(stage)[::-1]:
-              arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, **sort_kwargs, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), )
+              arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, **sort_kwargs, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), )
           out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
         arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
 
         for stage in range(stage_unroll + 1, num_stages + 1):
           for substage in range(stage_unroll, stage)[::-1]:
-            arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, sort_dim_offset=sort_dim_offset,
+            arrs_tiles = bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage, sort_dim_offset=sort_dim_offset,
             concat_threshold=concat_threshold,
             **sort_kwargs,
             )
@@ -489,7 +489,7 @@ def bitonic_sort_arrays(operands: list[jax.Array], num_keys: int = 1, axis: int 
           out_arrs_tiles = []
           for i, arrs_slice_tiles in enumerate(transpose_list_of_lists(_resplit(arrs_tiles, slice_size))):
             for substage in range(stage_unroll)[::-1]:
-              arrs_slice_tiles = _bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), **sort_kwargs)
+              arrs_slice_tiles = bitonic_sort_substage(arrs_slice_tiles, substage=substage, stage=stage, sort_dim_offset=(sort_dim_offset+i*slice_size) % (2**(stage+1)), **sort_kwargs)
             out_arrs_tiles.append([jnp.concat(x, axis=0) for x in arrs_slice_tiles])
           arrs_tiles = transpose_list_of_lists(out_arrs_tiles)
       else:
