@@ -30,6 +30,7 @@ from tallax._src.utils import (
     canonicalize_operand,
     transpose_list_of_lists,
     to_compressed_transpose_format,
+    from_compressed_transpose_format,
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
@@ -178,10 +179,13 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys:
       # Use sort_dim_offset=k to ensure descending direction
       for substage in range(log2(k))[::-1]:
         arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k)
-      
-      arrs = [join_tiles_to_array(
-        tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
+
+      # Convert back from compressed transpose format
       if axis == 1:
+        arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+      else:
+        arrs = [join_tiles_to_array(
+          tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
         arrs = [x.T for x in arrs]
       return arrs
 
