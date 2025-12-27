@@ -9,7 +9,6 @@ import pandas as pd
 import pytest
 
 from tallax._src.utils import is_cpu_platform
-from tallax._src.bitonic_sort_beyond_vmem import xla_equivalent_sort
 
 
 @jax.jit
@@ -202,3 +201,50 @@ def benchmark(_run):
     print(res.to_string(index=False))
   else:
     print("No jit functions found in trace.")
+
+
+@functools.partial(
+    jax.jit,
+    static_argnames=('descending', 'return_argsort', 'is_stable', 'num_keys')
+)
+def xla_equivalent_sort(
+    operand,
+    num_keys: int,
+    is_stable: bool = False,
+    return_argsort: bool = False,
+    descending: bool = False,
+) -> tuple[jax.Array, ...]:
+  """Reference implementation using XLA sort for correctness testing.
+
+  Args:
+    operand: Input array(s) to sort
+    num_keys: Number of sort keys
+    is_stable: Whether to perform stable sort
+    return_argsort: Whether to return argsort indices
+    descending: Sort in descending order
+
+  Returns:
+    Tuple of sorted arrays (and optionally argsort indices)
+  """
+  operands = jax.tree.leaves(operand)
+
+  if return_argsort:
+    operands.append(
+        jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
+    )
+  if descending and is_stable:
+    operands.insert(
+        num_keys,
+        -jax.lax.broadcasted_iota(jnp.int32, operands[0].shape, 1)
+    )
+    num_keys += 1
+
+  outs = jax.lax.sort(operands, num_keys=num_keys, is_stable=is_stable)
+
+  if descending and is_stable:
+    outs = list(outs)
+    outs.pop(num_keys - 1)
+  if descending:
+    outs = tuple(x[..., ::-1] for x in outs)
+
+  return tuple(outs)
