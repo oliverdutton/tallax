@@ -137,7 +137,10 @@ def _merge_unconverged_bins_topk(
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
-  _, sorted_bin_indices = bitonic_topk_arrays([num_gt_k, bin_indices], k=NUM_LANES, num_keys=1)
+  _, sorted_bin_indices = bitonic_topk_arrays([num_gt_k, bin_indices], k=num_packed_bins, num_keys=1)
+  sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
+  if num_packed_bins > NUM_LANES:
+    raise NotImplementedError
   # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
   packing_perm = jnp.take_along_axis(sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1)
 
@@ -191,12 +194,12 @@ def _merge_unconverged_bins_topk(
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
-  val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :NUM_LANES]], axis=1)
-  idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :NUM_LANES]], axis=1)
+  val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :max_k]], axis=1)
+  idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :max_k]], axis=1)
   (
-    bins_topm_vals_ref[:, :NUM_LANES],
-    bins_topm_idxs_ref[:, :NUM_LANES]
-  ) = bitonic_topk_arrays([val_input, idx_input], k=NUM_LANES, num_keys=1)
+    bins_topm_vals_ref[:, :max_k],
+    bins_topm_idxs_ref[:, :max_k]
+  ) = bitonic_topk_arrays([val_input, idx_input], k=max_k, num_keys=1)
 
 
 def dynamic_topk_refs(
