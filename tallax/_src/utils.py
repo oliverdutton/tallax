@@ -272,21 +272,52 @@ def create_bit_indicator(bit_position: int, index):
 
 
 def to_compressed_transpose_format(arr):
-  """Convert array to sublane-oriented format for faster permutes."""
-  dim0 = arr.shape[0]
+  """Convert array to sublane-oriented format for faster permutes.
+
+  For small arrays where dim0 <= NUM_LANES, pads dim1 to NUM_LANES before
+  transformation, then unpads to the correct transposed size.
+  """
+  dim0, original_dim1 = arr.shape
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
+
+  # Pad dim1 to NUM_LANES if needed (use 1 to avoid padding dim0)
+  if original_dim1 < NUM_LANES:
+    arr = pad(arr, block_shape=(1, NUM_LANES))
+
   arrs = jnp.split(arr, NUM_LANES // dim0, axis=1)
   arr = jnp.concatenate(arrs, axis=0).T
+
+  # Unpad to the correct transposed size
+  if original_dim1 < NUM_LANES:
+    arr = arr[:original_dim1, :]
+
   return arr
 
 
 def from_compressed_transpose_format(tiles, dim0):
-  """Convert from compressed transpose format back to original layout."""
+  """Convert from compressed transpose format back to original layout.
+
+  Inverse of to_compressed_transpose_format. Pads dim0 to NUM_LANES before
+  transformation, then unpads dim1 to the correct final size.
+  """
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
-  arr = jnp.concatenate(tiles, axis=0).T
+  arr = jnp.concatenate(tiles, axis=0)
+  original_dim1 = arr.shape[0]
+
+  # Pad dim0 to NUM_LANES if needed (use 1 to avoid padding dim1)
+  if original_dim1 < NUM_LANES:
+    arr = pad(arr, block_shape=(NUM_LANES, 1))
+
+  arr = arr.T
   assert arr.shape[0] == NUM_LANES
   arrs = jnp.split(arr, arr.shape[0] // dim0, axis=0)
-  return jnp.concatenate(arrs, axis=1)
+  arr = jnp.concatenate(arrs, axis=1)
+
+  # Unpad dim1 to the correct final size
+  if original_dim1 < NUM_LANES:
+    arr = arr[:, :original_dim1]
+
+  return arr
 
 
 ### Loop Utilities

@@ -149,8 +149,9 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
   This function finds the minimal padded shape that satisfies the constraints:
   - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
   - dim1 must satisfy divisibility requirements
-  - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and
-    concat on full tiles, subtile concat not supported
+  - For dim0 < NUM_LANES: num_elems must be divisible by NUM_LANES^2 so mosaic
+    lowers the split and concat on full tiles, subtile concat not supported
+  - For dim0 == NUM_LANES (small inputs): dim1 just needs to be a power of 2 >= NUM_SUBLANES
 
   Args:
     unpadded_dim0: Original first dimension size
@@ -166,10 +167,15 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int) -> tuple[int, 
 
   dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
     if 2**i >= unpadded_dim0]
-  shapes = [
-    (dim0, 2**log2(ceil_multiple(unpadded_dim1,
-      NUM_LANES * NUM_LANES // dim0)))
-    for dim0 in dim0s]
+  shapes = []
+  for dim0 in dim0s:
+    if dim0 == NUM_LANES:
+      # For very small inputs where dim0 pads to NUM_LANES, just pad dim1 to next power of 2 >= NUM_SUBLANES
+      dim1 = 2**log2(ceil_multiple(unpadded_dim1, NUM_SUBLANES))
+    else:
+      # For dim0 < NUM_LANES, maintain NUM_LANES^2 divisibility constraint
+      dim1 = 2**log2(ceil_multiple(unpadded_dim1, NUM_LANES * NUM_LANES // dim0))
+    shapes.append((dim0, dim1))
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
@@ -461,6 +467,12 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       )
     else:
       raise ValueError
+
+    # For small sort sizes <= NUM_LANES, require unroll_stages=True
+    if shape[axis] <= NUM_LANES and not unroll_stages:
+      raise NotImplementedError(
+        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires unroll_stages=True"
+      )
 
     # Pad both dimensions if needed
     # Always append padding after the array:
