@@ -82,6 +82,11 @@ def bitonic_sort_in_vmem_refs(
     # Reverse indices (negate relative to array length), then reverse back before write out
     indices = shape[1] - 1 - indices
 
+  if use_indices:
+    operands.insert(num_keys, indices)
+    transpose_refs.insert(num_keys, tranpose_indices_ref)
+  num_keys += int(is_stable)
+
   # Optimize bf16 + u16 case by packing into single i32
   use_packed_bf16_u16 = (
       len(operands) == 2 and operands[0].dtype == jnp.bfloat16 and
@@ -92,16 +97,10 @@ def bitonic_sort_in_vmem_refs(
     operands = [pack_bf16_u16_to_i32(*operands)]
     transpose_refs = transpose_refs[:1]
     num_keys = 1
-    is_stable = False # itll be stable by default
 
   for i in range(num_keys):
     if jnp.issubdtype(operands[i].dtype, jnp.floating):
       operands[i] = float_to_sortable_int(operands[i])
-
-  if use_indices:
-    operands.insert(num_keys, indices)
-    transpose_refs.insert(num_keys, tranpose_indices_ref)
-  num_keys += int(is_stable)
 
   # Most TPU generations only allow 32,32->1 bit comparisons,
   # not bf16,bf16->i1 so we upcast everything to 32bit
