@@ -6,11 +6,38 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
+from jax._src.state import AbstractRef
 
 
 # TPU hardware constants
 NUM_SUBLANES = 8
 NUM_LANES = 128
+
+
+def is_ref(x) -> bool:
+  """Check if x is a Pallas Ref (not an array).
+
+  Args:
+    x: Object to check (could be a Ref or Array)
+
+  Returns:
+    True if x is a Ref, False if it's an array or other type
+
+  Example:
+    >>> def kernel(ref_input, array_input):
+    ...   if is_ref(ref_input):
+    ...     # Handle as ref
+    ...     data = ref_input[...]
+    ...   else:
+    ...     # Handle as array
+    ...     data = ref_input
+  """
+  try:
+    aval = jax.core.get_aval(x)
+    return isinstance(aval, AbstractRef)
+  except:
+    # If get_aval fails, it's likely not a JAX type
+    return False
 
 
 def is_cpu_platform():
