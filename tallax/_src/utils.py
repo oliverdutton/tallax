@@ -356,8 +356,8 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES, axis=0):
-  def split_f(operands, *args, **kwargs):   
+def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
+  def split_f(operands, *args, axis, **kwargs):
     split_indices = tuple((i+1)*max_chunk_size for i in range(arrs[0].shape[0] // max_chunk_size))       
     operands_chunks = transpose_list_of_lists(
       jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=axis), operands)
