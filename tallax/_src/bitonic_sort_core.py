@@ -223,13 +223,6 @@ def concrete_and_true(b):
 
 
 def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, full_size: int, substage: int | None=None):
-    # is_descending repeats every 2**(stage+1)
-    # Optimize sort_dim_offset if
-    if concrete_and_true((unwrap(sort_dim_offset) % (2**(unwrap(stage)+1))) < 2**unwrap(stage)):
-      sort_dim_offset = 0
-    if concrete_and_true((unwrap(sort_dim_offset) % (2**(unwrap(stage)+1))) >= 2**unwrap(stage)):
-      sort_dim_offset = 2**unwrap(stage)
-
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(full_size)):
       # Same pattern for all tiles
@@ -341,7 +334,8 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
 
 def _bitonic_sort_substages_array_or_refs(inputs,
     substage_and_stage_schedule: list[tuple[int, int]], *,
-    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None, is_ref):
+    is_ref: bool,
+    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None,):
   """Apply bitonic sort substages to inputs. Applies inner and outer unrolls. inner_unroll can reduce register pressure. If input is arrays the outer unroll is meaningless, but it controls unroll for refs.
 
   Args:
@@ -396,7 +390,7 @@ def _bitonic_sort_substages_array_or_refs(inputs,
 
     outer_out_tiles = []
     for inner_i, inner_tiles in enumerate(transpose_list_of_lists(_resplit(outer_tiles, inner_size))):
-      tile_offset = sort_dim_offset + SymInt(outer_i, 0, grid_size-1) * outer_size + SymInt(inner_i) * inner_size
+      tile_offset = sort_dim_offset + outer_i * outer_size + inner_i * inner_size
       for substage, stage in substage_and_stage_schedule:
         inner_tiles = bitonic_sort_substage(
             inner_tiles,
@@ -419,12 +413,10 @@ def _bitonic_sort_substages_array_or_refs(inputs,
       return outer_out_tiles
 
   if is_ref:
-    for outer_i in range(grid_size):
-      process_block(outer_i)
-    outputs = inputs # both just ref
+    pl.loop(0, grid_size)(process_block)
   else:
     outputs = [process_block(outer_i) for outer_i in range(grid_size)]
-  return outputs
+    return outputs
 
 
 # Partial functions for cleaner usage
@@ -535,7 +527,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
       for i, arr in enumerate(_rejoin(arrs_tiles)):
         # cut transpose refs if too large
         transpose_refs[i] = transpose_refs[i].at[:arr.shape[0]]
-        ref[...] = transpose_refs[i]
+        transpose_refs[i][...] = arr
 
       num_crosslane_stages = log2(NUM_LANES // batch_size)
       stage_sections = set_cummax((
