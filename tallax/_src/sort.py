@@ -211,21 +211,6 @@ def bitonic_sort_in_vmem(
     Tuple of sorted arrays (and optionally argsort indices)
   """
   operands, shape = canonicalize_operand(operand)
-
-  if compile_fast is None:
-    # if projected compilation time expected to be more than a minute, compile fast
-    compile_fast = (shape[0] * shape[1] * (len(operands) + int(return_argsort or is_stable))) > 2**19
-  if compile_fast:
-    # reduces compilation time scaling to linear
-    stage_unroll, slice_size_unroll, ref_slice_size_unroll = (6, 7, 8)
-
-  unconverted_operands = tuple(operands)
-  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency (and it can allow bf16-u16 packing)
-  if interpret:
-    for i in range(num_keys):
-      if jnp.issubdtype(operands[i].dtype, jnp.floating):
-        operands[i] = float_to_sortable_int(operands[i])
-
   if block_token is None:
     # heuristic for fitting in VMEM
     # multiple of NUM_SUBLANES, between NUM_SUBLANES and NUM_LANES
@@ -240,6 +225,20 @@ def bitonic_sort_in_vmem(
     k = shape[1]
   if k != shape[1] and block_seq != shape[1]:
     raise ValueError('k is not compatible with subsorting')
+
+  if compile_fast is None:
+    # if projected compilation time expected to be more than a minute, compile fast
+    compile_fast = (block_token * block_seq * (len(operands) + int(return_argsort or is_stable))) > 2**19
+  if compile_fast:
+    # reduces compilation time scaling to linear
+    stage_unroll, slice_size_unroll, ref_slice_size_unroll = (6, 7, 8)
+
+  unconverted_operands = tuple(operands)
+  # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency (and it can allow bf16-u16 packing)
+  if interpret:
+    for i in range(num_keys):
+      if jnp.issubdtype(operands[i].dtype, jnp.floating):
+        operands[i] = float_to_sortable_int(operands[i])
 
   block_shape = (block_token, block_seq)
   out_shapes = jax.tree.map(
