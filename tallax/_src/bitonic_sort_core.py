@@ -535,7 +535,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
       # back in array flow
       arrs_tiles = [[ref[...]] for ref in transpose_refs]
 
-    arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+    arrs = [from_compressed_transpose_format(_rejoin(tiles), dim0=batch_size) for tiles in arrs_tiles]
   
     # Unpad to original shape
     return [arr[:shape[0], :shape[1]] for arr in arrs]
