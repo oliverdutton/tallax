@@ -6,7 +6,6 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
-from jax._src.state import AbstractRef
 
 
 # TPU hardware constants
@@ -33,10 +32,12 @@ def is_ref(x) -> bool:
     ...     data = ref_input
   """
   try:
-    aval = jax.core.get_aval(x)
-    return isinstance(aval, AbstractRef)
+    # Use jax.typeof (public API) instead of deprecated jax.core.get_aval
+    # Check if the type is AbstractRef by checking the type name
+    aval = jax.typeof(x)
+    return type(aval).__name__ == 'AbstractRef'
   except:
-    # If get_aval fails, it's likely not a JAX type
+    # If typeof fails, it's likely not a JAX type
     return False
 
 
