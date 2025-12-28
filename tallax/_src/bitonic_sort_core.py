@@ -215,14 +215,18 @@ def concrete_and_true(b):
 def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, compression_length: int, substage: int | None=None):
     # is_descending repeats every 2**(stage+1)
     # Optimize sort_dim_offset if
+    stage_unwrapped = unwrap(stage)
+    sort_dim_offset_unwrapped = unwrap(sort_dim_offset)
     if concrete_and_true(
-        (sort_dim_offset % (2**(stage+1))) < 2**stage
+        (sort_dim_offset_unwrapped % (2**(stage_unwrapped+1))) < 2**stage_unwrapped
     ):
       sort_dim_offset = 0
+      sort_dim_offset_unwrapped = 0
     if concrete_and_true(
-        (sort_dim_offset % (2**(stage+1))) >= 2**stage
+        (sort_dim_offset_unwrapped % (2**(stage_unwrapped+1))) >= 2**stage_unwrapped
     ):
-      sort_dim_offset = 2**stage
+      sort_dim_offset = 2**stage_unwrapped
+      sort_dim_offset_unwrapped = 2**stage_unwrapped
 
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
@@ -342,7 +346,12 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     inputs: list[pl.MemoryRef | jax.Array] to sort
   """
   is_ref = not isinstance(jax.tree.leaves(inputs)[0], jax.Array)
-  full_size = len(inputs[0]) * inputs[0][0].shape[0]
+  # Compute full_size correctly for both list-of-tiles and single array cases
+  if isinstance(inputs[0], list):
+    full_size = len(inputs[0]) * inputs[0][0].shape[0]
+  else:
+    # inputs[0] is an array, get its first dimension
+    full_size = inputs[0].shape[0]
   if outer_size is None:
     outer_size = full_size
   if inner_size is None:
@@ -376,18 +385,20 @@ def _bitonic_sort_substages_maybe_refs(inputs,
 
   grid_size = full_size // outer_size
   assert full_size % outer_size == 0
-  
+
   def process_block(outer_i):
     outer_tiles = [
         input_[outer_i*outer_size:(outer_i+1)*outer_size]
-        if not is_ref else 
-        input_[pl.dslice(outer_i * outer_size, outer_size)] 
+        if not is_ref else
+        input_[pl.dslice(outer_i * outer_size, outer_size)]
         for input_ in inputs]
-    
+    # Standardize to list-of-lists format
+    outer_tiles = list(map(jax.tree.leaves, outer_tiles))
+
     outer_out_tiles = []
     for inner_i, inner_tiles in enumerate(transpose_list_of_lists(_resplit(outer_tiles, inner_size))):
       tile_offset = sort_dim_offset + SymInt(outer_i, 0, grid_size-1) * outer_size + SymInt(inner_i) * inner_size
-      for substage, stage in zip(substages, stages, strict=True):
+      for substage, stage in substage_and_stage_schedule:
         inner_tiles = bitonic_sort_substage(
             inner_tiles,
             substage=substage,
@@ -494,13 +505,24 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
           max(slice_size, 2**ref_slice_size_unroll),
           ref_slice_size)
       # clip the slice size
+      # Compute compression_length from standardized structure
+      tiles = jax.tree.leaves(arrs_tiles[0])
+      compression_length = len(tiles) * tiles[0].shape[0]
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), compression_length) for size in (slice_size, ref_slice_size))
-      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size, 
+      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
         sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
-      if unroll_stages: 
+      if unroll_stages:
         schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
-        arrs_tiles =  _bitonic_sort_substages_maybe_refs(
-        arrs_tiles, schedule, **sort_kwargs)
+        # Standardize to list-of-lists format
+        arrs_tiles_standardized = list(map(jax.tree.leaves, arrs_tiles))
+        outputs =  _bitonic_sort_substages_maybe_refs(
+        arrs_tiles_standardized, schedule, **sort_kwargs)
+        # Extract result - outputs is a list per grid block, we want the tiles
+        # For grid_size==1, outputs[0] contains the result
+        if isinstance(outputs, list) and len(outputs) == 1:
+          arrs_tiles = outputs[0]
+        else:
+          arrs_tiles = outputs
       else:
         # use the transpose refs
         for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
