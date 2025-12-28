@@ -218,7 +218,6 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     ):
       sort_dim_offset = 2**stage
 
-
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
       # Same pattern for all tiles
@@ -464,16 +463,18 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       raise ValueError
 
     # Pad both dimensions if needed
-    # For ascending sort, pad with 'max' so padding values sort to the end
-    # For descending sort, pad with 'min' so padding values sort to the end
-    # we put it at the neccessary side to avoid padding leakage in stable sorts
-    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max', prepend=(False, descending)) for op in operands]
+    # Always append padding after the array:
+    # - For ascending sort: pad with 'max' so padding values sort to the end
+    # - For descending sort: pad with 'min' so padding values sort to the end
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max', prepend=(False, False)) for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     num_stages = log2(shape[axis]) if num_stages is None else num_stages
     stage_unroll = min(stage_unroll, num_stages) if stage_unroll is not None else num_stages
+
     # Offset to control ascending vs descending final order
-    sort_dim_offset = int(descending) * (2**num_stages) if sort_dim_offset is None else sort_dim_offset
+    if sort_dim_offset is None:
+      sort_dim_offset = int(descending) * (2**num_stages)
 
     def _sort_arrays(arrs):
       batch_size = arrs[0].shape[batch_axis]
@@ -567,7 +568,6 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
     ])]
     # Unpad to original shape
-    # For ascending sort: padding is appended at end, so take from beginning
-    # For descending sort: padding is prepended at beginning, so take from end
-    return [(arr[:shape[0], -shape[1]:] if descending else arr[:shape[0], :shape[1]]) for arr in arrs]
+    # Padding is always appended at the end, so always take from the beginning
+    return [arr[:shape[0], :shape[1]] for arr in arrs]
 

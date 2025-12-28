@@ -108,7 +108,8 @@ def bitonic_sort_in_vmem_refs(
   operands = [x.astype(to_32bit_dtype(x.dtype)) for x in operands]
 
   # If subsorting an input (for hybrid HBM-VMEM sorting) we deal with grid context related offset here
-  if pl.num_programs(1) != 1:
+  is_subsort = pl.num_programs(1) != 1
+  if is_subsort:
     sort_dim_offset = (
       (SymInt(pl.program_id(1), 0, pl.num_programs(1)-1)  + 
        int(descending) * pl.num_programs(1)) * padded_shape[1])
@@ -120,7 +121,7 @@ def bitonic_sort_in_vmem_refs(
         operands,
         num_keys=num_keys,
         axis=1,
-        descending=False, # handled already
+        descending=descending if not is_subsort else False,
         single_stage=None if stage_ref is None else stage_ref[0],
         stage_unroll=stage_unroll,
         slice_size_unroll=slice_size_unroll,
