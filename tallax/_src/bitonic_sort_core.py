@@ -1,37 +1,5 @@
 """
-Bitonic Top-K for k<=NUM_LANES (128) using compressed transpose format.
-
-This implementation is optimized for TPU and works entirely in
-compressed transpose format to maximize efficiency of permutation operations.
-
-Algorithm:
-- Convert input to compressed transpose format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
-- Build bitonic sequences using stages 1-6 (so sorted in 64 length chunks)
-- Cross-tile merge with max selection, reducing tile count
-- Progressive sublane permute merging with decreasing distances
-- Convert back to original format
-
-
-Before
-this is better than before when substages were all compiled (num_stages - substage) times. so for 2**15=32768 thats 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1 substages = 120 times
-- 42+6=48 permute compilations
-- 72 tile compilations
-
-After
-This version does (num sublane stages, num tile stages, num lane stages)
-there are 1+2+3=6 sublane compilations in the stage unrolled first 3 stages
-the tile substages get compiled 2 times
-the lane substages get compiled once
-
-so for (16, 32768). 6 sublane, 9 tile, 3 lane.
-- 9 permute compilations
-- 18 tile compilations
-
-Is the permute compilation dominating? - add skip_permutes kwarg and check T/F
-
-the issue is still linear compile and trace times due to number of tiles
-
-
+Bitonic sort using compressed transpose format.
 """
 import functools
 from functools import lru_cache
