@@ -208,28 +208,37 @@ def reverse_tiles(arr):
     axis=0)
 
 
+def _get_full_size(inputs):
+  """Compute full size (dim0 in compressed format) from inputs.
+
+  Args:
+    inputs: Can be a single array, list of arrays, or nested list structure
+
+  Returns:
+    Full size of the first dimension in compressed transpose format
+  """
+  leaves = jax.tree.leaves(inputs[0])
+  return len(leaves) * leaves[0].shape[0]
+
+
 def concrete_and_true(b):
   return (type(b)==bool and b)
 
 
-def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, compression_length: int, substage: int | None=None):
+def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int, tile_local_offset: jax.Array, sort_dim_offset: SymInt | int, full_size: int, substage: int | None=None):
     # is_descending repeats every 2**(stage+1)
     # Optimize sort_dim_offset if
-    if concrete_and_true(
-        (sort_dim_offset % (2**(stage+1))) < 2**stage
-    ):
+    if concrete_and_true((unwrap(sort_dim_offset) % (2**(unwrap(stage)+1))) < 2**unwrap(stage)):
       sort_dim_offset = 0
-    if concrete_and_true(
-        (sort_dim_offset % (2**(stage+1))) >= 2**stage
-    ):
-      sort_dim_offset = 2**stage
+    if concrete_and_true((unwrap(sort_dim_offset) % (2**(unwrap(stage)+1))) >= 2**unwrap(stage)):
+      sort_dim_offset = 2**unwrap(stage)
 
     # Check if we can optimize based on stage comparisons
-    if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
+    if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(full_size)):
       # Same pattern for all tiles
       return create_bit_indicator(unwrap(stage), tile_local_offset + unwrap(sort_dim_offset))
 
-    if concrete_and_true(stage >= log2(NUM_SUBLANES)) and concrete_and_true(stage < log2(compression_length)):
+    if concrete_and_true(stage >= log2(NUM_SUBLANES)) and concrete_and_true(stage < log2(full_size)):
         # Bit set by tile_offset, constant within tile, differs across tiles
         return create_bit_indicator(unwrap(stage), tile_start_offset + unwrap(sort_dim_offset))
 
@@ -237,7 +246,7 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     return create_bit_indicator(unwrap(stage), tile_start_offset + tile_local_offset + unwrap(sort_dim_offset))
 
 
-def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: int, stage: SymInt | int | None = None, sort_dim_offset: int = 0, compression_length:int=None, concat_threshold: int | None = None, max_reduce: bool = False):
+def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: int, stage: SymInt | int | None = None, sort_dim_offset: int = 0, full_size:int=None, concat_threshold: int | None = None, max_reduce: bool = False):
     """Perform intra-tile bitonic comparison for sort.
 
     Args:
@@ -256,17 +265,17 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
     separation = 2**substage
     # if still arrays, we make it into one big tile so its sanitized to list[list[jax.ndarray]]
     arrs_tiles = list(map(jax.tree.leaves, arrs_tiles))
-    if compression_length is None:
-      compression_length = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
-    if separation < NUM_SUBLANES or separation >= compression_length:
+    if full_size is None:
+      full_size = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
+    if separation < NUM_SUBLANES or separation >= full_size:
       # we need to permute within tiles
-      axis = int(separation >= compression_length)
-      intra_tile_separation = separation if axis==0 else ((separation * batch_size) // compression_length)
+      axis = int(separation >= full_size)
+      intra_tile_separation = separation if axis==0 else ((separation * batch_size) // full_size)
 
       # we need hardware tiles to lower the permute
       arrs_tiles = _resplit(arrs_tiles, NUM_SUBLANES)
       # Compute is_descending for each tile based on bitonic pattern
-      tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * compression_length
+      tile_local_offset = iota_tile(0) + (iota_tile(1) // batch_size) * full_size
       is_right_half = create_bit_indicator(log2(intra_tile_separation), iota_tile(axis))
       permutation = jnp.bitwise_xor(iota_tile(axis), intra_tile_separation)
       # Apply permutation to all tiles
@@ -288,7 +297,7 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
               tile_start_offset=idx*NUM_SUBLANES,
               tile_local_offset=tile_local_offset,
               sort_dim_offset=sort_dim_offset,
-              compression_length=compression_length,
+              full_size=full_size,
               substage=substage,
             ) if not max_reduce else True,
             is_right_half=is_right_half,
@@ -306,7 +315,7 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
       num_tiles = len(arrs_tiles[0])
       tile_separation = separation // tile_shape[0]
 
-      tile_local_offset = iota_tile(0, tile_shape) + (iota_tile(1, tile_shape) // batch_size) * compression_length
+      tile_local_offset = iota_tile(0, tile_shape) + (iota_tile(1, tile_shape) // batch_size) * full_size
 
       outs_tiles = [[None for _ in t] for t in arrs_tiles]
       for i in range(num_tiles // 2):
@@ -318,7 +327,7 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
               tile_start_offset=idx*tile_shape[0],
               tile_local_offset=tile_local_offset,
               sort_dim_offset=sort_dim_offset,
-              compression_length=compression_length,
+              full_size=full_size,
               substage=substage,
             ) if not max_reduce else True,
             num_keys=num_keys
@@ -333,16 +342,17 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
     return outs_tiles
 
 
-def _bitonic_sort_substages_maybe_refs(inputs,
+def _bitonic_sort_substages_array_or_refs(inputs,
     substage_and_stage_schedule: list[tuple[int, int]], *,
-    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None):
+    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None, is_ref):
   """Apply bitonic sort substages to inputs. Applies inner and outer unrolls. inner_unroll can reduce register pressure. If input is arrays the outer unroll is meaningless, but it controls unroll for refs.
-  
+
   Args:
     inputs: list[pl.MemoryRef | jax.Array] to sort
+    is_ref: True if inputs are MemoryRefs, False if JAX arrays
   """
-  is_ref = not isinstance(jax.tree.leaves(inputs)[0], jax.Array)
-  full_size = len(inputs[0]) * inputs[0][0].shape[0]
+  # full_size is dim0 of the input in compressed transpose format
+  full_size = _get_full_size(inputs)
   if outer_size is None:
     outer_size = full_size
   if inner_size is None:
@@ -357,13 +367,13 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     pass
   elif all((not b for b in inner_size_compatible)):
     outer_size = full_size
-    inner_size = full_size 
+    inner_size = full_size
   else:
     # will switch between running on chunks and full input. We do the longest run we can of same inner_size
     split_i = next(i for i, v in enumerate(inner_size_compatible) if v!=inner_size_compatible[0])
     for sch in [
       substage_and_stage_schedule[:split_i], substage_and_stage_schedule[split_i:]]:
-      inputs = _bitonic_sort_substages_refs(
+      inputs = _bitonic_sort_substages_array_or_refs(
         inputs,
         substage_and_stage_schedule=sch,
         num_keys=num_keys, batch_size=batch_size,
@@ -371,30 +381,35 @@ def _bitonic_sort_substages_maybe_refs(inputs,
         outer_size=outer_size,
         inner_size=inner_size,
         concat_threshold=inner_size,
+        is_ref=is_ref,
       )
     return inputs
 
   grid_size = full_size // outer_size
   assert full_size % outer_size == 0
-  
+
   def process_block(outer_i):
     outer_tiles = [
         input_[outer_i*outer_size:(outer_i+1)*outer_size]
-        if not is_ref else 
-        input_[pl.dslice(outer_i * outer_size, outer_size)] 
+        if not is_ref else
+        input_[pl.dslice(outer_i * outer_size, outer_size)]
         for input_ in inputs]
-    
+    # Standardize to list-of-lists format
+    outer_tiles = list(map(jax.tree.leaves, outer_tiles))
+
     outer_out_tiles = []
     for inner_i, inner_tiles in enumerate(transpose_list_of_lists(_resplit(outer_tiles, inner_size))):
       tile_offset = sort_dim_offset + SymInt(outer_i, 0, grid_size-1) * outer_size + SymInt(inner_i) * inner_size
-      for substage, stage in zip(substages, stages, strict=True):
+      for substage, stage in substage_and_stage_schedule:
         inner_tiles = bitonic_sort_substage(
             inner_tiles,
             substage=substage,
             stage=stage,
             num_keys=num_keys,
             batch_size=batch_size,
-            sort_dim_offset=tile_offset)
+            sort_dim_offset=tile_offset,
+            full_size=full_size,
+            concat_threshold=concat_threshold)
       outer_out_tiles.append([jnp.concat(x, axis=0) for x in inner_tiles])
     outer_out_tiles = transpose_list_of_lists(outer_out_tiles)
 
@@ -402,22 +417,30 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     if is_ref:
       for ref, arr in zip(inputs, _rejoin(outer_out_tiles), strict=True):
         ref[pl.dslice(outer_i * outer_size, outer_size)] = arr
-    return outer_out_tiles
+      return None
+    else:
+      return outer_out_tiles
 
   if is_ref:
-    pl.loop(0, grid_size)(process_block)
+    for outer_i in range(grid_size):
+      process_block(outer_i)
     outputs = inputs # both just ref
   else:
     outputs = [process_block(outer_i) for outer_i in range(grid_size)]
   return outputs
 
 
+# Partial functions for cleaner usage
+_bitonic_sort_substages_arrays = functools.partial(_bitonic_sort_substages_array_or_refs, is_ref=False)
+_bitonic_sort_substages_refs = functools.partial(_bitonic_sort_substages_array_or_refs, is_ref=True)
+
+
 def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, slice_size, num_keys, batch_size):
   schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
-  return _bitonic_sort_substages_maybe_refs(arrs_tiles, schedule, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, inner_size=slice_size)
+  return _bitonic_sort_substages_arrays(arrs_tiles, schedule, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, inner_size=slice_size)
 
 
-def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | None = None, slice_size_unroll: int | None = None, unroll_stages: bool = True, ref_slice_size_unroll: int | None = None, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and
     fully unrolled implementation.
@@ -435,16 +458,25 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         num_keys: Number of sort keys (default: 1)
         axis: Axis along which to perform sort (0 or 1)
         descending: If True, sort in descending order
+        stage_unroll: Stage unrolling control (int or bool)
+            - True: fully unrolled stages (pure arrays implementation if ref_slice_size_unroll is also full)
+            - False: rolled stages (uses refs)
+            - int: specific stage unroll value
+        slice_size_unroll: Slice size control (int or bool)
+            - True: use full_size
+            - False: use 0
+            - int: specific slice size
+        ref_slice_size_unroll: Reference slice size control (int or bool)
+            - True: use full_size
+            - False: use 0
+            - int: specific ref slice size
 
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
     """
-    if stage_unroll is not None:
-      assert transpose_refs is not None
-    
     if single_stage is not None:
       # special code path for large inputs which dont fit in VMEM
-      assert not unroll_stages
+      assert stage_unroll is False
 
     batch_axis = 1 - axis
     shape = operands[0].shape
@@ -459,10 +491,10 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     else:
       raise ValueError
 
-    # For small sort sizes <= NUM_LANES, require unroll_stages=True
-    if shape[axis] <= NUM_LANES and not unroll_stages:
+    # For small sort sizes <= NUM_LANES, require stage_unroll=True
+    if shape[axis] <= NUM_LANES and stage_unroll is not True:
       raise NotImplementedError(
-        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires unroll_stages=True"
+        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires stage_unroll=True"
       )
 
     # Pad both dimensions if needed
@@ -473,11 +505,19 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     num_stages = log2(shape[axis]) if num_stages is None else num_stages
-    stage_unroll = min(stage_unroll, num_stages) if stage_unroll is not None else num_stages
 
     # Offset to control ascending vs descending final order
     if sort_dim_offset is None:
       sort_dim_offset = int(descending) * (2**num_stages)
+
+    # Determine implementation path
+    use_pure_arrays = (stage_unroll == True and ref_slice_size_unroll == True)
+
+    # Standardize bool to int for stage_unroll
+    if type(stage_unroll) == bool:
+      stage_unroll = num_stages if stage_unroll else 6
+    else:
+      stage_unroll = min(stage_unroll, num_stages)
 
     def _sort_arrays(arrs):
       batch_size = arrs[0].shape[batch_axis]
@@ -485,24 +525,43 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
 
-      slice_size = 2**stage_unroll if unroll_stages else NUM_SUBLANES
-      if slice_size_unroll is not None:
-        slice_size = max(slice_size, 2**slice_size_unroll)
-      ref_slice_size = arrs_tiles[0].shape[0]
-      if ref_slice_size_unroll is not None:
-        ref_slice_size = min(
-          max(slice_size, 2**ref_slice_size_unroll),
-          ref_slice_size)
-      # clip the slice size
-      slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), compression_length) for size in (slice_size, ref_slice_size))
-      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size, 
+      # full_size is dim0 of the input in compressed transpose format
+      full_size = _get_full_size(arrs_tiles)
+
+      # Standardize bool to int for slice sizes
+      if type(slice_size_unroll) == bool:
+        slice_size_unroll_resolved = log2(full_size) if slice_size_unroll else 0
+      else:
+        slice_size_unroll_resolved = slice_size_unroll
+
+      if type(ref_slice_size_unroll) == bool:
+        ref_slice_size_unroll_resolved = log2(full_size) if ref_slice_size_unroll else 0
+      else:
+        ref_slice_size_unroll_resolved = ref_slice_size_unroll
+
+      # Compute slice sizes
+      slice_size = max(2**stage_unroll, 2**slice_size_unroll_resolved)
+      ref_slice_size = max(slice_size, 2**ref_slice_size_unroll_resolved)
+      slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), full_size) for size in (slice_size, ref_slice_size))
+
+      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
         sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
-      if unroll_stages: 
+
+      if use_pure_arrays:
         schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
-        arrs_tiles =  _bitonic_sort_substages_maybe_refs(
-        arrs_tiles, schedule, **sort_kwargs)
+        # Standardize to list-of-lists format
+        arrs_tiles_standardized = list(map(jax.tree.leaves, arrs_tiles))
+        outputs =  _bitonic_sort_substages_arrays(
+        arrs_tiles_standardized, schedule, **sort_kwargs)
+        # Extract result - outputs is a list per grid block, we want the tiles
+        # For grid_size==1, outputs[0] contains the result
+        if isinstance(outputs, list) and len(outputs) == 1:
+          arrs_tiles = outputs[0]
+        else:
+          arrs_tiles = outputs
       else:
         # use the transpose refs
+        assert transpose_refs is not None, "transpose_refs required when not using pure arrays implementation"
         for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
           ref[...] = arr
 
@@ -516,13 +575,13 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         ))
         stage_sections = tuple(i+1 for i in stage_sections) # stages are 1-indexed
 
-        schedule = [(substage, stage) for stage in range(1, stage_sections[0] + 1) for substage in range(stage)[::-1]]
+        schedule = [(substage, stage) for stage in range(1, stage_sections[0]) for substage in range(stage)[::-1]]
         # special code branch for sorting things which dont fit in HBM
         if single_stage is not None:
           schedule = [(substage, single_stage) for substage in range(num_stages)[::-1]]
           stage_sections = (0,)
-        
-        _bitonic_sort_substages_maybe_refs(
+
+        _bitonic_sort_substages_refs(
         transpose_refs, schedule, **sort_kwargs)
 
         for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
@@ -536,9 +595,9 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
             for substage in range(stage_lb, stage_ub)[::-1]:
               @pl.when(stage > substage)
               def run_substage():
-                _bitonic_sort_substages_maybe_refs(
+                _bitonic_sort_substages_refs(
         transpose_refs, [(substage, stage)], **sort_kwargs)
-            _bitonic_sort_substages_maybe_refs(
+            _bitonic_sort_substages_refs(
         transpose_refs, [(substage, stage) for substage in range(stage_lb)[::-1]], **sort_kwargs)
         # back in array flow
         arrs_tiles = [[ref[...]] for ref in transpose_refs]
