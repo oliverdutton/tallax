@@ -120,7 +120,7 @@ def bitonic_sort_in_vmem_refs(
         operands,
         num_keys=num_keys,
         axis=1,
-        descending=False, # handled already
+        descending=descending,
         single_stage=None if stage_ref is None else stage_ref[0],
         stage_unroll=stage_unroll,
         slice_size_unroll=slice_size_unroll,

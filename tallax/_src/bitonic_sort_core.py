@@ -218,7 +218,6 @@ def _compute_is_descending(stage: SymInt | int, tile_start_offset: SymInt | int,
     ):
       sort_dim_offset = 2**stage
 
-
     # Check if we can optimize based on stage comparisons
     if concrete_and_true(stage < log2(NUM_SUBLANES)) or concrete_and_true(stage >= log2(compression_length)):
       # Same pattern for all tiles
