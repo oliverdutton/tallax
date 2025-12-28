@@ -217,13 +217,8 @@ def _get_full_size(inputs):
   Returns:
     Full size of the first dimension in compressed transpose format
   """
-  leaves = jax.tree.leaves(inputs if not isinstance(inputs, list) else inputs[0])
-  if isinstance(inputs, list) and isinstance(inputs[0], list):
-    # List of list of tiles: sum up all tile dim0s
-    return len(leaves) * leaves[0].shape[0]
-  else:
-    # Single array or simple list: just get first dimension
-    return leaves[0].shape[0] if leaves else 0
+  leaves = jax.tree.leaves(inputs[0])
+  return len(leaves) * leaves[0].shape[0]
 
 
 def concrete_and_true(b):
