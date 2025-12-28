@@ -347,8 +347,9 @@ def _bitonic_sort_substages_maybe_refs(inputs,
   """
   is_ref = not isinstance(jax.tree.leaves(inputs)[0], jax.Array)
   # Compute full_size correctly for both list-of-tiles and single array cases
+  leaves = jax.tree.leaves(inputs[0])
   if isinstance(inputs[0], list):
-    full_size = len(inputs[0]) * inputs[0][0].shape[0]
+    full_size = len(leaves) * leaves[0].shape[0]
   else:
     # inputs[0] is an array, get its first dimension
     full_size = inputs[0].shape[0]
@@ -372,7 +373,7 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     split_i = next(i for i, v in enumerate(inner_size_compatible) if v!=inner_size_compatible[0])
     for sch in [
       substage_and_stage_schedule[:split_i], substage_and_stage_schedule[split_i:]]:
-      inputs = _bitonic_sort_substages_refs(
+      inputs = _bitonic_sort_substages_maybe_refs(
         inputs,
         substage_and_stage_schedule=sch,
         num_keys=num_keys, batch_size=batch_size,
