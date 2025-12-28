@@ -35,13 +35,11 @@ the issue is still linear compile and trace times due to number of tiles
 """
 import functools
 from functools import lru_cache
-from collections.abc import Sequence
 
 import jax
 import jax.numpy as jnp
-from jax import jit
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
+#from jax.experimental.pallas import tpu as pltpu
 
 from tallax._src.utils import (
     NUM_LANES,
@@ -56,10 +54,9 @@ from tallax._src.utils import (
     to_compressed_transpose_format,
     from_compressed_transpose_format,
     to_32bit_dtype,
-    join_tiles_to_array,
-    split_array_to_tiles,
     create_bit_indicator,
     set_cummax,
+    split_arg0_to_chunks    
 )
 from tallax._src.symint import SymInt, unwrap
 
@@ -440,7 +437,8 @@ def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, 
   return _bitonic_sort_substages_arrays(arrs_tiles, schedule, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, inner_size=slice_size)
 
 
-def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+@split_arg0_to_chunks
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and
     fully unrolled implementation.
@@ -474,150 +472,111 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
     """
-    if single_stage is not None:
-      # special code path for large inputs which dont fit in VMEM
-      assert stage_unroll is False
-
-    batch_axis = 1 - axis
-    shape = operands[0].shape
-
-    if axis == 1:
-      padded_shape = _compute_padded_shape(shape[0], shape[1])
-    elif axis == 0:
-      padded_shape = (
-        ceil_multiple(shape[0], NUM_SUBLANES),
-        ceil_multiple(shape[1], NUM_LANES)
-      )
-    else:
-      raise ValueError
-
-    # For small sort sizes <= NUM_LANES, require stage_unroll=True
-    if shape[axis] <= NUM_LANES and stage_unroll is not True:
-      raise NotImplementedError(
-        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires stage_unroll=True"
-      )
+    operands, shape = canonicalize_operand(operands)
+    sort_axis = 1
+    batch_axis = 1 - sort_axis
+    padded_shape = _compute_padded_shape(*shape)
 
     # Pad both dimensions if needed
     # Always append padding after the array:
     # - For ascending sort: pad with 'max' so padding values sort to the end
     # - For descending sort: pad with 'min' so padding values sort to the end
-    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max', prepend=(False, False)) for op in operands]
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    num_stages = log2(shape[axis]) if num_stages is None else num_stages
+    num_stages = log2(shape[sort_axis]) if num_stages is None else num_stages
+
+    batch_size = arrs[0].shape[batch_axis]
+    assert batch_size <= NUM_LANES
+    # Convert to compressed transpose format
+    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
+
+    # full_size is dim0 of the input in compressed transpose format
+    full_size = _get_full_size(arrs_tiles)
+
+    # Standardize unrolls
+    if type(slice_size_unroll) == bool:
+      slice_size_unroll = log2(full_size) if slice_size_unroll else 0
+    if type(ref_slice_size_unroll) == bool:
+      ref_slice_size_unroll = log2(full_size) if ref_slice_size_unroll else 0
+    if type(stage_unroll) == bool:
+      stage_unroll = num_stages if stage_unroll else 6
+    # guard values to their max/mins
+    stage_unroll = min(stage_unroll, num_stages)
+    slice_size = max(2**stage_unroll, 2**slice_size_unroll)
+    ref_slice_size = max(slice_size, 2**ref_slice_size_unroll)
+    slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), full_size) for size in (slice_size, ref_slice_size))
 
     # Offset to control ascending vs descending final order
     if sort_dim_offset is None:
       sort_dim_offset = int(descending) * (2**num_stages)
 
-    # Determine implementation path
-    use_pure_arrays = (stage_unroll == True and ref_slice_size_unroll == True)
+    if shape[sort_axis] <= NUM_LANES:
+      # forcibly unroll
+      stage_unroll = num_stages
+      slice_size = ref_slice_size = full_size
+      
+    sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
+      sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
 
-    # Standardize bool to int for stage_unroll
-    if type(stage_unroll) == bool:
-      stage_unroll = num_stages if stage_unroll else 6
-    else:
-      stage_unroll = min(stage_unroll, num_stages)
-
-    def _sort_arrays(arrs):
-      batch_size = arrs[0].shape[batch_axis]
-      assert batch_size <= NUM_LANES
-      # Convert to compressed transpose format
-      arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-
-      # full_size is dim0 of the input in compressed transpose format
-      full_size = _get_full_size(arrs_tiles)
-
-      # Standardize bool to int for slice sizes
-      if type(slice_size_unroll) == bool:
-        slice_size_unroll_resolved = log2(full_size) if slice_size_unroll else 0
-      else:
-        slice_size_unroll_resolved = slice_size_unroll
-
-      if type(ref_slice_size_unroll) == bool:
-        ref_slice_size_unroll_resolved = log2(full_size) if ref_slice_size_unroll else 0
-      else:
-        ref_slice_size_unroll_resolved = ref_slice_size_unroll
-
-      # Compute slice sizes
-      slice_size = max(2**stage_unroll, 2**slice_size_unroll_resolved)
-      ref_slice_size = max(slice_size, 2**ref_slice_size_unroll_resolved)
-      slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), full_size) for size in (slice_size, ref_slice_size))
-
-      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
-        sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
-
-      if use_pure_arrays:
-        schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
-        # Standardize to list-of-lists format
-        arrs_tiles_standardized = list(map(jax.tree.leaves, arrs_tiles))
-        outputs =  _bitonic_sort_substages_arrays(
-        arrs_tiles_standardized, schedule, **sort_kwargs)
-        # Extract result - outputs is a list per grid block, we want the tiles
-        # For grid_size==1, outputs[0] contains the result
-        if isinstance(outputs, list) and len(outputs) == 1:
-          arrs_tiles = outputs[0]
-        else:
-          arrs_tiles = outputs
-      else:
-        # use the transpose refs
-        assert transpose_refs is not None, "transpose_refs required when not using pure arrays implementation"
-        for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
-          ref[...] = arr
-
-        num_crosslane_stages = log2(NUM_LANES // batch_size)
-        stage_sections = set_cummax((
-          stage_unroll,
-          # two sections added to allow for is_descending optimization
-          # specializing for constant intra-tile from constant across tiles patterns
-          num_stages - num_crosslane_stages - 1,
-          num_stages,
-        ))
-        stage_sections = tuple(i+1 for i in stage_sections) # stages are 1-indexed
-
-        schedule = [(substage, stage) for stage in range(1, stage_sections[0]) for substage in range(stage)[::-1]]
+    if ref_slice_size==full_size and stage_unroll==num_stages:
+      # fully unrolled, pure jax array implementation. best runtime, slow to compile for large shapes
+      schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
+      if single_stage:
         # special code branch for sorting things which dont fit in HBM
-        if single_stage is not None:
-          schedule = [(substage, single_stage) for substage in range(num_stages)[::-1]]
-          stage_sections = (0,)
+        schedule = [(substage, single_stage) for substage in range(num_stages)[::-1]]
 
-        _bitonic_sort_substages_refs(
-        transpose_refs, schedule, **sort_kwargs)
+      arrs_tiles = _bitonic_sort_substages_arrays(
+      arrs_tiles, schedule, **sort_kwargs)
+    else:
+      # use the transpose refs
+      assert transpose_refs is not None, "transpose_refs required when not fully unrolling"
+      
+      for i, arr in enumerate(_rejoin(arrs_tiles)):
+        # cut transpose refs if too large
+        transpose_refs[i] = transpose_refs[i].at[:arr.shape[0]]
+        ref[...] = transpose_refs[i]
 
-        for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
-          # run the cross tile and cross lane fori_loops separately so we can make optimizations on is_descending
-          @pl.loop(stage_lb, stage_ub)
-          def run_dynamic_stage(stage):
-            # bounds are inclusive on both ends
-            # this is used to make optimizations on is_descending inside the code
-            stage = SymInt(stage, lower_bound=stage_lb, upper_bound=stage_ub-1)
+      num_crosslane_stages = log2(NUM_LANES // batch_size)
+      stage_sections = set_cummax((
+        stage_unroll,
+        # two sections added to allow for is_descending optimization
+        # specializing for constant intra-tile from constant across tiles patterns
+        num_stages - num_crosslane_stages - 1,
+        num_stages,
+      ))
+      stage_sections = tuple(i+1 for i in stage_sections) # stages are 1-indexed
 
-            for substage in range(stage_lb, stage_ub)[::-1]:
-              @pl.when(stage > substage)
-              def run_substage():
-                _bitonic_sort_substages_refs(
-        transpose_refs, [(substage, stage)], **sort_kwargs)
-            _bitonic_sort_substages_refs(
-        transpose_refs, [(substage, stage) for substage in range(stage_lb)[::-1]], **sort_kwargs)
-        # back in array flow
-        arrs_tiles = [[ref[...]] for ref in transpose_refs]
+      schedule = [(substage, stage) for stage in range(1, stage_sections[0]) for substage in range(stage)[::-1]]
+      
+      if single_stage is not None:
+        # special code branch for sorting things which dont fit in HBM
+        schedule = [(substage, single_stage) for substage in range(num_stages)[::-1]]
+        stage_sections = (0,)
 
-      # Convert back from compressed transpose format
-      if axis == 1:
-        arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
-      else:
-        arrs = [join_tiles_to_array(tiles, dim0=ceil_multiple(2**num_stages, NUM_SUBLANES)) for tiles in arrs_tiles]
-      return arrs
+      _bitonic_sort_substages_refs(
+      transpose_refs, schedule, **sort_kwargs)
 
-    # wrapping to act on batch_size <= NUM_LANES in the kernel
-    arrs = [
-      jnp.concatenate(arr_slices, axis=batch_axis)
-      for arr_slices in transpose_list_of_lists(
-        [_sort_arrays(arrs)
-        for arrs in transpose_list_of_lists([
-        jnp.split(arr, pl.cdiv(padded_shape[batch_axis], NUM_LANES), axis=batch_axis) for arr in arrs])
-    ])]
+      for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
+        # run the cross tile and cross lane fori_loops separately so we can make optimizations on is_descending
+        @pl.loop(stage_lb, stage_ub)
+        def run_dynamic_stage(stage):
+          # bounds are inclusive on both ends
+          # this is used to make optimizations on is_descending inside the code
+          stage = SymInt(stage, lower_bound=stage_lb, upper_bound=stage_ub-1)
+
+          for substage in range(stage_lb, stage_ub)[::-1]:
+            @pl.when(stage > substage)
+            def run_substage():
+              _bitonic_sort_substages_refs(
+      transpose_refs, [(substage, stage)], **sort_kwargs)
+          _bitonic_sort_substages_refs(
+      transpose_refs, [(substage, stage) for substage in range(stage_lb)[::-1]], **sort_kwargs)
+      # back in array flow
+      arrs_tiles = [[ref[...]] for ref in transpose_refs]
+
+    arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
+  
     # Unpad to original shape
-    # Padding is always appended at the end, so always take from the beginning
     return [arr[:shape[0], :shape[1]] for arr in arrs]
 
