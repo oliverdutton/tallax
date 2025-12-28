@@ -280,9 +280,9 @@ def to_compressed_transpose_format(arr):
   dim0, original_dim1 = arr.shape
   assert NUM_LANES % dim0 == 0 and dim0 <= NUM_LANES
 
-  # Pad dim1 to NUM_LANES if needed
+  # Pad dim1 to NUM_LANES if needed (use 1 to avoid padding dim0)
   if original_dim1 < NUM_LANES:
-    arr = jnp.pad(arr, ((0, 0), (0, NUM_LANES - original_dim1)), mode='constant')
+    arr = pad(arr, block_shape=(1, NUM_LANES))
 
   arrs = jnp.split(arr, NUM_LANES // dim0, axis=1)
   arr = jnp.concatenate(arrs, axis=0).T
@@ -304,9 +304,9 @@ def from_compressed_transpose_format(tiles, dim0):
   arr = jnp.concatenate(tiles, axis=0)
   original_dim1 = arr.shape[0]
 
-  # Pad dim0 to NUM_LANES if needed
+  # Pad dim0 to NUM_LANES if needed (use 1 to avoid padding dim1)
   if original_dim1 < NUM_LANES:
-    arr = jnp.pad(arr, ((0, NUM_LANES - original_dim1), (0, 0)), mode='constant')
+    arr = pad(arr, block_shape=(NUM_LANES, 1))
 
   arr = arr.T
   assert arr.shape[0] == NUM_LANES
