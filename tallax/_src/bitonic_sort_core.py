@@ -510,6 +510,15 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     if sort_dim_offset is None:
       sort_dim_offset = int(descending) * (2**num_stages)
 
+    # Determine implementation path
+    use_pure_arrays = (stage_unroll == True and ref_slice_size_unroll == True)
+
+    # Standardize bool to int for stage_unroll
+    if type(stage_unroll) == bool:
+      stage_unroll = num_stages if stage_unroll else 6
+    else:
+      stage_unroll = min(stage_unroll, num_stages)
+
     def _sort_arrays(arrs):
       batch_size = arrs[0].shape[batch_axis]
       assert batch_size <= NUM_LANES
@@ -519,21 +528,20 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       # full_size is dim0 of the input in compressed transpose format
       full_size = _get_full_size(arrs_tiles)
 
-      # Determine implementation path before standardizing parameters
-      use_pure_arrays = (stage_unroll is True and ref_slice_size_unroll is True)
+      # Standardize bool to int for slice sizes
+      if type(slice_size_unroll) == bool:
+        slice_size_unroll_resolved = log2(full_size) if slice_size_unroll else 0
+      else:
+        slice_size_unroll_resolved = slice_size_unroll
 
-      # Standardize bool to int
-      stages, slices, refslices = stage_unroll, slice_size_unroll, ref_slice_size_unroll
-      if type(stages) == bool:
-        stages = num_stages if stages else 6
-      stages = min(stages, num_stages)
-
-      slices = log2(full_size) if slices is True else (0 if slices is False else slices)
-      refslices = log2(full_size) if refslices is True else (0 if refslices is False else refslices)
+      if type(ref_slice_size_unroll) == bool:
+        ref_slice_size_unroll_resolved = log2(full_size) if ref_slice_size_unroll else 0
+      else:
+        ref_slice_size_unroll_resolved = ref_slice_size_unroll
 
       # Compute slice sizes
-      slice_size = max(2**stages, 2**slices)
-      ref_slice_size = max(slice_size, 2**refslices)
+      slice_size = max(2**stage_unroll, 2**slice_size_unroll_resolved)
+      ref_slice_size = max(slice_size, 2**ref_slice_size_unroll_resolved)
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), full_size) for size in (slice_size, ref_slice_size))
 
       sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
@@ -559,7 +567,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
 
         num_crosslane_stages = log2(NUM_LANES // batch_size)
         stage_sections = set_cummax((
-          stages,
+          stage_unroll,
           # two sections added to allow for is_descending optimization
           # specializing for constant intra-tile from constant across tiles patterns
           num_stages - num_crosslane_stages - 1,
