@@ -367,7 +367,7 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     pass
   elif all((not b for b in inner_size_compatible)):
     outer_size = full_size
-    inner_size = full_size 
+    inner_size = full_size
   else:
     # will switch between running on chunks and full input. We do the longest run we can of same inner_size
     split_i = next(i for i, v in enumerate(inner_size_compatible) if v!=inner_size_compatible[0])
@@ -406,7 +406,9 @@ def _bitonic_sort_substages_maybe_refs(inputs,
             stage=stage,
             num_keys=num_keys,
             batch_size=batch_size,
-            sort_dim_offset=tile_offset)
+            sort_dim_offset=tile_offset,
+            compression_length=full_size,
+            concat_threshold=concat_threshold)
       outer_out_tiles.append([jnp.concat(x, axis=0) for x in inner_tiles])
     outer_out_tiles = transpose_list_of_lists(outer_out_tiles)
 
