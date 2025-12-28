@@ -367,4 +367,5 @@ def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
       jnp.concatenate(output_chunks, axis=axis)
       for output_chunks in transpose_list_of_lists(
         [unsplit_f(operands_chunk) for operands_chunk in operands_chunks])]
+  return split_f
 
