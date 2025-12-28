@@ -32,12 +32,12 @@ def is_ref(x) -> bool:
     ...     data = ref_input
   """
   try:
-    # Use jax.typeof (public API) instead of deprecated jax.core.get_aval
-    # Check if the type is AbstractRef by checking the type name
+    # Use jax.typeof (public API) to get the abstract value type
+    # Refs have type AbstractRef, arrays have type ShapedArray
     aval = jax.typeof(x)
     return type(aval).__name__ == 'AbstractRef'
-  except:
-    # If typeof fails, it's likely not a JAX type
+  except (AttributeError, TypeError, ValueError):
+    # If typeof fails, it's not a ref
     return False
 
 
