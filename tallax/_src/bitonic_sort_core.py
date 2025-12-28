@@ -344,13 +344,12 @@ def bitonic_sort_substage(arrs_tiles, *, substage, num_keys: int, batch_size: in
 
 def _bitonic_sort_substages_maybe_refs(inputs,
     substage_and_stage_schedule: list[tuple[int, int]], *,
-    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None):
+    num_keys: int, batch_size: int, sort_dim_offset: int = 0, inner_size=None, outer_size=None, concat_threshold=None, is_ref=False):
   """Apply bitonic sort substages to inputs. Applies inner and outer unrolls. inner_unroll can reduce register pressure. If input is arrays the outer unroll is meaningless, but it controls unroll for refs.
   
   Args:
     inputs: list[pl.MemoryRef | jax.Array] to sort
   """
-  is_ref = not isinstance(jax.tree.leaves(inputs)[0], jax.Array)
   # full_size is dim0 of the input in compressed transpose format
   full_size = _get_full_size(inputs)
   if outer_size is None:
@@ -381,6 +380,7 @@ def _bitonic_sort_substages_maybe_refs(inputs,
         outer_size=outer_size,
         inner_size=inner_size,
         concat_threshold=inner_size,
+        is_ref=is_ref,
       )
     return inputs
 
@@ -416,10 +416,13 @@ def _bitonic_sort_substages_maybe_refs(inputs,
     if is_ref:
       for ref, arr in zip(inputs, _rejoin(outer_out_tiles), strict=True):
         ref[pl.dslice(outer_i * outer_size, outer_size)] = arr
-    return outer_out_tiles
+      return None
+    else:
+      return outer_out_tiles
 
   if is_ref:
-    pl.loop(0, grid_size)(process_block)
+    for outer_i in range(grid_size):
+      process_block(outer_i)
     outputs = inputs # both just ref
   else:
     outputs = [process_block(outer_i) for outer_i in range(grid_size)]
@@ -540,14 +543,14 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         ))
         stage_sections = tuple(i+1 for i in stage_sections) # stages are 1-indexed
 
-        schedule = [(substage, stage) for stage in range(1, stage_sections[0] + 1) for substage in range(stage)[::-1]]
+        schedule = [(substage, stage) for stage in range(1, stage_sections[0]) for substage in range(stage)[::-1]]
         # special code branch for sorting things which dont fit in HBM
         if single_stage is not None:
           schedule = [(substage, single_stage) for substage in range(num_stages)[::-1]]
           stage_sections = (0,)
         
         _bitonic_sort_substages_maybe_refs(
-        transpose_refs, schedule, **sort_kwargs)
+        transpose_refs, schedule, **sort_kwargs, is_ref=True)
 
         for stage_lb, stage_ub in zip(stage_sections, stage_sections[1:]):
           # run the cross tile and cross lane fori_loops separately so we can make optimizations on is_descending
@@ -561,9 +564,9 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
               @pl.when(stage > substage)
               def run_substage():
                 _bitonic_sort_substages_maybe_refs(
-        transpose_refs, [(substage, stage)], **sort_kwargs)
+        transpose_refs, [(substage, stage)], **sort_kwargs, is_ref=True)
             _bitonic_sort_substages_maybe_refs(
-        transpose_refs, [(substage, stage) for substage in range(stage_lb)[::-1]], **sort_kwargs)
+        transpose_refs, [(substage, stage) for substage in range(stage_lb)[::-1]], **sort_kwargs, is_ref=True)
         # back in array flow
         arrs_tiles = [[ref[...]] for ref in transpose_refs]
 
