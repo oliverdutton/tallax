@@ -53,10 +53,9 @@ def bitonic_sort_in_vmem_refs(
     is_stable: bool,
     num_keys: int,
     k: int | None = None,
-    stage_unroll: int | None = None,
-    slice_size_unroll: int | None = None,
-    ref_slice_size_unroll: int | None = None,
-    unroll_stages: bool = True,
+    stage_unroll: int | bool = True,
+    slice_size_unroll: int | bool = True,
+    ref_slice_size_unroll: int | bool = True,
     # int key operands may contain INT_MAX (ascending sort) or INT_MIN (descending sort) requiring stable sort to avoid padding leakage
     int_key_operands_may_contain_int_max_or_min: bool = True,
 ):
@@ -122,11 +121,10 @@ def bitonic_sort_in_vmem_refs(
         axis=1,
         descending=descending if not is_subsort else False,
         single_stage=None if stage_ref is None else stage_ref[0],
-        stage_unroll=stage_unroll,
+        stage_unroll=stage_unroll if stage_ref is None else False,
         slice_size_unroll=slice_size_unroll,
         ref_slice_size_unroll=ref_slice_size_unroll,
-        unroll_stages=unroll_stages if stage_ref is None else False,
-        # only used if unroll_stages, then this ceases to be an _arrays method
+        # only used when not using pure arrays implementation
         transpose_refs=transpose_refs,
         sort_dim_offset=sort_dim_offset
     )
@@ -168,7 +166,7 @@ def bitonic_sort_in_vmem_refs(
     static_argnames=("num_keys", "return_argsort", "descending", "is_stable", "k",
                      "interpret", "block_token", "block_seq",
                      "compile_fast", "stage_unroll", "slice_size_unroll",
-                     "ref_slice_size_unroll", "unroll_stages")
+                     "ref_slice_size_unroll")
 )
 def bitonic_sort_in_vmem(
     operand: jax.Array | Sequence[jax.Array],
@@ -186,11 +184,10 @@ def bitonic_sort_in_vmem(
     block_seq: int | None = None,
 
     compile_fast: bool | None = None,
-    # specialist unroll controls, suggest setting just fast_compile=True if compilation is too slow, it will overwrite and set these other unrolls
-    stage_unroll: int | None = None,
-    slice_size_unroll: int | None = None,
-    ref_slice_size_unroll: int | None = None,
-    unroll_stages: bool = True,
+    # specialist unroll controls, suggest setting just compile_fast=True if compilation is too slow, it will overwrite and set these other unrolls
+    stage_unroll: int | bool = True,
+    slice_size_unroll: int | bool = True,
+    ref_slice_size_unroll: int | bool = True,
 ) -> tuple[jax.Array, ...]:
   """Sort arrays that fit in VMEM using bitonic sort.
 
@@ -215,15 +212,12 @@ def bitonic_sort_in_vmem(
   """
   operands, shape = canonicalize_operand(operand)
 
-  if stage_unroll is None:
-    # heuristic, likely reduces register pressure as it reorder operations into groups of 2**6/NUM_SUBLANES=8 tiles
-    stage_unroll = 6
   if compile_fast is None:
     # if projected compilation time expected to be more than a minute, compile fast
     compile_fast = (shape[0] * shape[1] * (len(operands) + int(return_argsort or is_stable))) > 2**19
   if compile_fast:
     # reduces compilation time scaling to linear
-    stage_unroll, slice_size_unroll, ref_slice_size_unroll, unroll_stages = (6, 7, 8, False)
+    stage_unroll, slice_size_unroll, ref_slice_size_unroll = (6, 7, 8)
 
   unconverted_operands = tuple(operands)
   # On CPU (interpret mode), convert floats to sortable ints outside Pallas to avoid ref bitcast lowering issues. On TPU, keep conversion inside Pallas kernel for efficiency (and it can allow bf16-u16 packing)
@@ -282,7 +276,6 @@ def bitonic_sort_in_vmem(
                         stage_unroll=stage_unroll,
                         slice_size_unroll=slice_size_unroll,
                         ref_slice_size_unroll=ref_slice_size_unroll,
-                        unroll_stages=unroll_stages,
                         ),
       out_shape=(out_shapes,),
       in_specs=in_specs,

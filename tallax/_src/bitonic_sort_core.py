@@ -440,7 +440,7 @@ def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, 
   return _bitonic_sort_substages_arrays(arrs_tiles, schedule, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, inner_size=slice_size)
 
 
-def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | None = None, slice_size_unroll: int | None = None, unroll_stages: bool = True, ref_slice_size_unroll: int | None = None, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and
     fully unrolled implementation.
@@ -458,16 +458,25 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
         num_keys: Number of sort keys (default: 1)
         axis: Axis along which to perform sort (0 or 1)
         descending: If True, sort in descending order
+        stage_unroll: Stage unrolling control (int or bool)
+            - True: fully unrolled stages (pure arrays implementation if ref_slice_size_unroll is also full)
+            - False: rolled stages (uses refs)
+            - int: specific stage unroll value
+        slice_size_unroll: Slice size control (int or bool)
+            - True: use full_size
+            - False: use 0
+            - int: specific slice size
+        ref_slice_size_unroll: Reference slice size control (int or bool)
+            - True: use full_size
+            - False: use 0
+            - int: specific ref slice size
 
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
     """
-    if stage_unroll is not None:
-      assert transpose_refs is not None
-    
     if single_stage is not None:
       # special code path for large inputs which dont fit in VMEM
-      assert not unroll_stages
+      assert type(stage_unroll) == bool and stage_unroll == False
 
     batch_axis = 1 - axis
     shape = operands[0].shape
@@ -482,10 +491,10 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     else:
       raise ValueError
 
-    # For small sort sizes <= NUM_LANES, require unroll_stages=True
-    if shape[axis] <= NUM_LANES and not unroll_stages:
+    # For small sort sizes <= NUM_LANES, require stage_unroll=True
+    if shape[axis] <= NUM_LANES and not (type(stage_unroll) == bool and stage_unroll == True):
       raise NotImplementedError(
-        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires unroll_stages=True"
+        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires stage_unroll=True"
       )
 
     # Pad both dimensions if needed
@@ -496,7 +505,6 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
     num_stages = log2(shape[axis]) if num_stages is None else num_stages
-    stage_unroll = min(stage_unroll, num_stages) if stage_unroll is not None else num_stages
 
     # Offset to control ascending vs descending final order
     if sort_dim_offset is None:
@@ -508,21 +516,39 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
 
-      slice_size = 2**stage_unroll if unroll_stages else NUM_SUBLANES
-      if slice_size_unroll is not None:
-        slice_size = max(slice_size, 2**slice_size_unroll)
-      ref_slice_size = arrs_tiles[0].shape[0]
-      if ref_slice_size_unroll is not None:
-        ref_slice_size = min(
-          max(slice_size, 2**ref_slice_size_unroll),
-          ref_slice_size)
-      # clip the slice size
       # full_size is dim0 of the input in compressed transpose format
       full_size = _get_full_size(arrs_tiles)
+
+      # Standardize bool to int using type() == bool
+      if type(stage_unroll) == bool:
+        stage_unroll_int = num_stages if stage_unroll else 6  # Default to 6 for False (sensible default for rolled)
+      else:
+        stage_unroll_int = min(stage_unroll, num_stages)
+
+      if type(slice_size_unroll) == bool:
+        slice_size_unroll_int = log2(full_size) if slice_size_unroll else 0
+      else:
+        slice_size_unroll_int = slice_size_unroll
+
+      if type(ref_slice_size_unroll) == bool:
+        ref_slice_size_unroll_int = log2(full_size) if ref_slice_size_unroll else 0
+      else:
+        ref_slice_size_unroll_int = ref_slice_size_unroll
+
+      # Compute slice sizes
+      slice_size = max(2**stage_unroll_int, 2**slice_size_unroll_int)
+      ref_slice_size = max(slice_size, 2**ref_slice_size_unroll_int)
+      # Clip the slice size
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), full_size) for size in (slice_size, ref_slice_size))
+
       sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size,
         sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
-      if unroll_stages:
+
+      # Use pure arrays implementation if stage_unroll=True and ref_slice_size_unroll resolves to full_size
+      use_pure_arrays = (type(stage_unroll) == bool and stage_unroll == True and
+                         2**ref_slice_size_unroll_int == full_size)
+
+      if use_pure_arrays:
         schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
         # Standardize to list-of-lists format
         arrs_tiles_standardized = list(map(jax.tree.leaves, arrs_tiles))
@@ -536,12 +562,13 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
           arrs_tiles = outputs
       else:
         # use the transpose refs
+        assert transpose_refs is not None, "transpose_refs required when not using pure arrays implementation"
         for ref, arr in zip(transpose_refs, _rejoin(arrs_tiles), strict=True):
           ref[...] = arr
 
         num_crosslane_stages = log2(NUM_LANES // batch_size)
         stage_sections = set_cummax((
-          stage_unroll,
+          stage_unroll_int,
           # two sections added to allow for is_descending optimization
           # specializing for constant intra-tile from constant across tiles patterns
           num_stages - num_crosslane_stages - 1,
