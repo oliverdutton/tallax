@@ -1,15 +1,5 @@
 """
 Bitonic Top-K using compressed transpose format.
-
-This implementation is optimized for TPU and works entirely in
-compressed transpose format to maximize efficiency of permutation operations.
-
-Algorithm:
-- Convert input to compressed transpose format: (num_tokens, vocab) -> (NUM_LANES, num_tokens*chunks)
-- Build bitonic sequences using stages 1-6 (so sorted in 64 length chunks)
-- Cross-tile merge with max selection, reducing tile count
-- Progressive sublane permute merging with decreasing distances
-- Convert back to original format
 """
 
 import functools
@@ -34,6 +24,7 @@ from tallax._src.utils import (
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
+    
 )
 from tallax._src.bitonic_sort_core import (
     bitonic_sort_substage,
@@ -80,12 +71,6 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
 def bitonic_topk_arrays(operands: list[jax.Array], k: int = NUM_LANES, num_keys: int = 1, axis: int = 1, min_padded_dim0: int | None = None):
     """
     Progressive bitonic merge for top-k selection.
-
-    Strategy:
-    1. Build bitonic sequences (stages 1-6) within tiles
-    2. Cross-tile bitonic merge until we reach target tile count
-    3. Final progressive merge with lane permutations
-    4. Sort final bitonic sequence to descending order
 
     Args:
         operands: List of JAX arrays of shape (dim0, dim1)
