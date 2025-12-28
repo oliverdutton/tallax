@@ -147,6 +147,7 @@ def bitonic_sort_in_vmem_refs(
   # Unpack bf16-u16 if used
   if use_packed_bf16_u16:
     operands = unpack_bf16_u16_from_i32(operands[0])
+    num_keys = 1 + int(is_stable)
 
   if use_indices:
     indices = operands.pop(num_keys - int(is_stable))
