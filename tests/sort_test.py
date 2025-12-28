@@ -13,12 +13,14 @@ def _should_skip_on_cpu(size):
     return is_cpu_platform() and size > 1024
 
 @pytest.mark.parametrize("variant", [
-    "standard",
+    "default",
     "return_argsort",
     "return_argsort_stable",
     "descending",
-    "descending_argsort",
-    "descending_stable"
+    "return_argsort_descending",
+    "descending_stable",
+    "stable",
+    "return_argsort_stable_descending",
 ])
 @pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32])
 @pytest.mark.parametrize("num_arrays,num_keys", [
