@@ -448,7 +448,6 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
 
     batch_axis = 1 - axis
     shape = operands[0].shape
-    #unpadded_sort_dim = shape[axis]
 
     if axis == 1:
       padded_shape = _compute_padded_shape(shape[0], shape[1])
@@ -485,22 +484,19 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       assert batch_size <= NUM_LANES
       # Convert to compressed transpose format
       arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
-      compression_length = arrs_tiles[0].shape[0]
-
-      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size, 
-        sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
 
       slice_size = 2**stage_unroll if unroll_stages else NUM_SUBLANES
       if slice_size_unroll is not None:
         slice_size = max(slice_size, 2**slice_size_unroll)
-      ref_slice_size = compression_length
+      ref_slice_size = arrs_tiles[0].shape[0]
       if ref_slice_size_unroll is not None:
         ref_slice_size = min(
           max(slice_size, 2**ref_slice_size_unroll),
           ref_slice_size)
       # clip the slice size
       slice_size, ref_slice_size = (min(max(size, NUM_SUBLANES), compression_length) for size in (slice_size, ref_slice_size))
-
+      sort_kwargs = dict(num_keys=num_keys, batch_size=batch_size, 
+        sort_dim_offset=sort_dim_offset, inner_size=slice_size, outer_size=ref_slice_size)
       if unroll_stages: 
         schedule = [(substage, stage) for stage in range(1, num_stages + 1) for substage in range(stage)[::-1]]
         arrs_tiles =  _bitonic_sort_substages_maybe_refs(
