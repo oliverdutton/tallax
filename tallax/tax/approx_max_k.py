@@ -5,7 +5,7 @@ import functools
 import jax.numpy as jnp
 from jax import jit
 
-from tallax.tax.divide_and_filter_topk.topk import top_dynamic_k
+from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, ceil_multiple
 from tallax.tax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
 
@@ -38,6 +38,10 @@ def approx_max_k(
 
     Approximates jax.lax.approx_max_k interface using Tallax's divide-and-filter
     top-k algorithm without guaranteed convergence for maximum speed.
+
+    Warning:
+        If the input contains NaNs or the top-k contains the dtype's minimum value,
+        behavior is undefined.
 
     Note: Currently limited to:
       - 2D input only
@@ -79,7 +83,7 @@ def approx_max_k(
     num_bins = ceil_multiple(num_bins, NUM_LANES)
     # incase whole input needs top-k 
     num_bins = min(num_bins, ceil_multiple(input_size, NUM_LANES))
-    return top_dynamic_k(
+    return top_bounded_k(
         operand,
         k=k,
         max_k=k,

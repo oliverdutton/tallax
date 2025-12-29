@@ -411,7 +411,7 @@ def dynamic_topk_refs(
         "interpret"
     ),
 )
-def top_dynamic_k(
+def top_bounded_k(
     logits,
     k,
     max_k: int,
@@ -426,9 +426,17 @@ def top_dynamic_k(
   """
   High-level interface for adaptive binned top-k computation on TPU.
 
+  This is a vmap'd implementation to jax.lax.top_k for traced k, where k is bounded
+  by max_k. It's faster to compute top-(bounded-k) than computing top-(max-k) due to
+  early convergence checks using the possibly lower k values.
+
   Supports dynamic k per token (each token can have a different k value) while
   maintaining efficient TPU execution through static compilation based on max_k.
   Automatically computes optimal search schedules if not provided.
+
+  Warning:
+      If the input contains NaNs or the top-k contains the dtype's minimum value,
+      behavior is undefined.
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
@@ -580,7 +588,7 @@ def topk(
           - topk_vals: Top-k values of shape [num_tokens, k].
           - topk_idxs: Top-k indices of shape [num_tokens, k].
   """
-  return top_dynamic_k(
+  return top_bounded_k(
     logits,
     k=k,
     max_k=k,

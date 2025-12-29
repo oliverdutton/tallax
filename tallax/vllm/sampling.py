@@ -14,12 +14,12 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
 from tallax.tax.bitonic.topk import bitonic_topk_arrays as bitonic_topk
 from tallax.vllm.top_p_and_sample import top_p_and_sample
-from tallax.tax.divide_and_filter_topk.topk import top_dynamic_k
+from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, pad, log2, iota_tile, transpose_list_of_lists
 
 def _topk_with_sharding(logits: jax.Array, k: jax.Array, replace_val: float | int, max_k: int, num_bins, bins_topm_schedule: tuple[int,...]):
     def _topk(logits: jax.Array, k: jax.Array):
-      return top_dynamic_k(
+      return top_bounded_k(
         logits,
         k=k,
         max_k=max_k,
