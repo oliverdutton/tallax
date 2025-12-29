@@ -137,7 +137,7 @@ def _merge_unconverged_bins_topk(
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
-  _, sorted_bin_indices = bitonic_topk_arrays([num_gt_k, bin_indices], k=num_packed_bins, num_keys=1)
+  _, sorted_bin_indices = bitonic_topk_arrays([num_gt_k, bin_indices], k=num_packed_bins, num_keys=1, axis=1)
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
   if num_packed_bins > NUM_LANES:
     raise NotImplementedError
@@ -199,7 +199,7 @@ def _merge_unconverged_bins_topk(
   (
     bins_topm_vals_ref[:, :max_k],
     bins_topm_idxs_ref[:, :max_k]
-  ) = bitonic_topk_arrays([val_input, idx_input], k=max_k, num_keys=1)
+  ) = bitonic_topk_arrays([val_input, idx_input], k=max_k, num_keys=1, axis=1)
 
 
 def dynamic_topk_refs(
@@ -371,6 +371,7 @@ def dynamic_topk_refs(
           [vals_input, idxs_input],
           num_keys=1,
           k=max_k,
+          axis=1,
         )
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
