@@ -1,4 +1,5 @@
 
+import functools
 import math
 import warnings
 from itertools import chain
@@ -357,6 +358,7 @@ def set_cummax(vs):
 
 
 def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
+  @functools.wraps(unsplit_f)
   def split_f(operands, *args, axis, **kwargs):
     split_indices = tuple((i+1)*max_chunk_size for i in range(operands[0].shape[0] // max_chunk_size))
     operands_chunks = transpose_list_of_lists(
@@ -366,6 +368,6 @@ def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
     return [
       jnp.concatenate(output_chunks, axis=axis)
       for output_chunks in transpose_list_of_lists(
-        [unsplit_f(operands_chunk, *args, **kwargs) for operands_chunk in operands_chunks])]
+        [unsplit_f(operands_chunk, *args, axis=axis, **kwargs) for operands_chunk in operands_chunks])]
   return split_f
 

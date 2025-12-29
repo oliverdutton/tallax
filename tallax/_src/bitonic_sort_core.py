@@ -398,7 +398,7 @@ def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, 
 
 
 @split_arg0_to_chunks
-def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and
     fully unrolled implementation.
@@ -433,7 +433,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
         List of JAX arrays of same shape as input, sorted along specified axis
     """
     operands, shape = canonicalize_operand(operands)
-    sort_axis = 1
+    sort_axis = axis
     batch_axis = 1 - sort_axis
     padded_shape = _compute_padded_shape(*shape)
 
