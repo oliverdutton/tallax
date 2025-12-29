@@ -9,6 +9,19 @@ from tallax.tax.bitonic.topk import bitonic_topk_arrays
 from tallax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
 from tallax.tax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype, ceil_multiple
 
+
+def _extract_remainder_slice(ref, slice_size):
+  full_size = ref.shape[1]
+  num_full_slices = full_size // slice_size
+  remainder = full_size % slice_size
+  if remainder > 0:
+    # Load the final boundary slice
+    remainder_vals = ref[..., pl.dslice(num_full_slices * slice_size, remainder)]
+    # Pad with min value
+    return pad(remainder_vals, (1, slice_size), val='min')
+  raise None
+  
+
 def binned_topk(
     logits,
     k: int,
@@ -92,17 +105,14 @@ def binned_topk(
   )
 
   # Handle remaining elements if vocab_size doesn't divide num_bins
-  remainder = vocab_size % num_bins
-  if remainder > 0:
-    # Load the final boundary segment
-    final_vals = logits[..., pl.dslice(num_full_slices * num_bins, remainder)]
-    # Pad to num_bins with f32 min
-    final_vals = pad(final_vals, (1, num_bins), val='min')
+  rem_vals = _extract_remainder_slice(logits, num_bins)
+  if rem_vals is not None:
     # Create idxs for the final segment
-    final_idxs = compute_idxs(num_full_slices)
+    rem_idxs = compute_idxs(num_full_slices)
     # Update bins topk with the overspill
-    bins_topk_outs = update_bins_topk(final_vals, final_idxs, *bins_topk_outs)
+    bins_topk_outs = update_bins_topk(rem_vals, rem_idxs, *bins_topk_outs)
   return bins_topk_outs
+
 
 def _merge_unconverged_bins_topk(
     logits_ref,
@@ -165,12 +175,21 @@ def _merge_unconverged_bins_topk(
       get_dtype_info(logits_ref).min, dtype=logits_ref.dtype
   ) for _ in range(pl.cdiv(vocab_size, NUM_LANES * (num_bins // num_packed_bins)))]
 
+  assert num_bins % NUM_LANES == 0
   for offset in range(0, num_bins, NUM_LANES):
     local_perm = (packing_perm - offset) % NUM_LANES
     in_range_mask = (packing_perm >= offset) & (packing_perm < (offset + NUM_LANES))
 
     # Extract values from all full bins at this offset
-    vals = [logits_ref[:, pl.dslice(start_idx, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for start_idx in range(offset, vocab_size, num_bins)]
+    num_full_slices = vocab_size // num_bins
+    vals = [logits_ref[:, pl.dslice(i+offset, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for i in range(num_full_slices)]
+    # deal with remainder if exists
+    if num_full_slices * num_bins + offset < vocab_size:
+      # if start is not out of array, take the full final num_bins slice then pull out this offset portion
+      vals.append(
+        _extract_remainder_slice(
+          logits_ref, slice_size=num_bins)[offset:offset+NUM_LANES]
+      )
 
     # apply permutation
     vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
@@ -454,10 +473,9 @@ def top_dynamic_k(
 
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
-    thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.98, 0.9999))
+    thresholds = calculate_depth_thresholds(max_k, num_bins, block_token, target_yields=(0.8, 0.999))
     bins_topm_schedule = tuple(sorted(set(min(t + 1, max_k) for t in thresholds)))
-    print(f"Auto-computed schedules for max_k={max_k}, num_bins={num_bins}:")
-    print(f"  bins_topm_schedule: {bins_topm_schedule}")
+    print(f"Auto-computed bins top-m schedule for max_k={max_k}, num_bins={num_bins}: {bins_topm_schedule}")
   bins_topm_schedule = tuple(sorted(set(bins_topm_schedule)))
   bins_topm_schedule = (0,) + bins_topm_schedule
 
