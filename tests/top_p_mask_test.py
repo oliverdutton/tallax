@@ -2,8 +2,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax._src.top_p_and_sample import top_p_mask as pallas_top_p_mask
-from tallax._src.tpu_inference_sampling_as_standalone_file import topp_mask as tpu_inference_top_p_mask
+from tallax.vllm.top_p_and_sample import top_p_mask as pallas_top_p_mask
+from tallax.vllm.tpu_inference_sampling_as_standalone_file import topp_mask as tpu_inference_top_p_mask
 
 
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (21, 128), (256, 128), (137, 17), (137, 193)])

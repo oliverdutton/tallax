@@ -12,7 +12,7 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.utils import (
+from tallax.tax.utils import (
     log2,
     pad,
     float_to_sortable_int,
@@ -28,17 +28,17 @@ from tallax._src.utils import (
     NUM_SUBLANES,
     ceil_multiple,
 )
-from tallax._src.bitonic_sort_core import (
+from tallax.tax.bitonic.sort import (
     bitonic_sort_maybe_rolled,
     _compute_padded_shape as _compute_padded_shape_for_sort,
     compute_pair_slice_start_index as _compute_pair_slice_start_index,
     compare_and_swap,
 )
-from tallax._src.bitonic_topk_core import (
+from tallax.tax.bitonic.topk import (
   bitonic_topk_arrays,
   _compute_padded_shape as _compute_padded_shape_for_topk
 )
-from tallax._src.symint import SymInt
+from tallax.tax.symint import SymInt
 
 
 ### VMEM-Based Sort (fits in VMEM)

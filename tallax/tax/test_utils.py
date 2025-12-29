@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import pandas as pd
 import pytest
 
-from tallax._src.utils import is_cpu_platform
+from tallax.tax.utils import is_cpu_platform
 
 
 @jax.jit

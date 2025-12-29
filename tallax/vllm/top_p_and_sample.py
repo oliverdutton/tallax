@@ -12,9 +12,9 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 
-from tallax._src.sparse_random import sparse_random_categorical
-from tallax._src.cumsum import cumsum_arrays
-from tallax._src.gather import take_along_axis_arrays
+from tallax.tax.sparse_random import sparse_random_categorical
+from tallax.tax.cumsum import cumsum_arrays
+from tallax.tax.gather import take_along_axis_arrays
 
 _SAMPLING_EPS = 1e-5
 

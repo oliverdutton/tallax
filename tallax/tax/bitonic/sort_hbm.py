@@ -13,7 +13,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.utils import (
+from tallax.tax.utils import (
     log2,
     pad,
     canonicalize_operand,
@@ -29,7 +29,7 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
 )
-from tallax._src.bitonic_sort_core import (
+from tallax.tax.bitonic.sort import (
     compute_pair_slice_start_index as _compute_pair_slice_start_index,
     compare_and_swap,
 )
@@ -249,7 +249,7 @@ def bitonic_sort_large_shapes(
     Tuple of sorted arrays (and optionally argsort indices)
   """
   # Import here to avoid circular dependency
-  from tallax._src.sort import bitonic_sort_in_vmem
+  from tallax.tax.bitonic import bitonic_sort_in_vmem
 
   operands, shape = canonicalize_operand(operand)
   num_stages = log2(shape[1])

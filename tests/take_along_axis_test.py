@@ -3,8 +3,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax._src.gather import take_along_axis
-from tallax._src.utils import is_cpu_platform
+from tallax.tax.gather import take_along_axis
+from tallax.tax.utils import is_cpu_platform
 
 @pytest.mark.parametrize("num_tokens", [8, 16, 13])
 @pytest.mark.parametrize("vocab_size", [128, 256, 300])

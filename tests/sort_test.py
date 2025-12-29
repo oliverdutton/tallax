@@ -4,8 +4,8 @@ import jax
 import jax.numpy as jnp
 
 from tallax import tax
-from tallax._src.utils import is_cpu_platform
-from tallax._src.test_utils import verify_sort_output
+from tallax.tax.utils import is_cpu_platform
+from tallax.tax.test_utils import verify_sort_output
 
 
 def _should_skip_on_cpu(size):

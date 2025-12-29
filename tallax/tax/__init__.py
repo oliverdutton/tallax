@@ -12,10 +12,10 @@ Exports:
   approx_max_k: TPU-optimized approximate top-k (jax.lax.approx_max_k counterpart).
   cumsum: TPU-optimized cumulative sum (jax.lax.cumsum counterpart).
 """
-from tallax._src.sort import bitonic_sort_in_vmem as sort
-from tallax._src.topk import top_k
-from tallax._src.cumsum import cumsum
-from tallax._src.approx_max_k import approx_max_k
+from tallax.tax.bitonic import bitonic_sort_in_vmem as sort
+from tallax.tax.topk import top_k
+from tallax.tax.cumsum import cumsum
+from tallax.tax.approx_max_k import approx_max_k
 
 __all__ = [
     "sort",

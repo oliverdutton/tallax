@@ -2,8 +2,8 @@ import pytest
 import jax
 import jax.numpy as jnp
 from tallax import tax
-from tallax._src.utils import is_cpu_platform
-from tallax._src.test_utils import verify_topk_output
+from tallax.tax.utils import is_cpu_platform
+from tallax.tax.test_utils import verify_topk_output
 
 
 @pytest.mark.parametrize("shape", [(8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])
