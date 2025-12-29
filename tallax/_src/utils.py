@@ -361,11 +361,15 @@ def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
   @functools.wraps(unsplit_f)
   def split_f(operands, *args, axis, **kwargs):
     batch_axis = 1 - axis
-    # Only split if batch size > NUM_LANES
-    if operands[0].shape[batch_axis] <= max_chunk_size:
+    batch_size = operands[0].shape[batch_axis]
+    # Generate split indices, excluding any that equal batch_size to avoid empty arrays
+    split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
+                          if (i+1)*max_chunk_size != batch_size)
+
+    # If no splits needed, call directly
+    if not split_indices:
       return unsplit_f(operands, *args, axis=axis, **kwargs)
 
-    split_indices = tuple((i+1)*max_chunk_size for i in range(operands[0].shape[batch_axis] // max_chunk_size))
     operands_chunks = transpose_list_of_lists(
       jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), operands)
     )
