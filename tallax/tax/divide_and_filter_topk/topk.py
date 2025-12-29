@@ -469,7 +469,7 @@ def top_bounded_k(
   max_k: int,
   block_token: int = 8,
   num_bins: int = NUM_LANES,
-  bins_topm_unroll: int = 32,
+  bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   guarantee_convergence: bool = False,
   replace_val: float | int | None = None,
@@ -486,8 +486,10 @@ def top_bounded_k(
   maintaining efficient TPU execution through static compilation based on max_k.
   Automatically computes optimal search schedules if not provided.
 
-  Warning:
-      Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
+  Behavior differences to jax.lax.top_k:
+      - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
+      - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties considers lower-index elements larger.
+  If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)`
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
@@ -625,15 +627,17 @@ def topk(
   k: int,
   block_token: int = NUM_SUBLANES,
   num_bins: int = NUM_LANES,
-  bins_topm_unroll: int = 32,
+  bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   interpret: bool = False,
 ):
   """
-  Compute top-k elements with guaranteed convergence.
+  Compute top-k element.
 
-  Simplified interface for uniform k across all tokens. Automatically ensures
-  convergence by setting guarantee_convergence=True internally.
+  Behavior differences to jax.lax.top_k:
+      - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
+      - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties in value considers lower-index elements larger.
+  If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)` instead.
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
