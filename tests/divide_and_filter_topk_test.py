@@ -1,7 +1,7 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax import tax
+from tallax.divide_and_filter_topk import topk
 from tallax.tax.utils import is_cpu_platform
 from tallax.tax.test_utils import verify_topk_output
 
@@ -24,7 +24,7 @@ def test_divide_and_filter_topk(shape, dtype):
         logits = jax.random.randint(key, shape, 0, 1000, dtype=dtype)
 
     # Run divide and filter top-k implementation
-    outputs = tax.top_k(
+    outputs = topk(
         logits,
         k=k,
         interpret=is_cpu_platform(),
@@ -60,7 +60,7 @@ def test_divide_and_filter_topk_worst_case_values(shape, dtype, k):
     logits = logits.at[:,19::256].add(1000)
 
     # Run divide and filter top-k implementation
-    outputs = tax.top_k(
+    outputs = topk(
         logits,
         k=k,
         interpret=is_cpu_platform(),
