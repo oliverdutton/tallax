@@ -10,13 +10,16 @@ from tallax.tax.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
-    pad
+    pad,
+    split_arg0_to_chunks
 )
+
 
 def reverse_tiles(tiles, axis):
   tile_shape = tiles[0].shape
   reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
   return [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
+
 
 def cumsum_tile(tile, axis):
   n = tile.shape[axis]
@@ -29,6 +32,23 @@ def cumsum_tile(tile, axis):
       0)
   return tile
 
+
+def split_batch_dim(unsplit_f):
+  # make inputs (NUM_SUBLANES, *) if cumsum on axis 1,
+  # or (*, NUM_LANES) if cumsum axis 0
+  # enabling the take_along_axis permute on hardware shaped tiles
+  sig = inspect.signature(unsplit_f)
+  assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
+  axis_default = sig.parameters['axis'].default
+  @functools.wraps(unsplit_f)
+  def split_f(*args, axis=axis_default, **kwargs):
+    batch_axis = 1 - axis
+    return split_arg0_to_chunks(unsplit_f,
+      max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis])(*args, axis=axis, **kwargs)
+  return split_f
+    
+    
+@split_batch_dim
 def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
@@ -38,29 +58,22 @@ def cumsum_arrays(arr, axis, reverse=False):
   assert arr.ndim==2
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
-  arr = pad(arr, tile_shape, val=0)
-  def _cumsum_arrays(arr):
-    n = arr.shape[axis] // tile_shape[axis]
-    tiles = jnp.split(arr, n, axis=axis)
-    if reverse:
-      tiles = reverse_tiles(tiles, axis=axis)
-    outs = [cumsum_tile(tile, axis) for tile in tiles]
-    tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
-    for i in range(1, n):
-      outs[i] += tile_sums[i-1]
-      tile_sums[i] += tile_sums[i-1]
-    if reverse:
-      outs = reverse_tiles(outs, axis=axis)
-    return jnp.concatenate(outs, axis=axis)
-
   batch_axis = 1 - axis
-  return jnp.concatenate(
-    [_cumsum_arrays(x)
-      for x in jnp.split(
-        arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis)
-    ],
-    axis=batch_axis
-  )[:shape[0], :shape[1]]
+  assert arr.shape[batch_axis] <= NUM_LANES, 'decorator split to chunks should have ensured this assert'
+  arr = pad(arr, tile_shape, val=0)
+
+  n = arr.shape[axis] // tile_shape[axis]
+  tiles = jnp.split(arr, n, axis=axis)
+  if reverse:
+    tiles = reverse_tiles(tiles, axis=axis)
+  outs = [cumsum_tile(tile, axis) for tile in tiles]
+  tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
+  for i in range(1, n):
+    outs[i] += tile_sums[i-1]
+    tile_sums[i] += tile_sums[i-1]
+  if reverse:
+    outs = reverse_tiles(outs, axis=axis)
+  return jnp.concatenate(outs, axis=axis)[:shape[0], :shape[1]]
 
 
 def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
