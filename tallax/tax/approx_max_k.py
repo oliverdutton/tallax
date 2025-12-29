@@ -40,8 +40,7 @@ def approx_max_k(
     top-k algorithm without guaranteed convergence for maximum speed.
 
     Warning:
-        If the input contains NaNs or the top-k contains the dtype's minimum value,
-        behavior is undefined.
+        Unlike jax.lax.approx_max_k, NaNs will never be returned as part of top-k
 
     Note: Currently limited to:
       - 2D input only
