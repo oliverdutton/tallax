@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 #from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.utils import (
+from tallax.tax.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
@@ -28,7 +28,7 @@ from tallax._src.utils import (
     join_tiles_to_array,
     split_array_to_tiles,
 )
-from tallax._src.symint import SymInt, unwrap
+from tallax.tax.symint import SymInt, unwrap
 
 
 def compare_and_swap(lefts, rights, *, num_keys: int, is_descending: jax.Array | None, is_right_half=None,

@@ -1,7 +1,7 @@
 import jax.numpy as jnp
-from tallax._src.sort import bitonic_sort_in_vmem as lax_sort_pallas
-from tallax._src.gather import take_along_axis as _take_along_axis
-from tallax._src.utils import is_cpu_platform
+from tallax.tax.bitonic import bitonic_sort_in_vmem as lax_sort_pallas
+from tallax.tax.gather import take_along_axis as _take_along_axis
+from tallax.tax.utils import is_cpu_platform
 
 def sort(a, axis=-1, kind=None, order=None, stable=True, descending=False, interpret=False):
     """

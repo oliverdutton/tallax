@@ -7,7 +7,7 @@ import jax
 from jax.experimental import pallas as pl
 #from jax.experimental.pallas import tpu as pltpu
 
-from tallax._src.utils import (
+from tallax.tax.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
@@ -19,9 +19,9 @@ from tallax._src.utils import (
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
-    split_arg0_to_chunks 
+    split_arg0_to_chunks
 )
-from tallax._src.bitonic_sort_core import (
+from tallax.tax.bitonic.sort import (
     bitonic_sort_substage,
 )
 
