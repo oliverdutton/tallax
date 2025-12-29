@@ -10,7 +10,8 @@ from tallax._src.utils import (
     NUM_LANES,
     NUM_SUBLANES,
     log2,
-    pad
+    pad,
+    split_arg0_to_chunks,
 )
 
 def reverse_tiles(tiles, axis):
@@ -29,6 +30,21 @@ def cumsum_tile(tile, axis):
       0)
   return tile
 
+def _cumsum_core(operands, axis, reverse, tile_shape):
+  arr = operands[0]
+  n = arr.shape[axis] // tile_shape[axis]
+  tiles = jnp.split(arr, n, axis=axis)
+  if reverse:
+    tiles = reverse_tiles(tiles, axis=axis)
+  outs = [cumsum_tile(tile, axis) for tile in tiles]
+  tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
+  for i in range(1, n):
+    outs[i] += tile_sums[i-1]
+    tile_sums[i] += tile_sums[i-1]
+  if reverse:
+    outs = reverse_tiles(outs, axis=axis)
+  return [jnp.concatenate(outs, axis=axis)]
+
 def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
@@ -39,28 +55,11 @@ def cumsum_arrays(arr, axis, reverse=False):
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   arr = pad(arr, tile_shape, val=0)
-  def _cumsum_arrays(arr):
-    n = arr.shape[axis] // tile_shape[axis]
-    tiles = jnp.split(arr, n, axis=axis)
-    if reverse:
-      tiles = reverse_tiles(tiles, axis=axis)
-    outs = [cumsum_tile(tile, axis) for tile in tiles]
-    tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
-    for i in range(1, n):
-      outs[i] += tile_sums[i-1]
-      tile_sums[i] += tile_sums[i-1]
-    if reverse:
-      outs = reverse_tiles(outs, axis=axis)
-    return jnp.concatenate(outs, axis=axis)
 
   batch_axis = 1 - axis
-  return jnp.concatenate(
-    [_cumsum_arrays(x)
-      for x in jnp.split(
-        arr, arr.shape[batch_axis] // tile_shape[batch_axis], axis=batch_axis)
-    ],
-    axis=batch_axis
-  )[:shape[0], :shape[1]]
+  split_fn = split_arg0_to_chunks(_cumsum_core, max_chunk_size=tile_shape[batch_axis])
+  result = split_fn([arr], axis=axis, reverse=reverse, tile_shape=tile_shape)[0]
+  return result[:shape[0], :shape[1]]
 
 
 def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
