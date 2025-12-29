@@ -20,7 +20,10 @@ def _extract_remainder_slice(ref, slice_size):
     # Pad with min value
     return pad(remainder_vals, (1, slice_size), val='min')
   return None
-  
+
+def nan_to_min(x):
+  # Replaces nans in an array with the dtype min value
+  return jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
 
 def binned_topk(
     logits,
@@ -213,6 +216,8 @@ def _merge_unconverged_bins_topk(
 
   # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
+  # avoid any nans ever entering into bitonic_topk. bins_topm_vals will have no nans, as it uses > comparison for filling and nan > x resolves to False in all cases
+  packed_vals = nan_to_min(packed_vals)
   val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :max_k]], axis=1)
   idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :max_k]], axis=1)
   (
@@ -408,7 +413,7 @@ def dynamic_topk_refs(
         "bins_topm_schedule",
         "guarantee_convergence",
         "replace_val",
-        "interpret"
+        "interpret",
     ),
 )
 def top_dynamic_k(
