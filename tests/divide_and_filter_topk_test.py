@@ -1,7 +1,7 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax.divide_and_filter_topk import topk
+from tallax.divide_and_filter_topk.topk import topk
 from tallax.tax.utils import is_cpu_platform
 from tallax.tax.test_utils import verify_topk_output
 
