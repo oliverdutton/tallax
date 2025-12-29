@@ -8,6 +8,7 @@ from tallax.tax.utils import (
   NUM_LANES,
   NUM_SUBLANES,
   pad,
+  to_32bit_dtype,
   map_batch_dim_to_smaller_than_hardware_tile_size,
 )
 
@@ -15,6 +16,8 @@ from tallax.tax.utils import (
 @functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, num_args=2)
 def take_along_axis_arrays(val, idx, *, axis=1):
   shape = idx.shape
+  out_dtype = val.dtype
+  val = val.astype(to_32bit_dtype(val.dtype))
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
   # Initialize accumulators
@@ -43,7 +46,7 @@ def take_along_axis_arrays(val, idx, *, axis=1):
       )
       i = idx_offset // tile_shape[axis]
       accumulators[i] = jnp.where(mask, gather_tile, accumulators[i])
-  return jnp.concatenate(accumulators, axis=axis)[: shape[0], : shape[1]]
+  return jnp.concatenate(accumulators, axis=axis)[: shape[0], : shape[1]].astype(out_dtype)
 
 
 def take_along_axis_refs(values_ref, indices_ref, output_ref, *, axis: int):
