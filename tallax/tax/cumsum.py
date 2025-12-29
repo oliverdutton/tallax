@@ -11,7 +11,7 @@ from tallax.tax.utils import (
     NUM_SUBLANES,
     log2,
     pad,
-    split_args_to_chunks
+    map_batch_dim_to_smaller_than_hardware_tile_size
 )
 
 
@@ -33,7 +33,7 @@ def cumsum_tile(tile, axis):
   return tile
 
 
-@split_args_to_chunks
+@map_batch_dim_to_smaller_than_hardware_tile_size
 def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum

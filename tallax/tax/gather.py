@@ -6,9 +6,9 @@ from jax import jit, lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, pad, split_args_to_chunks
+from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, pad, map_batch_dim_to_smaller_than_hardware_tile_size
 
-@functools.partial(split_args_to_chunks, num_args=2)
+@functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, num_args=2)
 def take_along_axis_arrays(val, idx, axis):
   shape = idx.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)

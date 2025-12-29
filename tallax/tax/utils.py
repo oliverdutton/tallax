@@ -358,7 +358,7 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_args_to_chunks(unsplit_f, num_args=1):
+def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
   '''Decorator to handle chunking in the batch dimension'''
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
@@ -386,10 +386,13 @@ def split_args_to_chunks(unsplit_f, num_args=1):
     flat_chunks = transpose_list_of_lists(
       jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), flat_args_to_chunk)
     )
-    # wrapping to act on batch_size <= NUM_LANES in the kernel
-    return [
-      jnp.concatenate(output_chunks, axis=batch_axis)
-      for output_chunks in transpose_list_of_lists(
-        [unsplit_f(*jax.tree.unflatten(treedef, flat_chunk), *args[num_args:], axis=axis, **kwargs) for flat_chunk in flat_chunks])]
+    chunks_outputs = [unsplit_f(
+      *jax.tree.unflatten(treedef, flat_chunk), *args[num_args:],
+      axis=axis, **kwargs) for flat_chunk in flat_chunks]
+    treedef = jax.tree.structure(chunks_outputs[0])
+    flat_chunks_outputs = list(map(jax.tree.leaves, chunks_outputs))
+    return jax.tree.unflatten(treedef, [
+        jnp.concatenate(output_chunks, axis=batch_axis)
+        for output_chunks in transpose_list_of_lists(flat_chunks_outputs)])
   return split_f
 
