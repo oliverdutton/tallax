@@ -15,8 +15,19 @@ from jax.sharding import NamedSharding, PartitionSpec as P
 from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.cumsum import cumsum_arrays
 from tallax.tax.gather import take_along_axis_arrays
+from tallax.tax.utils import NUM_SUBLANES, NUM_LANES
 
 _SAMPLING_EPS = 1e-5
+
+
+def broadcast_to(x, shape):
+  if x.shape[1] == shape[1] and x.shape[0] % NUM_LANES == 0:
+    # workaround for jax issue #34001
+    return pltpu.repeat(
+      jnp.broadcast_to(
+        x, (NUM_SUBLANES, shape[1])
+      ), shape[0] // NUM_SUBLANES, axis=0)
+  return jnp.broadcast_to(x, shape)
 
 
 def top_p_mask(*, topk_logits, p, replace_val, axis):
@@ -53,7 +64,7 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
   # so ties at the threshold are all included
   # we replicate that behavior here
   thresholds = take_along_axis_arrays(
-    topk_logits, jnp.broadcast_to(threshold_idx, shape), axis=0
+    topk_logits, broadcast_to(threshold_idx, shape), axis=0
   )
   topp_logits = jnp.where(topk_logits >= thresholds, topk_logits, replace_val)
 
