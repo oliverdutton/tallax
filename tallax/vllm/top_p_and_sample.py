@@ -23,10 +23,7 @@ _SAMPLING_EPS = 1e-5
 def broadcast_to(x, shape):
   if x.shape[1] == shape[1] and x.shape[0] % NUM_LANES == 0:
     # workaround for jax issue #34001
-    return pltpu.repeat(
-      jnp.broadcast_to(
-        x, (NUM_SUBLANES, shape[1])
-      ), shape[0] // NUM_SUBLANES, axis=0)
+    return pltpu.repeat(x, shape[0], axis=0)
   return jnp.broadcast_to(x, shape)
 
 
