@@ -1,6 +1,6 @@
-import math
 import numpy as np
 from scipy.special import gammaln
+
 
 def log_convolve_exp_shift(log_a, log_b, trunc_len):
   """
@@ -29,10 +29,11 @@ def log_convolve_exp_shift(log_a, log_b, trunc_len):
 
   # 5. Move back to Log space and undo the shift
   # Use np.errstate to suppress warnings for log(0) which correctly results in -inf
-  with np.errstate(divide='ignore'):
+  with np.errstate(divide="ignore"):
     log_conv = np.log(lin_conv)
 
   return log_conv + max_a + max_b
+
 
 def compute_depth_probs(k, num_bins):
   """
@@ -56,7 +57,7 @@ def compute_depth_probs(k, num_bins):
     # 2. Binary Exponentiation in Log Space
     # We calculate (P_m(x))^num_bins
     log_current_poly = log_coeffs
-    log_result_poly = np.array([0.0]) # log(1) = 0
+    log_result_poly = np.array([0.0])  # log(1) = 0
     power = num_bins
 
     while power > 0:
@@ -65,7 +66,7 @@ def compute_depth_probs(k, num_bins):
           log_result_poly, log_current_poly, k + 1
         )
 
-      if power > 1: # Optimization: skip last square if not needed
+      if power > 1:  # Optimization: skip last square if not needed
         log_current_poly = log_convolve_exp_shift(
           log_current_poly, log_current_poly, k + 1
         )
@@ -90,7 +91,7 @@ def compute_depth_probs(k, num_bins):
     prob_at_m = max(0.0, current_cdf_val - prev_cdf_val)
 
     # Store in array (index m-1 corresponds to depth m)
-    probs[m-1] = prob_at_m
+    probs[m - 1] = prob_at_m
     prev_cdf_val = current_cdf_val
 
     # Optimization: Break if we reached 100% probability mass
@@ -100,7 +101,9 @@ def compute_depth_probs(k, num_bins):
   return probs
 
 
-def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0.95, 0.9999)):
+def calculate_depth_thresholds(
+  k, num_bins, block_size=8, target_yields=(0.66, 0.95, 0.9999)
+):
   """
   Calculate minimum depths needed to reach probability thresholds.
   Checks if (cdf ^ block_size) >= target.
@@ -113,7 +116,7 @@ def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0
   cdf = pdf.cumsum()
 
   # Calculate yield for the full block size
-  block_yields = cdf ** block_size
+  block_yields = cdf**block_size
 
   # Find minimum depth for each threshold
   depths = set()
@@ -121,10 +124,8 @@ def calculate_depth_thresholds(k, num_bins, block_size=8, target_yields=(0.66, 0
     # Find first depth where block_yield >= threshold
     for i, val in enumerate(block_yields):
       if val >= threshold:
-        depths.add(i+1)  # depth is 1-indexed (threshold)
+        depths.add(i + 1)  # depth is 1-indexed (threshold)
         break
 
   # Return sorted tuple of thresholds
   return tuple(sorted(depths))
-
-

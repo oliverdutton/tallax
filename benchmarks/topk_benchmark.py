@@ -1,4 +1,3 @@
-
 import functools
 import jax
 import jax.numpy as jnp
@@ -18,15 +17,16 @@ logit_key, key_act, key_weight = jax.random.split(jax.random.key(0), 3)
 x = jax.random.normal(key_act, (num_queries, hidden_dim), dtype=jnp.bfloat16)
 w = jax.random.normal(key_weight, (hidden_dim, vocab_size), dtype=jnp.bfloat16)
 logits = jax.random.normal(
-    key_weight, (num_queries, vocab_size), dtype=jnp.float32
+  key_weight, (num_queries, vocab_size), dtype=jnp.float32
 ).astype(jnp.bfloat16)
 
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
 approx_topk_xla = jax.jit(jax.lax.approx_max_k, static_argnames=("k",))
 
+
 @jax.jit
 def add_one(x):
-  return x+1
+  return x + 1
 
 
 @jax.jit
@@ -35,8 +35,10 @@ def matmul_and_topk_xla(x, w, k=k):
   logits = x @ w
   return jax.lax.top_k(logits, k)
 
+
 def run_benchmarks():
   interpret = is_cpu_platform()
+
   def _run():
     return (
       add_one(logits),
@@ -45,7 +47,9 @@ def run_benchmarks():
       # Not exact. Runtime varies with recall, here run with default 0.95
       approx_topk_xla(logits, k=k),
     )
+
   benchmark(_run)
+
 
 if __name__ == "__main__":
   run_benchmarks()
