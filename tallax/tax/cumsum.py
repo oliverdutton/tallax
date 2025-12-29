@@ -11,7 +11,7 @@ from tallax.tax.utils import (
     NUM_SUBLANES,
     log2,
     pad,
-    split_arg0_to_chunks
+    split_args_to_chunks
 )
 
 
@@ -33,22 +33,7 @@ def cumsum_tile(tile, axis):
   return tile
 
 
-def split_batch_dim(unsplit_f):
-  # make inputs (NUM_SUBLANES, *) if cumsum on axis 1,
-  # or (*, NUM_LANES) if cumsum axis 0
-  # enabling the take_along_axis permute on hardware shaped tiles
-  sig = inspect.signature(unsplit_f)
-  assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
-  axis_default = sig.parameters['axis'].default
-  @functools.wraps(unsplit_f)
-  def split_f(*args, axis=axis_default, **kwargs):
-    batch_axis = 1 - axis
-    return split_arg0_to_chunks(unsplit_f,
-      max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis])(*args, axis=axis, **kwargs)
-  return split_f
-    
-    
-@split_batch_dim
+@split_args_to_chunks
 def cumsum_arrays(arr, axis, reverse=False):
   '''
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
