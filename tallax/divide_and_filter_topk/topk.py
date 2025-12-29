@@ -188,7 +188,7 @@ def _merge_unconverged_bins_topk(
       # if start is not out of array, take the full final num_bins slice then pull out this offset portion
       vals.append(
         _extract_remainder_slice(
-          logits_ref, slice_size=num_bins)[offset:offset+NUM_LANES]
+          logits_ref, slice_size=num_bins)[:,offset:offset+NUM_LANES]
       )
 
     # apply permutation
