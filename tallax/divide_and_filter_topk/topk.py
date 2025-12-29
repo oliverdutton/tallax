@@ -464,9 +464,7 @@ def top_dynamic_k(
   # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
   num_tokens, vocab_size = logits.shape
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
-    
-  if max_k > NUM_LANES:
-    raise NotImplementedError
+
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
   k = pad(k, (num_tokens_padded,), val=0)
