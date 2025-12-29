@@ -53,7 +53,7 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
   # so ties at the threshold are all included
   # we replicate that behavior here
   thresholds = take_along_axis_arrays(
-    topk_logits, jnp.broadcast_to(threshold_idx, shape), 0
+    topk_logits, jnp.broadcast_to(threshold_idx, shape), axis=0
   )
   topp_logits = jnp.where(topk_logits >= thresholds, topk_logits, replace_val)
 
