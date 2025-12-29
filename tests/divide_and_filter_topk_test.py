@@ -14,7 +14,7 @@ from tallax.tax.test_utils import verify_topk_output
 )
 def test_divide_and_filter_topk(shape, dtype):
     """Test divide and filter top-k implementation with exact match validation."""
-    k = min(128, shape[1] // 2)
+    k = min(137, shape[1] // 2)
 
     # Generate test data
     key = jax.random.key(0)
@@ -42,7 +42,7 @@ def test_divide_and_filter_topk(shape, dtype):
 # tests the merging unconverged bins logic
 @pytest.mark.parametrize("shape", [(16, 16384), (13, 11571)])
 @pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
-@pytest.mark.parametrize("k", [17, 128])
+@pytest.mark.parametrize("k", [17, 128, 157])
 @pytest.mark.skipif(
     is_cpu_platform(),
     reason="Divide and filter top-k tests require TPU/GPU - CPU uses interpret mode which is slow"
