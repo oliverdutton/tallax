@@ -11,15 +11,15 @@ from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, split_arg0_to_chunks
 @split_arg0_to_chunks(num_operands=2)
 def _gather_arrays(operands, axis, tile_shape):
   val, idx = operands
-  # Determine actual tile size for this chunk
+  # After decoration, batch_size <= NUM_LANES is guaranteed
+  # Initialize accumulators - one for each tile along the axis dimension
   batch_axis = 1 - axis
-  chunk_tile_shape = list(tile_shape)
-  chunk_tile_shape[batch_axis] = val.shape[batch_axis]
-  chunk_tile_shape = tuple(chunk_tile_shape)
+  acc_shape = list(val.shape)
+  acc_shape[axis] = tile_shape[axis]
+  acc_shape = tuple(acc_shape)
 
-  # Initialize accumulators
   accumulators = [
-      jnp.zeros(chunk_tile_shape, dtype=val.dtype)
+      jnp.zeros(acc_shape, dtype=val.dtype)
       for _ in range(idx.shape[axis] // tile_shape[axis])
   ]
   for val_offset in range(0, val.shape[axis], tile_shape[axis]):
