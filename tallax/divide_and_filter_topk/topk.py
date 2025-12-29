@@ -182,7 +182,7 @@ def _merge_unconverged_bins_topk(
 
     # Extract values from all full bins at this offset
     num_full_slices = vocab_size // num_bins
-    vals = [logits_ref[:, pl.dslice(i+offset, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for i in range(num_full_slices)]
+    vals = [logits_ref[:, pl.dslice(i*num_bins+offset, NUM_LANES)].astype(to_32bit_dtype(logits_ref.dtype)) for i in range(num_full_slices)]
     # deal with remainder if exists
     if num_full_slices * num_bins + offset < vocab_size:
       # if start is not out of array, take the full final num_bins slice then pull out this offset portion
