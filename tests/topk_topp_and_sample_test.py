@@ -2,14 +2,14 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax.sampling import topk_topp_and_sample
-from tallax._src.tpu_inference_sampling_as_standalone_file import (
+from tallax.vllm import topk_topp_and_sample
+from tallax.vllm.tpu_inference_sampling_as_standalone_file import (
     TPUSupportedSamplingMetadata,
     sample as vllm_sample,
     ShardingAxisName2D,
     Mesh,
 )
-from tallax._src.utils import is_cpu_platform
+from tallax.tax.utils import is_cpu_platform
 
 
 def uniquely_define_topk(logits, k):

@@ -1,8 +1,8 @@
 import pytest
 import jax
 import jax.numpy as jnp
-from tallax._src.sort import bitonic_sort_in_vmem
-from tallax._src.utils import is_cpu_platform
+from tallax.tax.bitonic import bitonic_sort_in_vmem
+from tallax.tax.utils import is_cpu_platform
 
 
 @pytest.mark.parametrize("shape", [

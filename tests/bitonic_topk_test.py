@@ -3,10 +3,10 @@ import pytest
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
-from tallax._src.sort import bitonic_topk_in_vmem
-from tallax._src.bitonic_topk_core import max_arrays
-from tallax._src.utils import is_cpu_platform
-from tallax._src.test_utils import verify_topk_output
+from tallax.tax.bitonic import bitonic_topk_in_vmem
+from tallax.tax.bitonic.topk import max_arrays
+from tallax.tax.utils import is_cpu_platform
+from tallax.tax.test_utils import verify_topk_output
 
 
 @pytest.mark.parametrize("shape", [(8, 64), (17, 37), (8, 128), (16, 256), (13, 167), (256, 256), (173, 195), (16, 16384), (13, 11571)])

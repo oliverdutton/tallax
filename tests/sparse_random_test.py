@@ -2,7 +2,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax._src.sparse_random import sparse_random_uniform, sparse_random_categorical
+from tallax.tax.sparse_random import sparse_random_uniform, sparse_random_categorical
 
 
 @pytest.mark.parametrize("seed", [42, 123, 456])
