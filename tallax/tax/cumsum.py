@@ -1,24 +1,24 @@
-
 import functools
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import (
-    iota_tile,
-    NUM_LANES,
-    NUM_SUBLANES,
-    log2,
-    pad,
-    map_batch_dim_to_smaller_than_hardware_tile_size
+  iota_tile,
+  NUM_LANES,
+  NUM_SUBLANES,
+  log2,
+  pad,
+  map_batch_dim_to_smaller_than_hardware_tile_size,
 )
 
 
 def reverse_tiles(tiles, axis):
   tile_shape = tiles[0].shape
   reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
-  return [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
+  return [
+    jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]
+  ]
 
 
 def cumsum_tile(tile, axis):
@@ -27,24 +27,25 @@ def cumsum_tile(tile, axis):
   for stage in range(log2(n)):
     permutation = idx - 2**stage
     tile += jnp.where(
-      permutation>=0,
-      jnp.take_along_axis(tile, permutation % n, axis=axis),
-      0)
+      permutation >= 0, jnp.take_along_axis(tile, permutation % n, axis=axis), 0
+    )
   return tile
 
 
 @map_batch_dim_to_smaller_than_hardware_tile_size
 def cumsum_arrays(arr, axis, reverse=False):
-  '''
+  """
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
 
   Note: most TPU versions do not allow lane sums in bfloat16, so suggest  casting to jnp.float32 before passing in
-  '''
-  assert arr.ndim==2
+  """
+  assert arr.ndim == 2
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   batch_axis = 1 - axis
-  assert arr.shape[batch_axis] <= NUM_LANES, 'decorator split to chunks should have ensured this assert'
+  assert arr.shape[batch_axis] <= NUM_LANES, (
+    "decorator split to chunks should have ensured this assert"
+  )
   arr = pad(arr, tile_shape, val=0)
 
   n = arr.shape[axis] // tile_shape[axis]
@@ -54,11 +55,11 @@ def cumsum_arrays(arr, axis, reverse=False):
   outs = [cumsum_tile(tile, axis) for tile in tiles]
   tile_sums = [tile.sum(axis, keepdims=True) for tile in tiles]
   for i in range(1, n):
-    outs[i] += tile_sums[i-1]
-    tile_sums[i] += tile_sums[i-1]
+    outs[i] += tile_sums[i - 1]
+    tile_sums[i] += tile_sums[i - 1]
   if reverse:
     outs = reverse_tiles(outs, axis=axis)
-  return jnp.concatenate(outs, axis=axis)[:shape[0], :shape[1]]
+  return jnp.concatenate(outs, axis=axis)[: shape[0], : shape[1]]
 
 
 def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
@@ -77,10 +78,10 @@ def cumsum_refs(input_ref, output_ref, *, axis: int, reverse: bool):
 
 @functools.partial(jax.jit, static_argnames=("axis", "reverse", "interpret"))
 def cumsum(
-    arr,
-    axis,
-    reverse: bool = False,
-    interpret: bool = False,
+  arr,
+  axis,
+  reverse: bool = False,
+  interpret: bool = False,
 ):
   """
   Cumulative sum using Pallas.
@@ -95,11 +96,11 @@ def cumsum(
       Cumulative sum array.
   """
   return pl.pallas_call(
-      functools.partial(
-        cumsum_refs,
-        axis=axis,
-        reverse=reverse,
-      ),
-      out_shape=jax.ShapeDtypeStruct(arr.shape, arr.dtype),
-      interpret=interpret
+    functools.partial(
+      cumsum_refs,
+      axis=axis,
+      reverse=reverse,
+    ),
+    out_shape=jax.ShapeDtypeStruct(arr.shape, arr.dtype),
+    interpret=interpret,
   )(arr)

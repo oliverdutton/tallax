@@ -1,4 +1,3 @@
-
 import functools
 import inspect
 import math
@@ -24,7 +23,7 @@ def is_cpu_platform():
 
 def log2(x: int) -> int:
   """Returns ceiling of log2(x)."""
-  if x==0:
+  if x == 0:
     return 0
   return math.ceil(math.log2(x))
 
@@ -47,14 +46,14 @@ def get_dtype_info(x):
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.iinfo(dtype)
   else:
-    raise ValueError('Only int and float supported')
+    raise ValueError("Only int and float supported")
 
 
 def pad(
-    arr: jax.Array,
-    block_shape: tuple[int | str, ...] = None,
-    prepend: bool | tuple[bool, ...] = False,
-    val = 'max_nan',
+  arr: jax.Array,
+  block_shape: tuple[int | str, ...] = None,
+  prepend: bool | tuple[bool, ...] = False,
+  val="max_nan",
 ) -> jax.Array:
   """Pad array to satisfy alignment requirements.
 
@@ -77,7 +76,7 @@ def pad(
 
   if len(block_shape) != arr.ndim:
     raise ValueError(
-        f"block_shape length {len(block_shape)} must match array ndim {arr.ndim}"
+      f"block_shape length {len(block_shape)} must match array ndim {arr.ndim}"
     )
 
   # Normalize prepend to tuple
@@ -86,14 +85,14 @@ def pad(
 
   if len(prepend) != arr.ndim:
     raise ValueError(
-        f"prepend length {len(prepend)} must match array ndim {arr.ndim}"
+      f"prepend length {len(prepend)} must match array ndim {arr.ndim}"
     )
 
   # Calculate padding for each dimension
   pad_widths = []
   for i, (dim_size, block_spec) in enumerate(zip(arr.shape, block_shape)):
-    if block_spec == 'power_of_2_lanes':
-      target_size = max(2**log2(dim_size), NUM_LANES)
+    if block_spec == "power_of_2_lanes":
+      target_size = max(2 ** log2(dim_size), NUM_LANES)
     elif isinstance(block_spec, int):
       target_size = pl.cdiv(dim_size, block_spec) * block_spec
     else:
@@ -108,11 +107,11 @@ def pad(
   # Determine padding value
   if isinstance(val, str):
     info = get_dtype_info(arr)
-    if val == 'min':
+    if val == "min":
       pad_val = info.min
-    elif val == 'max':
+    elif val == "max":
       pad_val = info.max
-    elif val == 'max_nan':
+    elif val == "max_nan":
       pad_val = info.max
       if jnp.issubdtype(arr.dtype, jnp.floating):
         pad_val = jnp.nan
@@ -125,7 +124,7 @@ def pad(
   if all(w == (0, 0) for w in pad_widths):
     return arr
 
-  return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
+  return jnp.pad(arr, pad_widths, mode="constant", constant_values=pad_val)
 
 
 def standardize(x, nans=True, zeros=True):
@@ -149,13 +148,13 @@ def is_32bit(x):
 def to_32bit_dtype(operand_dtype):
   """Convert dtype to corresponding 32-bit dtype."""
   for dtype_class, dtype_32bit in {
-      jnp.floating: jnp.float32,
-      jnp.integer: jnp.int32,
-      jnp.bool_: jnp.int32
+    jnp.floating: jnp.float32,
+    jnp.integer: jnp.int32,
+    jnp.bool_: jnp.int32,
   }.items():
     if jnp.issubdtype(operand_dtype, dtype_class):
       return dtype_32bit
-  raise ValueError('dtype not recognized')
+  raise ValueError("dtype not recognized")
 
 
 def same_shape_dtype(ref1, ref2):
@@ -168,26 +167,33 @@ def canonicalize_operand(operand):
   operands = jax.tree.leaves(operand)
   shapes = [x.shape for x in operands]
   if len(set(shapes)) != 1:
-    raise ValueError(f'Inputs must all have the same shape, but found {shapes=}')
+    raise ValueError(
+      f"Inputs must all have the same shape, but found {shapes=}"
+    )
   shape = shapes[0]
   if len(shape) != 2:
-    raise ValueError('Only 2D inputs supported')
+    raise ValueError("Only 2D inputs supported")
   return operands, shape
 
 
 ### Float-Int Conversion for Sortable Representation
 
-def float_to_sortable_int(x: jnp.ndarray, standardize_nans=True, standardize_zeros=True) -> jnp.ndarray:
+
+def float_to_sortable_int(
+  x: jnp.ndarray, standardize_nans=True, standardize_zeros=True
+) -> jnp.ndarray:
   """Transform float32 bits into sortable int32 representation.
-  
+
   Negative floats map to [INT_MIN, -1] with reversed order.
   Positive floats map to [0, INT_MAX].
-  
+
   Standardization applied of NaNs to i32.max-1,
     unstandardized they are values near either i32.max or i32.min after conversion.
   Standardisation of the +0 and -0 of f32 into i32, critical for stable sorts with jax.lax.sort behavior of treating as equivalent
   """
-  x = standardize(x.astype(jnp.float32), nans=standardize_nans, zeros=standardize_zeros)
+  x = standardize(
+    x.astype(jnp.float32), nans=standardize_nans, zeros=standardize_zeros
+  )
   i = x.view(jnp.int32)
   return jnp.where(i < 0, i ^ 0x7FFFFFFF, i)
 
@@ -199,6 +205,7 @@ def sortable_int_to_float(i: jnp.ndarray) -> jnp.ndarray:
 
 ### BF16-U16 Packing for Optimization
 
+
 def pack_bf16_u16_to_i32(val, index):
   """Pack bfloat16 value and uint16 index into single int32.
 
@@ -209,22 +216,27 @@ def pack_bf16_u16_to_i32(val, index):
   val_f32 = standardize(val.astype(jnp.float32))
   index = jnp.where(val_f32 < 0, index.shape[1] - 1 - index, index)
   return float_to_sortable_int(
-      ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
-      standardize_input=False
+    ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
+    standardize_input=False,
   )
 
 
 def unpack_bf16_u16_from_i32(packed):
   """Extract original bfloat16 value and uint16 index from packed int32."""
-  assert packed.dtype == jnp.int32, f'found {packed.dtype}'
+  assert packed.dtype == jnp.int32, f"found {packed.dtype}"
   packed = sortable_int_to_float(packed)
-  val = (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
+  val = (
+    (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
+  )
   index = packed.view(jnp.int32) & 0xFFFF
-  index = jnp.where(val.astype(jnp.float32) < 0, index.shape[1] - 1 - index, index)
+  index = jnp.where(
+    val.astype(jnp.float32) < 0, index.shape[1] - 1 - index, index
+  )
   return val, index
 
 
 ### Tile Operations
+
 
 def split_array_to_tiles(arr, tile_shape=(NUM_SUBLANES, NUM_LANES)):
   """Split 2D array into flat list of tiles with specified shape.
@@ -239,12 +251,18 @@ def split_array_to_tiles(arr, tile_shape=(NUM_SUBLANES, NUM_LANES)):
   tile_dim0, tile_dim1 = tile_shape
   tile_rows = arr.shape[0] // tile_dim0
   tile_cols = arr.shape[1] // tile_dim1
-  assert (arr.shape[0] % tile_dim0 == 0), f"Array dim0 {arr.shape[0]} not divisible by tile_dim0 {tile_dim0}"
-  assert (arr.shape[1] % tile_dim1 == 0), f"Array dim1 {arr.shape[1]} not divisible by tile_dim1 {tile_dim1}"
+  assert arr.shape[0] % tile_dim0 == 0, (
+    f"Array dim0 {arr.shape[0]} not divisible by tile_dim0 {tile_dim0}"
+  )
+  assert arr.shape[1] % tile_dim1 == 0, (
+    f"Array dim1 {arr.shape[1]} not divisible by tile_dim1 {tile_dim1}"
+  )
 
   # Use jnp.split for efficient tile extraction
-  return flatten([jnp.split(row_strip, tile_cols, axis=1)
-                  for row_strip in jnp.split(arr, tile_rows, axis=0)])
+  return flatten([
+    jnp.split(row_strip, tile_cols, axis=1)
+    for row_strip in jnp.split(arr, tile_rows, axis=0)
+  ])
 
 
 def join_tiles_to_array(tiles, dim0):
@@ -252,12 +270,12 @@ def join_tiles_to_array(tiles, dim0):
   num_tiles = len(tiles)
   tile_rows, tile_cols = tiles[0].shape
   num_rows = dim0
-  num_cols = (num_tiles*tile_rows*tile_cols)//dim0
+  num_cols = (num_tiles * tile_rows * tile_cols) // dim0
   grid_cols = num_cols // tile_cols
 
   rows = []
   for i in range(len(tiles) // grid_cols):
-    row_tiles = tiles[i * grid_cols: (i + 1) * grid_cols]
+    row_tiles = tiles[i * grid_cols : (i + 1) * grid_cols]
     rows.append(jnp.concatenate(row_tiles, axis=-1))
 
   return jnp.concatenate(rows, axis=-2)
@@ -329,6 +347,7 @@ def from_compressed_transpose_format(tiles, dim0):
 
 ### Loop Utilities
 
+
 def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
   """Execute for loop with manual unrolling for better performance."""
   if length <= 0:
@@ -349,8 +368,8 @@ def unrolled_fori_loop(length: int, body_fn, init_val, unroll: int):
 
 def transpose_list_of_lists(tree):
   """Transpose nested list structure."""
-  outer = jax.tree.structure(type(tree)('*') * len(tree))
-  inner = jax.tree.structure(type(tree[0])('*') * len(tree[0]))
+  outer = jax.tree.structure(type(tree)("*") * len(tree))
+  inner = jax.tree.structure(type(tree[0])("*") * len(tree[0]))
   return jax.tree.transpose(outer, inner, tree)
 
 
@@ -364,11 +383,13 @@ def set_cummax(vs):
 
 
 def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
-  '''Decorator to handle chunking in the batch dimension'''
+  """Decorator to handle chunking in the batch dimension"""
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
-  assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
-  axis_default = sig.parameters['axis'].default
+  assert "axis" in sig.parameters, (
+    f"Function {unsplit_f.__name__} must have 'axis' parameter"
+  )
+  axis_default = sig.parameters["axis"].default
 
   @functools.wraps(unsplit_f)
   def split_f(*args, axis=axis_default, **kwargs):
@@ -379,25 +400,41 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
     # or (*, NUM_LANES) if f axis 0
     max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis]
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
-    split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
-                          if (i+1)*max_chunk_size != batch_size)
+    split_indices = tuple(
+      (i + 1) * max_chunk_size
+      for i in range(batch_size // max_chunk_size)
+      if (i + 1) * max_chunk_size != batch_size
+    )
 
     # If no splits needed, call directly
     if not split_indices:
       return unsplit_f(*args, axis=axis, **kwargs)
-      
+
     flat_args_to_chunk, treedef = jax.tree.flatten(args[:num_args])
 
     flat_chunks = transpose_list_of_lists(
-      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), flat_args_to_chunk)
+      jax.tree.map(
+        lambda arr: jnp.split(arr, split_indices, axis=batch_axis),
+        flat_args_to_chunk,
+      )
     )
-    chunks_outputs = [unsplit_f(
-      *jax.tree.unflatten(treedef, flat_chunk), *args[num_args:],
-      axis=axis, **kwargs) for flat_chunk in flat_chunks]
+    chunks_outputs = [
+      unsplit_f(
+        *jax.tree.unflatten(treedef, flat_chunk),
+        *args[num_args:],
+        axis=axis,
+        **kwargs,
+      )
+      for flat_chunk in flat_chunks
+    ]
     treedef = jax.tree.structure(chunks_outputs[0])
     flat_chunks_outputs = list(map(jax.tree.leaves, chunks_outputs))
-    return jax.tree.unflatten(treedef, [
+    return jax.tree.unflatten(
+      treedef,
+      [
         jnp.concatenate(output_chunks, axis=batch_axis)
-        for output_chunks in transpose_list_of_lists(flat_chunks_outputs)])
-  return split_f
+        for output_chunks in transpose_list_of_lists(flat_chunks_outputs)
+      ],
+    )
 
+  return split_f

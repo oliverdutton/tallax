@@ -5,28 +5,30 @@ Bitonic Top-K using compressed transpose format.
 import functools
 import jax
 from jax.experimental import pallas as pl
-#from jax.experimental.pallas import tpu as pltpu
+# from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import (
-    NUM_LANES,
-    NUM_SUBLANES,
-    log2,
-    ceil_multiple,
-    pad,
-    canonicalize_operand,
-    to_compressed_transpose_format,
-    from_compressed_transpose_format,
-    to_32bit_dtype,
-    join_tiles_to_array,
-    split_array_to_tiles,
-    map_batch_dim_to_smaller_than_hardware_tile_size
+  NUM_LANES,
+  NUM_SUBLANES,
+  log2,
+  ceil_multiple,
+  pad,
+  canonicalize_operand,
+  to_compressed_transpose_format,
+  from_compressed_transpose_format,
+  to_32bit_dtype,
+  join_tiles_to_array,
+  split_array_to_tiles,
+  map_batch_dim_to_smaller_than_hardware_tile_size,
 )
 from tallax.tax.bitonic.sort import (
-    bitonic_sort_substage,
+  bitonic_sort_substage,
 )
 
 
-def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tuple[int, int]:
+def _compute_padded_shape(
+  unpadded_dim0: int, unpadded_dim1: int, k: int
+) -> tuple[int, int]:
   """Compute padded shape compatible with compressed transpose format requirements.
 
   This function finds the minimal padded shape that satisfies the constraints:
@@ -48,122 +50,150 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
     dim1 = ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES))
     return (dim0, dim1)
 
-  dim0s = [2**i for i in range(log2(NUM_SUBLANES), log2(NUM_LANES)+1)
-    if 2**i >= unpadded_dim0]
+  dim0s = [
+    2**i
+    for i in range(log2(NUM_SUBLANES), log2(NUM_LANES) + 1)
+    if 2**i >= unpadded_dim0
+  ]
   shapes = [
-    (dim0, ceil_multiple(
-    ceil_multiple(unpadded_dim1,
-      NUM_LANES * NUM_LANES // dim0), max(k, NUM_SUBLANES)))
-    for dim0 in dim0s]
+    (
+      dim0,
+      ceil_multiple(
+        ceil_multiple(unpadded_dim1, NUM_LANES * NUM_LANES // dim0),
+        max(k, NUM_SUBLANES),
+      ),
+    )
+    for dim0 in dim0s
+  ]
   # take minimal num elements, larger dim0 on ties as cross tile ops are faster than cross lane
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 
 @map_batch_dim_to_smaller_than_hardware_tile_size
-def bitonic_topk_arrays(operands: list[jax.Array], k: int, num_keys: int = 1, axis: int = 1, min_padded_dim0: int | None = None):
-    """
-    Progressive bitonic merge for top-k selection.
+def bitonic_topk_arrays(
+  operands: list[jax.Array],
+  k: int,
+  num_keys: int = 1,
+  axis: int = 1,
+  min_padded_dim0: int | None = None,
+):
+  """
+  Progressive bitonic merge for top-k selection.
 
-    Args:
-        operands: List of JAX arrays of shape (dim0, dim1)
-        k: Number of top elements to return (default: NUM_LANES)
-        num_keys: Number of sort keys (default: 1)
-        axis: Axis along which to perform top-k (0 or 1)
-        min_padded_dim0: Can be used to tradeoff ALU vs lane permute intensity.
-          E.g. (8, 2048) can be put into compressed format of 16 (8, 128) tiles
-          which induces 4 lane permute ops at the end which have high latency.
-          Alternatively padding to (128, 2048) leads to an uncompressed transpose
-          of 256 (8, 128) tiles and avoids lane permutes but greatly increases
-          ALU work. Can be tuned.
+  Args:
+      operands: List of JAX arrays of shape (dim0, dim1)
+      k: Number of top elements to return (default: NUM_LANES)
+      num_keys: Number of sort keys (default: 1)
+      axis: Axis along which to perform top-k (0 or 1)
+      min_padded_dim0: Can be used to tradeoff ALU vs lane permute intensity.
+        E.g. (8, 2048) can be put into compressed format of 16 (8, 128) tiles
+        which induces 4 lane permute ops at the end which have high latency.
+        Alternatively padding to (128, 2048) leads to an uncompressed transpose
+        of 256 (8, 128) tiles and avoids lane permutes but greatly increases
+        ALU work. Can be tuned.
 
-    Returns:
-        List of JAX arrays of shape (original_batch_size, k) with top-k elements
-    """
-    operands, shape = canonicalize_operand(operands)
-    sort_axis = axis
-    batch_axis = 1 - sort_axis
-    unpadded_k = k
-    k = 2**log2(k)
-    # Compute padded shape that satisfies alignment requirements
-    unpadded_sort_dim = shape[sort_axis]
-    if unpadded_k > unpadded_sort_dim:
-        raise ValueError
-    if sort_axis == 1:
-        if min_padded_dim0 is None:
-            min_padded_dim0 = shape[0]
-        padded_shape = _compute_padded_shape(min_padded_dim0, shape[1], k=k)
-    elif sort_axis == 0:
-        padded_shape = (
-            ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
-            ceil_multiple(shape[1], NUM_LANES)
-        )
-    else:
-        raise ValueError
-    # Pad both dimensions if needed
-    arrs = [pad(op, block_shape=padded_shape, val='min') for op in operands]
-    arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
+  Returns:
+      List of JAX arrays of shape (original_batch_size, k) with top-k elements
+  """
+  operands, shape = canonicalize_operand(operands)
+  sort_axis = axis
+  batch_axis = 1 - sort_axis
+  unpadded_k = k
+  k = 2 ** log2(k)
+  # Compute padded shape that satisfies alignment requirements
+  unpadded_sort_dim = shape[sort_axis]
+  if unpadded_k > unpadded_sort_dim:
+    raise ValueError
+  if sort_axis == 1:
+    if min_padded_dim0 is None:
+      min_padded_dim0 = shape[0]
+    padded_shape = _compute_padded_shape(min_padded_dim0, shape[1], k=k)
+  elif sort_axis == 0:
+    padded_shape = (
+      ceil_multiple(shape[0], max(NUM_SUBLANES, k)),
+      ceil_multiple(shape[1], NUM_LANES),
+    )
+  else:
+    raise ValueError
+  # Pad both dimensions if needed
+  arrs = [pad(op, block_shape=padded_shape, val="min") for op in operands]
+  arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    batch_size = arrs[0].shape[batch_axis]
-    assert batch_size <= NUM_LANES
-    _bitonic_sort_substage = functools.partial(bitonic_sort_substage, batch_size=batch_size, num_keys=num_keys)
-    def max_reduce_stage(arrs_tiles, reduce_stage):       
-      for substage in range(log2(k))[::-1]:
-        arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=reduce_stage)
-      return _bitonic_sort_substage(arrs_tiles, substage=reduce_stage, max_reduce=True)
+  batch_size = arrs[0].shape[batch_axis]
+  assert batch_size <= NUM_LANES
+  _bitonic_sort_substage = functools.partial(
+    bitonic_sort_substage, batch_size=batch_size, num_keys=num_keys
+  )
 
-    # Convert to compressed transpose format
-    if sort_axis==1:
-      arrs = jax.tree.map(to_compressed_transpose_format, arrs)
-    arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
-    num_tiles = len(arrs_tiles[0])
-    num_merges = log2(unpadded_sort_dim) - log2(k)
-    num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
-    num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
-    num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
-
-    # Build bitonic sequences up to length k/2
-    for stage in range(1, log2(k)):
-      for substage in range(stage)[::-1]:
-        arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=stage)
-
-    # Progressive merge tiles together as far as possible first
-    for _ in range(num_tile_merges):
-      # special handling for cross tile as tile to compare to may not exist
-      remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
-      if remainder_length:
-        remainder_arrs_tiles = [
-        x[-remainder_length:] for x in arrs_tiles]
-        arrs_tiles = [
-        x[:-remainder_length] for x in arrs_tiles]
-      arrs_tiles = max_reduce_stage(
-        arrs_tiles,
-        reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES)))
-      if remainder_length:
-        arrs_tiles = [x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)]
-      
-    for i in range(num_lane_merges)[::-1]:
-      arrs_tiles = max_reduce_stage(
-        arrs_tiles,
-        reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))+i)
-    for i in range(num_sublane_merges)[::-1]:
-      arrs_tiles = max_reduce_stage(
-        arrs_tiles,
-        reduce_stage=log2(k)+i)
-
-    # Final sort: convert bitonic sequence to fully descending order
-    # Use sort_dim_offset=k to ensure descending direction
+  def max_reduce_stage(arrs_tiles, reduce_stage):
     for substage in range(log2(k))[::-1]:
-      arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k)
+      arrs_tiles = _bitonic_sort_substage(
+        arrs_tiles, substage=substage, stage=reduce_stage
+      )
+    return _bitonic_sort_substage(
+      arrs_tiles, substage=reduce_stage, max_reduce=True
+    )
 
-    if sort_axis == 1:
-      arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
-      return [arr[:shape[batch_axis], :unpadded_k] for arr in arrs]
-    else:
-      arrs = [join_tiles_to_array(
-        tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
-      return [arr[:unpadded_k, :shape[batch_axis]] for arr in arrs]
+  # Convert to compressed transpose format
+  if sort_axis == 1:
+    arrs = jax.tree.map(to_compressed_transpose_format, arrs)
+  arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
+  num_tiles = len(arrs_tiles[0])
+  num_merges = log2(unpadded_sort_dim) - log2(k)
+  num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
+  num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
+  num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
+
+  # Build bitonic sequences up to length k/2
+  for stage in range(1, log2(k)):
+    for substage in range(stage)[::-1]:
+      arrs_tiles = _bitonic_sort_substage(
+        arrs_tiles, substage=substage, stage=stage
+      )
+
+  # Progressive merge tiles together as far as possible first
+  for _ in range(num_tile_merges):
+    # special handling for cross tile as tile to compare to may not exist
+    remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
+    if remainder_length:
+      remainder_arrs_tiles = [x[-remainder_length:] for x in arrs_tiles]
+      arrs_tiles = [x[:-remainder_length] for x in arrs_tiles]
+    arrs_tiles = max_reduce_stage(
+      arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
+    )
+    if remainder_length:
+      arrs_tiles = [
+        x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)
+      ]
+
+  for i in range(num_lane_merges)[::-1]:
+    arrs_tiles = max_reduce_stage(
+      arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES)) + i
+    )
+  for i in range(num_sublane_merges)[::-1]:
+    arrs_tiles = max_reduce_stage(arrs_tiles, reduce_stage=log2(k) + i)
+
+  # Final sort: convert bitonic sequence to fully descending order
+  # Use sort_dim_offset=k to ensure descending direction
+  for substage in range(log2(k))[::-1]:
+    arrs_tiles = _bitonic_sort_substage(
+      arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k
+    )
+
+  if sort_axis == 1:
+    arrs = [
+      from_compressed_transpose_format(tiles, dim0=batch_size)
+      for tiles in arrs_tiles
+    ]
+    return [arr[: shape[batch_axis], :unpadded_k] for arr in arrs]
+  else:
+    arrs = [
+      join_tiles_to_array(tiles, dim0=ceil_multiple(k, NUM_SUBLANES))
+      for tiles in arrs_tiles
+    ]
+    return [arr[:unpadded_k, : shape[batch_axis]] for arr in arrs]
 
 
 def max_arrays(operands, num_keys, axis):
-    arrs = bitonic_topk_arrays(operands, num_keys=num_keys, k=1, axis=axis)
-    return [x.squeeze(axis) for x in arrs]
+  arrs = bitonic_topk_arrays(operands, num_keys=num_keys, k=1, axis=axis)
+  return [x.squeeze(axis) for x in arrs]
