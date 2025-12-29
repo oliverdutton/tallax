@@ -155,7 +155,6 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int, num_keys: int = 1, ax
     for substage in range(log2(k))[::-1]:
       arrs_tiles = _bitonic_sort_substage(arrs_tiles, substage=substage, stage=log2(k), sort_dim_offset=k)
 
-    # Convert back from compressed transpose format
     if sort_axis == 1:
       arrs = [from_compressed_transpose_format(tiles, dim0=batch_size) for tiles in arrs_tiles]
     else:
@@ -163,7 +162,12 @@ def bitonic_topk_arrays(operands: list[jax.Array], k: int, num_keys: int = 1, ax
         tiles, dim0=ceil_multiple(k, NUM_SUBLANES)) for tiles in arrs_tiles]
       arrs = [x.T for x in arrs]
 
-    return [(arr[:shape[batch_axis],:unpadded_k] if sort_axis==1 else arr[:unpadded_k, :shape[batch_axis]]) for arr in arrs]
+    arrs = [arr[:shape[batch_axis], :unpadded_k] for arr in arrs]
+
+    if sort_axis == 0:
+      arrs = [x.T for x in arrs]
+
+    return arrs
 
 
 def max_arrays(operands, num_keys, axis):
