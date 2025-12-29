@@ -20,6 +20,7 @@ from tallax.divide_and_filter_topk.convergence_theory import calculate_depth_thr
         "aggregate_to_topk",
         "block_token",
         "bins_topm_unroll",
+        "interpret",
     ),
 )
 def approx_max_k(
@@ -31,6 +32,7 @@ def approx_max_k(
     aggregate_to_topk: bool = True,
     block_token: int = NUM_SUBLANES,
     bins_topm_unroll: int = 32,
+    interpret: bool = False,
 ):
     """TPU-optimized approximate top-k using divide-and-filter algorithm taking max of bins.
 
@@ -38,7 +40,6 @@ def approx_max_k(
     top-k algorithm without guaranteed convergence for maximum speed.
 
     Note: Currently limited to:
-      - k <= 128 due to bitonic top-k implementation constraints
       - 2D input only
       - reduction_dimension = -1 only
 
@@ -65,8 +66,6 @@ def approx_max_k(
         NotImplementedError: If k > 128, operand is not 2D, or reduction_dimension != -1.
     """
     # Validation
-    if k > NUM_LANES:
-        raise NotImplementedError(f"k={k} > {NUM_LANES} not yet supported")
     if operand.ndim != 2:
         raise NotImplementedError(f"Only 2D input supported, got {operand.ndim}D")
     if reduction_dimension != -1:
@@ -90,5 +89,5 @@ def approx_max_k(
         bins_topm_schedule=bins_topm_schedule,
         guarantee_convergence=False,
         replace_val=None,
-        interpret=False,
+        interpret=interpret,
     )[:2]
