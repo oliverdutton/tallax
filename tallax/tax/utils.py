@@ -358,31 +358,33 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
+def split_args_to_chunks(unsplit_f, max_chunk_size=NUM_LANES, num_args=1):
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
   assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
   axis_default = sig.parameters['axis'].default
 
   @functools.wraps(unsplit_f)
-  def split_f(operands, *args, axis=axis_default, **kwargs):
+  def split_f(*args, axis=axis_default, **kwargs):
     batch_axis = 1 - axis
-    batch_size = operands[0].shape[batch_axis]
+    batch_size = jax.tree.leaves(args[0])[0].shape[batch_axis]
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
     split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
                           if (i+1)*max_chunk_size != batch_size)
 
     # If no splits needed, call directly
     if not split_indices:
-      return unsplit_f(operands, *args, axis=axis, **kwargs)
+      return unsplit_f(*args, axis=axis, **kwargs)
+      
+    flat_args_to_chunk, treedef = jax.tree.flatten(args[:num_args])
 
-    operands_chunks = transpose_list_of_lists(
-      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), operands)
+    flat_chunks = transpose_list_of_lists(
+      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), flat_args_to_chunk)
     )
     # wrapping to act on batch_size <= NUM_LANES in the kernel
     return [
       jnp.concatenate(output_chunks, axis=batch_axis)
       for output_chunks in transpose_list_of_lists(
-        [unsplit_f(operands_chunk, *args, axis=axis, **kwargs) for operands_chunk in operands_chunks])]
+        [unsplit_f(*jax.tree.unflatten(treedef, flat_chunk), *args[num_args:], axis=axis, **kwargs) for flat_chunk in flat_chunks])]
   return split_f
 
