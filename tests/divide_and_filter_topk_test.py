@@ -18,7 +18,7 @@ from tallax.tax.test_utils import verify_topk_output
     (13, 11571),
   ],
 )
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
+@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32, jnp.int32])
 @pytest.mark.skipif(
   is_cpu_platform(),
   reason="Divide and filter top-k tests require TPU/GPU - CPU uses interpret mode which is slow",
