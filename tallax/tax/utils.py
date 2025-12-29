@@ -358,7 +358,8 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_args_to_chunks(unsplit_f, max_chunk_size=NUM_LANES, num_args=1):
+def split_args_to_chunks(unsplit_f, num_args=1):
+  '''Decorator to handle chunking in the batch dimension'''
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
   assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
@@ -368,6 +369,10 @@ def split_args_to_chunks(unsplit_f, max_chunk_size=NUM_LANES, num_args=1):
   def split_f(*args, axis=axis_default, **kwargs):
     batch_axis = 1 - axis
     batch_size = jax.tree.leaves(args[0])[0].shape[batch_axis]
+    # split so the batch axis matches hardware sizes
+    # make inputs (NUM_SUBLANES, *) if f on axis 1,
+    # or (*, NUM_LANES) if f axis 0
+    max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis]
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
     split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
                           if (i+1)*max_chunk_size != batch_size)
