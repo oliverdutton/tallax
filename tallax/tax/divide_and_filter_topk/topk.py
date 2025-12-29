@@ -41,6 +41,9 @@ def nan_to_min(x):
   return jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
 
 
+def to_comparison_dtype(x):
+  return x.astype(to_32bit_dtype(x.dtype))
+
 def binned_topk(
   logits,
   k: int,
@@ -82,7 +85,7 @@ def binned_topk(
     Compares new values against existing top-k, swapping when new values are larger.
     Already-completed positions are invalidated to prevent re-selection.
     """
-    bubble_vals = bubble_vals.astype(to_32bit_dtype(bubble_vals.dtype))
+    bubble_vals = to_comparison_dtype(bubble_vals)
     # Sinking sort: compare and swap
     for i in range(completed_k):
       # Invalidate already-found elements
@@ -223,9 +226,7 @@ def _merge_unconverged_bins_topk(
     # Extract values from all full bins at this offset
     num_full_slices = vocab_size // num_bins
     vals = [
-      logits_ref[:, pl.dslice(i * num_bins + offset, NUM_LANES)].astype(
-        to_32bit_dtype(logits_ref.dtype)
-      )
+      logits_ref[:, pl.dslice(i * num_bins + offset, NUM_LANES)]
       for i in range(num_full_slices)
     ]
     # deal with remainder if exists
