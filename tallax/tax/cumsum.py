@@ -33,7 +33,7 @@ def cumsum_tile(tile, axis):
 
 
 @map_batch_dim_to_smaller_than_hardware_tile_size
-def cumsum_arrays(arr, axis, reverse=False):
+def cumsum_arrays(arr, *, axis=1, reverse=False):
   """
   TPU Pallas lowerable array based implementation of jax.lax.cumsum
 
