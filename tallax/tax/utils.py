@@ -128,14 +128,16 @@ def pad(
   return jnp.pad(arr, pad_widths, mode='constant', constant_values=pad_val)
 
 
-def standardize(x):
+def standardize(x, nans=True, zeros=True):
   """Standardize float values for sorting.
 
   Converts NaNs to a specific value and normalizes +/-0.
   """
-  nan_val = sortable_int_to_float(jnp.iinfo(jnp.int32).max - 1)
-  x = jnp.where(jnp.isnan(x), nan_val, x)
-  x = jnp.where(x == 0, 0, x)
+  if nans:
+    nan_val = sortable_int_to_float(jnp.iinfo(jnp.int32).max - 1)
+    x = jnp.where(jnp.isnan(x), nan_val, x)
+  if zeros:
+    x = jnp.where(x == 0, 0, x)
   return x
 
 
@@ -175,14 +177,17 @@ def canonicalize_operand(operand):
 
 ### Float-Int Conversion for Sortable Representation
 
-def float_to_sortable_int(x: jnp.ndarray, standardize_input=True) -> jnp.ndarray:
+def float_to_sortable_int(x: jnp.ndarray, standardize_nans=True, standardize_zeros=True) -> jnp.ndarray:
   """Transform float32 bits into sortable int32 representation.
-
+  
   Negative floats map to [INT_MIN, -1] with reversed order.
   Positive floats map to [0, INT_MAX].
+  
+  Standardization applied of NaNs to i32.max-1,
+    unstandardized they are values near either i32.max or i32.min after conversion.
+  Standardisation of the +0 and -0 of f32 into i32, critical for stable sorts with jax.lax.sort behavior of treating as equivalent
   """
-  if standardize_input:
-    x = standardize(x.astype(jnp.float32))
+  x = standardize(x.astype(jnp.float32), nans=standardize_nans, zeros=standardize_zeros)
   i = x.view(jnp.int32)
   return jnp.where(i < 0, i ^ 0x7FFFFFFF, i)
 
