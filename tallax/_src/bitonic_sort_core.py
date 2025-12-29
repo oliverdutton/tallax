@@ -446,7 +446,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       # Sorting along axis 0, batch is axis 1
       assert shape[1] <= NUM_LANES, f"Batch size {shape[1]} must be <= NUM_LANES ({NUM_LANES})"
       padded_shape = (
-        2**log2(ceil_multiple(shape[0], NUM_SUBLANES)),
+        max(2**log2(ceil_multiple(shape[0], NUM_SUBLANES)), NUM_SUBLANES),
         NUM_LANES
       )
     else:
