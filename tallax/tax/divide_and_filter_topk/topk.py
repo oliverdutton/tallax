@@ -438,11 +438,12 @@ def dynamic_topk_refs(
         # Sort the binned superset
         vals_input = bins_topm_vals_ref[:, : depth_upper * num_bins]
         idxs_input = bins_topm_idxs_ref[:, : depth_upper * num_bins]
-        topk_vals_ref[...], topk_idxs_ref[...] = bitonic_topk_arrays(
+        vals, idxs = bitonic_topk_arrays(
           [vals_input, idxs_input],
           num_keys=1,
           k=max_k,
         )
+        topk_vals_ref[...], topk_idxs_ref[...] = vals.astype(topk_vals_ref.dtype), idxs
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
           topk_vals_ref[...] = jnp.where(
