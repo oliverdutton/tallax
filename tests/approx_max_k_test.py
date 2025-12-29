@@ -6,7 +6,7 @@ from tallax.tax.utils import is_cpu_platform
 from tallax.tax.test_utils import verify_topk_output
 
 
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
+@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32, jnp.int32])
 @pytest.mark.parametrize("k", [1, 2, 3, 17, 32, 64, 128])
 @pytest.mark.parametrize("recall_target", [0.2, 0.5, 0.8, 0.95, 0.99])
 @pytest.mark.parametrize("shape", [(128, 8192)])
