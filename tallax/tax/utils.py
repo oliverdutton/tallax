@@ -387,9 +387,17 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
       jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), flat_args_to_chunk)
     )
     # wrapping to act on batch_size <= NUM_LANES in the kernel
-    return [
-      jnp.concatenate(output_chunks, axis=batch_axis)
-      for output_chunks in transpose_list_of_lists(
-        [unsplit_f(*jax.tree.unflatten(treedef, flat_chunk), *args[num_args:], axis=axis, **kwargs) for flat_chunk in flat_chunks])]
+    chunk_results = [unsplit_f(*jax.tree.unflatten(treedef, flat_chunk), *args[num_args:], axis=axis, **kwargs) for flat_chunk in flat_chunks]
+
+    # Check if the function returns a list (like bitonic functions) or a single value (like cumsum)
+    first_result = chunk_results[0]
+    if isinstance(first_result, list):
+      # Function returns a list of arrays - transpose and concatenate each position
+      return [
+        jnp.concatenate(output_chunks, axis=batch_axis)
+        for output_chunks in transpose_list_of_lists(chunk_results)]
+    else:
+      # Function returns a single array - just concatenate the chunks
+      return jnp.concatenate(chunk_results, axis=batch_axis)
   return split_f
 
