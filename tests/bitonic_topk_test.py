@@ -24,7 +24,7 @@ from tallax.tax.test_utils import verify_topk_output
   ],
 )
 @pytest.mark.parametrize("k", [1, 5, 23, 128, 137])
-@pytest.mark.parametrize("dtype", [jnp.float32, jnp.int32])
+@pytest.mark.parametrize("dtype", [jnp.bfloat16, jnp.float32, jnp.int32])
 @pytest.mark.parametrize("axis", [1])
 def test_bitonic_topk(shape, dtype, axis, k):
   """Test bitonic_topk for both axes with k values."""
