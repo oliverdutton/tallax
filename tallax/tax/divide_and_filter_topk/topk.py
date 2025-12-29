@@ -435,8 +435,7 @@ def top_bounded_k(
   Automatically computes optimal search schedules if not provided.
 
   Warning:
-      If the input contains NaNs or the top-k contains the dtype's minimum value,
-      behavior is undefined.
+      Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
