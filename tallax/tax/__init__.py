@@ -13,7 +13,7 @@ Exports:
   cumsum: TPU-optimized cumulative sum (jax.lax.cumsum counterpart).
 """
 from tallax.tax.bitonic import bitonic_sort_in_vmem as sort, bitonic_topk_in_vmem as bitonic_top_k
-from tallax.tax.divide_and_filter_topk.topk import topk as top_k
+from tallax.tax.divide_and_filter_topk import topk as top_k
 from tallax.tax.cumsum import cumsum
 from tallax.tax.approx_max_k import approx_max_k
 
