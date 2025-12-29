@@ -1,28 +1,37 @@
-# Agent Guidelines
+# Agent Guidelines for tallax Development
 
-## Environment Setup
+## Development Environment Setup
 
-To set up the environment for testing and development:
+When working on tallax, ensure you have the proper development dependencies installed:
 
-1.  **Install Dependencies:**
-    You need to install the package in editable mode. For CPU testing (default):
-    ```bash
-    pip install -e .
-    ```
-    For TPU support:
-    ```bash
-    pip install -e ".[tpu]"
-    ```
+### Install Development Version
 
-    You also need `pytest` for running tests:
-    ```bash
-    pip install pytest
-    ```
+According to `pyproject.toml`, tallax has optional dev dependencies that include pytest:
 
-2.  **Running Tests:**
-    Run the tests using `pytest`:
-    ```bash
-    pytest tests/test_sort_correctness.py
-    ```
+```bash
+pip install -e ".[dev]"
+```
 
-    Note: Correctness tests run in interpreter mode (`interpret=True`) on CPU by default to verify logic without requiring TPU hardware.
+Or if you need TPU support:
+
+```bash
+pip install -e ".[tpu,dev]"
+```
+
+The dev dependencies include:
+- `pytest>=7.0.0`
+
+### Common Mistakes to Avoid
+
+1. **Do not mock pytest imports**: Tests should assume pytest is available in the development environment. Remove any try/except blocks that mock pytest functionality.
+
+2. **Install dev dependencies**: Before running tests, always install the `[dev]` optional dependencies as specified in `pyproject.toml`.
+
+3. **Check README**: The README.md contains installation instructions. For development, use `pip install -e ".[dev]"` instead of just `pip install .`.
+
+## Testing Guidelines
+
+- All tests should use pytest directly
+- Parameterized tests should use `@pytest.mark.parametrize`
+- Tests should be runnable with `pytest tests/`
+- Individual tests can be run directly with Python for debugging, but should still import pytest properly
