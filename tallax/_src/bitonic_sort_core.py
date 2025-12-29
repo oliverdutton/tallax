@@ -383,9 +383,8 @@ def _bitonic_sort_substages_array_or_refs(inputs,
   if is_ref:
     pl.loop(0, grid_size)(process_block)
   else:
-    outputs = [process_block(outer_i) for outer_i in range(grid_size)]
-    # outputs is [grid_size][num_operands], need to transpose to [num_operands][grid_size]
-    return transpose_list_of_lists(outputs)
+    return transpose_list_of_lists([
+      process_block(outer_i) for outer_i in range(grid_size)])
 
 
 # Partial functions for cleaner usage
