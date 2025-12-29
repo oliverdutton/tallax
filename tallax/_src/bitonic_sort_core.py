@@ -24,7 +24,9 @@ from tallax._src.utils import (
     to_32bit_dtype,
     create_bit_indicator,
     set_cummax,
-    split_arg0_to_chunks    
+    split_arg0_to_chunks,
+    join_tiles_to_array,
+    split_array_to_tiles,
 )
 from tallax._src.symint import SymInt, unwrap
 
@@ -398,7 +400,7 @@ def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, 
 
 
 @split_arg0_to_chunks
-def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
+def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and
     fully unrolled implementation.
@@ -432,10 +434,20 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
     """
-    operands, shape = canonicalize_operand(operands)
-    sort_axis = 1
+    sort_axis = axis
     batch_axis = 1 - sort_axis
-    padded_shape = _compute_padded_shape(*shape)
+    shape = operands[0].shape
+
+    assert shape[batch_axis] <= NUM_LANES, f"Batch size {shape[batch_axis]} must be <= NUM_LANES ({NUM_LANES})"
+    if sort_axis == 1:
+      padded_shape = _compute_padded_shape(*shape)
+    elif sort_axis == 0:
+      padded_shape = (
+        max(2**log2(shape[0]), NUM_SUBLANES),
+        NUM_LANES
+      )
+    else:
+      raise ValueError
 
     # Pad both dimensions if needed
     # Always append padding after the array:
@@ -449,7 +461,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
     batch_size = arrs[0].shape[batch_axis]
     assert batch_size <= NUM_LANES
     # Convert to compressed transpose format
-    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
+    arrs_tiles = jax.tree.map((to_compressed_transpose_format if sort_axis==1 else split_array_to_tiles), arrs)
 
     # full_size is dim0 of the input in compressed transpose format
     full_size = _get_full_size(arrs_tiles)
@@ -535,7 +547,11 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
       # back in array flow
       arrs_tiles = [[ref[...]] for ref in transpose_refs]
 
-    arrs = [from_compressed_transpose_format(_rejoin(tiles), dim0=batch_size) for tiles in arrs_tiles]
+    # Convert back from compressed transpose format
+    if sort_axis == 1:
+      arrs = [from_compressed_transpose_format(_rejoin(tiles), dim0=batch_size) for tiles in arrs_tiles]
+    else:
+      arrs = [join_tiles_to_array(_rejoin(tiles), dim0=2**num_stages) for tiles in arrs_tiles]
 
     # Unpad to original shape
     return [arr[:shape[0], :shape[1]] for arr in arrs]

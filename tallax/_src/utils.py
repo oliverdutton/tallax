@@ -1,4 +1,5 @@
 
+import functools
 import math
 import warnings
 from itertools import chain
@@ -357,15 +358,25 @@ def set_cummax(vs):
 
 
 def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
+  @functools.wraps(unsplit_f)
   def split_f(operands, *args, axis, **kwargs):
-    split_indices = tuple((i+1)*max_chunk_size for i in range(operands[0].shape[0] // max_chunk_size))
+    batch_axis = 1 - axis
+    batch_size = operands[0].shape[batch_axis]
+    # Generate split indices, excluding any that equal batch_size to avoid empty arrays
+    split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
+                          if (i+1)*max_chunk_size != batch_size)
+
+    # If no splits needed, call directly
+    if not split_indices:
+      return unsplit_f(operands, *args, axis=axis, **kwargs)
+
     operands_chunks = transpose_list_of_lists(
-      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=axis), operands)
+      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), operands)
     )
     # wrapping to act on batch_size <= NUM_LANES in the kernel
     return [
-      jnp.concatenate(output_chunks, axis=axis)
+      jnp.concatenate(output_chunks, axis=batch_axis)
       for output_chunks in transpose_list_of_lists(
-        [unsplit_f(operands_chunk, *args, **kwargs) for operands_chunk in operands_chunks])]
+        [unsplit_f(operands_chunk, *args, axis=axis, **kwargs) for operands_chunk in operands_chunks])]
   return split_f
 
