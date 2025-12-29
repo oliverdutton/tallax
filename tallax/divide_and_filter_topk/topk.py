@@ -19,7 +19,7 @@ def _extract_remainder_slice(ref, slice_size):
     remainder_vals = ref[..., pl.dslice(num_full_slices * slice_size, remainder)]
     # Pad with min value
     return pad(remainder_vals, (1, slice_size), val='min')
-  raise None
+  return None
   
 
 def binned_topk(
