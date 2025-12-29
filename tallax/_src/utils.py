@@ -357,26 +357,40 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
-  @functools.wraps(unsplit_f)
-  def split_f(operands, *args, axis, **kwargs):
-    batch_axis = 1 - axis
-    batch_size = operands[0].shape[batch_axis]
-    # Generate split indices, excluding any that equal batch_size to avoid empty arrays
-    split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
-                          if (i+1)*max_chunk_size != batch_size)
+def split_arg0_to_chunks(unsplit_f=None, max_chunk_size=NUM_LANES, num_operands=1):
+  def decorator(f):
+    @functools.wraps(f)
+    def split_f(operands, *args, axis, **kwargs):
+      batch_axis = 1 - axis
+      batch_size = operands[0].shape[batch_axis]
+      # Generate split indices, excluding any that equal batch_size to avoid empty arrays
+      split_indices = tuple((i+1)*max_chunk_size for i in range(batch_size // max_chunk_size)
+                            if (i+1)*max_chunk_size != batch_size)
 
-    # If no splits needed, call directly
-    if not split_indices:
-      return unsplit_f(operands, *args, axis=axis, **kwargs)
+      # If no splits needed, call directly
+      if not split_indices:
+        return f(operands, *args, axis=axis, **kwargs)
 
-    operands_chunks = transpose_list_of_lists(
-      jax.tree.map(lambda arr: jnp.split(arr, split_indices, axis=batch_axis), operands)
-    )
-    # wrapping to act on batch_size <= NUM_LANES in the kernel
-    return [
-      jnp.concatenate(output_chunks, axis=batch_axis)
-      for output_chunks in transpose_list_of_lists(
-        [unsplit_f(operands_chunk, *args, axis=axis, **kwargs) for operands_chunk in operands_chunks])]
-  return split_f
+      # Split only the first num_operands arrays along batch axis
+      operands_to_split = operands[:num_operands]
+      operands_not_split = operands[num_operands:]
+
+      split_chunks = transpose_list_of_lists(
+        [jnp.split(arr, split_indices, axis=batch_axis) for arr in operands_to_split]
+      )
+
+      # Combine split chunks with non-split operands for each chunk
+      operands_chunks = [chunk + list(operands_not_split) for chunk in split_chunks]
+
+      # wrapping to act on batch_size <= NUM_LANES in the kernel
+      return [
+        jnp.concatenate(output_chunks, axis=batch_axis)
+        for output_chunks in transpose_list_of_lists(
+          [f(operands_chunk, *args, axis=axis, **kwargs) for operands_chunk in operands_chunks])]
+    return split_f
+
+  # Support both @split_arg0_to_chunks and @split_arg0_to_chunks(args)
+  if unsplit_f is not None:
+    return decorator(unsplit_f)
+  return decorator
 

@@ -16,12 +16,12 @@ from tallax._src.utils import (
 
 def reverse_tiles(tiles, axis):
   tile_shape = tiles[0].shape
-  reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
+  reverse_perm = tile_shape[axis] - 1 - iota_tile(axis, tile_shape=tile_shape)
   return [jnp.take_along_axis(tile, reverse_perm, axis=axis) for tile in tiles[::-1]]
 
 def cumsum_tile(tile, axis):
   n = tile.shape[axis]
-  idx = iota_tile(axis)
+  idx = iota_tile(axis, tile_shape=tile.shape)
   for stage in range(log2(n)):
     permutation = idx - 2**stage
     tile += jnp.where(
@@ -30,7 +30,8 @@ def cumsum_tile(tile, axis):
       0)
   return tile
 
-def _cumsum_core(operands, axis, reverse, tile_shape):
+@split_arg0_to_chunks(num_operands=1)
+def _cumsum_arrays(operands, axis, reverse, tile_shape):
   arr = operands[0]
   n = arr.shape[axis] // tile_shape[axis]
   tiles = jnp.split(arr, n, axis=axis)
@@ -55,10 +56,7 @@ def cumsum_arrays(arr, axis, reverse=False):
   shape = arr.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   arr = pad(arr, tile_shape, val=0)
-
-  batch_axis = 1 - axis
-  split_fn = split_arg0_to_chunks(_cumsum_core, max_chunk_size=tile_shape[batch_axis])
-  result = split_fn([arr], axis=axis, reverse=reverse, tile_shape=tile_shape)[0]
+  result = _cumsum_arrays([arr], axis=axis, reverse=reverse, tile_shape=tile_shape)[0]
   return result[:shape[0], :shape[1]]
 
 

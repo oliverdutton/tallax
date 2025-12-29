@@ -8,11 +8,18 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax._src.utils import NUM_LANES, NUM_SUBLANES, pad, split_arg0_to_chunks
 
-def _take_along_axis_core(operands, axis, tile_shape):
+@split_arg0_to_chunks(num_operands=2)
+def _gather_arrays(operands, axis, tile_shape):
   val, idx = operands
+  # Determine actual tile size for this chunk
+  batch_axis = 1 - axis
+  chunk_tile_shape = list(tile_shape)
+  chunk_tile_shape[batch_axis] = val.shape[batch_axis]
+  chunk_tile_shape = tuple(chunk_tile_shape)
+
   # Initialize accumulators
   accumulators = [
-      jnp.zeros(tile_shape, dtype=val.dtype)
+      jnp.zeros(chunk_tile_shape, dtype=val.dtype)
       for _ in range(idx.shape[axis] // tile_shape[axis])
   ]
   for val_offset in range(0, val.shape[axis], tile_shape[axis]):
@@ -39,8 +46,7 @@ def take_along_axis_arrays(val, idx, axis):
 
   batch_axis = 1 - axis
   assert val.shape[batch_axis]==idx.shape[batch_axis]
-  split_fn = split_arg0_to_chunks(_take_along_axis_core, max_chunk_size=tile_shape[batch_axis])
-  result = split_fn([val, idx], axis=axis, tile_shape=tile_shape)[0]
+  result = _gather_arrays([val, idx], axis=axis, tile_shape=tile_shape)[0]
   return result[:shape[0], :shape[1]]
 
   
