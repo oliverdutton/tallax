@@ -19,7 +19,7 @@ from tallax.tax.utils import (
     to_32bit_dtype,
     join_tiles_to_array,
     split_array_to_tiles,
-    split_arg0_to_chunks
+    map_batch_dim_to_smaller_than_hardware_tile_size
 )
 from tallax.tax.bitonic.sort import (
     bitonic_sort_substage,
@@ -59,7 +59,7 @@ def _compute_padded_shape(unpadded_dim0: int, unpadded_dim1: int, k: int) -> tup
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 
-@split_arg0_to_chunks
+@map_batch_dim_to_smaller_than_hardware_tile_size
 def bitonic_topk_arrays(operands: list[jax.Array], k: int, num_keys: int = 1, axis: int = 1, min_padded_dim0: int | None = None):
     """
     Progressive bitonic merge for top-k selection.

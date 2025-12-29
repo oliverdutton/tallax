@@ -34,7 +34,7 @@ def top_k(
           - topk_idxs: Top-k indices of shape [num_tokens, k].
   """
   # Use divide-and-filter implementation (default)
-  from tallax.divide_and_filter_topk.topk import topk as divide_and_filter_topk
+  from tallax.tax.divide_and_filter_topk.topk import topk as divide_and_filter_topk
   from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, is_cpu_platform
 
   # Set defaults

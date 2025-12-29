@@ -6,7 +6,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import bitonic_topk_arrays
-from tallax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
+from tallax.tax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
 from tallax.tax.utils import unrolled_fori_loop, NUM_LANES, NUM_SUBLANES, pad, log2, get_dtype_info, iota_tile, to_32bit_dtype, ceil_multiple
 
 

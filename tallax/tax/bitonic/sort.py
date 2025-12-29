@@ -24,7 +24,7 @@ from tallax.tax.utils import (
     to_32bit_dtype,
     create_bit_indicator,
     set_cummax,
-    split_arg0_to_chunks,
+    map_batch_dim_to_smaller_than_hardware_tile_size,
     join_tiles_to_array,
     split_array_to_tiles,
 )
@@ -399,7 +399,7 @@ def _bitonic_sort_arrays(arrs_tiles, stage_unroll, num_stages, sort_dim_offset, 
   return _bitonic_sort_substages_arrays(arrs_tiles, schedule, num_keys=num_keys, batch_size=batch_size, sort_dim_offset=sort_dim_offset, inner_size=slice_size)
 
 
-@split_arg0_to_chunks
+@map_batch_dim_to_smaller_than_hardware_tile_size
 def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis: int = 1, descending: bool = False, stage_unroll: int | bool = True, slice_size_unroll: int | bool = True, ref_slice_size_unroll: int | bool = True, transpose_refs=None, num_stages: int | None = None, single_stage: jax.Array | None = None, sort_dim_offset: SymInt | int | None = None):
     """
     Bitonic sort using compressed transpose format, , offers both rolled and

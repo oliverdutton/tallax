@@ -5,9 +5,9 @@ import functools
 import jax.numpy as jnp
 from jax import jit
 
-from tallax.divide_and_filter_topk.topk import top_dynamic_k
+from tallax.tax.divide_and_filter_topk.topk import top_dynamic_k
 from tallax.tax.utils import NUM_LANES, NUM_SUBLANES, ceil_multiple
-from tallax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
+from tallax.tax.divide_and_filter_topk.convergence_theory import calculate_depth_thresholds
 
 
 @functools.partial(

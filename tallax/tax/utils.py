@@ -358,7 +358,7 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def split_args_to_chunks(unsplit_f, num_args=1):
+def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
   '''Decorator to handle chunking in the batch dimension'''
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
