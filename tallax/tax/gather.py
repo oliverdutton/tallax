@@ -13,7 +13,7 @@ from tallax.tax.utils import (
 
 
 @functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, num_args=2)
-def take_along_axis_arrays(val, idx, axis):
+def take_along_axis_arrays(val, idx, *, axis=1):
   shape = idx.shape
   tile_shape = (NUM_SUBLANES, NUM_LANES)
   val, idx = (pad(x, tile_shape, val=0) for x in (val, idx))
