@@ -24,7 +24,9 @@ from tallax._src.utils import (
     to_32bit_dtype,
     create_bit_indicator,
     set_cummax,
-    split_arg0_to_chunks    
+    split_arg0_to_chunks,
+    join_tiles_to_array,
+    split_array_to_tiles,
 )
 from tallax._src.symint import SymInt, unwrap
 
@@ -432,24 +434,38 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     Returns:
         List of JAX arrays of same shape as input, sorted along specified axis
     """
-    operands, shape = canonicalize_operand(operands)
-    sort_axis = axis
-    batch_axis = 1 - sort_axis
-    padded_shape = _compute_padded_shape(*shape)
+    batch_axis = 1 - axis
+    shape = operands[0].shape
+
+    if axis == 1:
+      padded_shape = _compute_padded_shape(shape[0], shape[1])
+    elif axis == 0:
+      padded_shape = (
+        ceil_multiple(shape[0], NUM_SUBLANES),
+        ceil_multiple(shape[1], NUM_LANES)
+      )
+    else:
+      raise ValueError
+
+    # For small sort sizes <= NUM_LANES, require stage_unroll=True
+    if shape[axis] <= NUM_LANES and stage_unroll is not True:
+      raise NotImplementedError(
+        f"Sort size {shape[axis]} <= NUM_LANES ({NUM_LANES}) requires stage_unroll=True"
+      )
 
     # Pad both dimensions if needed
     # Always append padding after the array:
     # - For ascending sort: pad with 'max' so padding values sort to the end
     # - For descending sort: pad with 'min' so padding values sort to the end
-    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max') for op in operands]
+    arrs = [pad(op, block_shape=padded_shape, val='min' if descending else 'max', prepend=(False, False)) for op in operands]
     arrs = [x.astype(to_32bit_dtype(x.dtype)) for x in arrs]
 
-    num_stages = log2(shape[sort_axis]) if num_stages is None else num_stages
+    num_stages = log2(shape[axis]) if num_stages is None else num_stages
 
     batch_size = arrs[0].shape[batch_axis]
     assert batch_size <= NUM_LANES
     # Convert to compressed transpose format
-    arrs_tiles = jax.tree.map(to_compressed_transpose_format, arrs)
+    arrs_tiles = jax.tree.map((to_compressed_transpose_format if axis==1 else split_array_to_tiles), arrs)
 
     # full_size is dim0 of the input in compressed transpose format
     full_size = _get_full_size(arrs_tiles)
@@ -471,7 +487,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
     if sort_dim_offset is None:
       sort_dim_offset = int(descending) * (2**num_stages)
 
-    if shape[sort_axis] <= NUM_LANES:
+    if shape[axis] <= NUM_LANES:
       # forcibly unroll
       stage_unroll = num_stages
       slice_size = ref_slice_size = full_size
@@ -535,7 +551,11 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, axis
       # back in array flow
       arrs_tiles = [[ref[...]] for ref in transpose_refs]
 
-    arrs = [from_compressed_transpose_format(_rejoin(tiles), dim0=batch_size) for tiles in arrs_tiles]
+    # Convert back from compressed transpose format
+    if axis == 1:
+      arrs = [from_compressed_transpose_format(_rejoin(tiles), dim0=batch_size) for tiles in arrs_tiles]
+    else:
+      arrs = [join_tiles_to_array(_rejoin(tiles), dim0=ceil_multiple(2**num_stages, NUM_SUBLANES)) for tiles in arrs_tiles]
 
     # Unpad to original shape
     return [arr[:shape[0], :shape[1]] for arr in arrs]
