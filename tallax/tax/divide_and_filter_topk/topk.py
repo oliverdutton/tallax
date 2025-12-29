@@ -82,6 +82,7 @@ def binned_topk(
     Compares new values against existing top-k, swapping when new values are larger.
     Already-completed positions are invalidated to prevent re-selection.
     """
+    bubble_vals = bubble_vals.astype(to_32bit_dtype(bubble_vals.dtype))
     # Sinking sort: compare and swap
     for i in range(completed_k):
       # Invalidate already-found elements
@@ -235,9 +236,8 @@ def _merge_unconverged_bins_topk(
           :, offset : offset + NUM_LANES
         ]
       )
-
     # apply permutation
-    vals = [jnp.take_along_axis(tile, local_perm, axis=1) for tile in vals]
+    vals = [jnp.take_along_axis(tile.astype(to_32bit_dtype(tile.dtype)), local_perm, axis=1) for tile in vals]
     # Pack into positions based on active bin index
     index = iota_tile(1)
     for i in range(NUM_LANES // num_packed_bins):
