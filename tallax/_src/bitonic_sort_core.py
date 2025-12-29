@@ -384,7 +384,8 @@ def _bitonic_sort_substages_array_or_refs(inputs,
     pl.loop(0, grid_size)(process_block)
   else:
     outputs = [process_block(outer_i) for outer_i in range(grid_size)]
-    return outputs
+    # outputs is [grid_size][num_operands], need to transpose to [num_operands][grid_size]
+    return transpose_list_of_lists(outputs)
 
 
 # Partial functions for cleaner usage
@@ -491,7 +492,7 @@ def bitonic_sort_maybe_rolled(operands: list[jax.Array], num_keys: int = 1, desc
     else:
       # use the transpose refs
       assert transpose_refs is not None, "transpose_refs required when not fully unrolling"
-      
+
       for i, arr in enumerate(_rejoin(arrs_tiles)):
         # cut transpose refs if too large
         transpose_refs[i] = transpose_refs[i].at[:arr.shape[0]]
