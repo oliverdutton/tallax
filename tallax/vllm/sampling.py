@@ -22,7 +22,7 @@ def _topk_with_sharding(logits: jax.Array, k: jax.Array, replace_val):
       if logits.shape[-1] <= 0:
         # for small sizes just do direct top-k. Constant runtime
         idxs = jax.lax.broadcasted_iota(jnp.int32, logits.shape, 1)
-        topk_logits, topk_idxs = bitonic_topk_arrays([logits, idxs], k=NUM_LANES, axis=1)
+        topk_logits, topk_idxs = bitonic_topk_arrays([logits, idxs], k=NUM_LANES)
         topk_logits = jnp.where(
           jnp.arange(NUM_LANES)[None, :] < k[:,None],
           topk_logits,

@@ -1,5 +1,6 @@
 
 import functools
+import inspect
 import math
 import warnings
 from itertools import chain
@@ -358,8 +359,13 @@ def set_cummax(vs):
 
 
 def split_arg0_to_chunks(unsplit_f, max_chunk_size=NUM_LANES):
+  # Get the default value for 'axis' from the original function
+  sig = inspect.signature(unsplit_f)
+  assert 'axis' in sig.parameters, f"Function {unsplit_f.__name__} must have 'axis' parameter"
+  axis_default = sig.parameters['axis'].default
+
   @functools.wraps(unsplit_f)
-  def split_f(operands, *args, axis, **kwargs):
+  def split_f(operands, *args, axis=axis_default, **kwargs):
     batch_axis = 1 - axis
     batch_size = operands[0].shape[batch_axis]
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
