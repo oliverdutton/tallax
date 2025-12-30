@@ -22,6 +22,7 @@ def topk_topp_and_sample(
     max_k=max_k,
     num_bins=num_bins,
     bins_topm_schedule=bins_topm_schedule,
+    guarantee_convergence=True,
   )
   return top_p_and_sample(
     topk_logits,
