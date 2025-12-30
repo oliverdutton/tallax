@@ -4,8 +4,12 @@ import jax.numpy as jnp
 from jax import jit
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
+from jax.experimental.custom_partitioning import custom_partitioning
+from jax.sharding import NamedSharding, PartitionSpec as P
 
 from tallax.tax.bitonic.topk import bitonic_topk_arrays
+from tallax.tax.bitonic import bitonic_topk_in_vmem as bitonic_topk
+
 from tallax.tax.divide_and_filter_topk.convergence_theory import (
   calculate_depth_thresholds,
 )
@@ -43,6 +47,7 @@ def nan_to_min(x):
 
 def to_comparison_dtype(x):
   return x.astype(to_32bit_dtype(x.dtype))
+
 
 def binned_topk(
   logits,
@@ -465,7 +470,7 @@ def dynamic_topk_refs(
     "interpret",
   ),
 )
-def top_bounded_k(
+def _top_bounded_k(
   logits,
   k,
   max_k: int,
@@ -492,6 +497,8 @@ def top_bounded_k(
       - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
       - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties considers lower-index elements larger.
   If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)`
+  
+  Sharding is supported in either/both dimensions if `guarantee_convergence=True`
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
@@ -616,6 +623,92 @@ def top_bounded_k(
 @functools.partial(
   jit,
   static_argnames=(
+    "max_k",
+    "block_token",
+    "num_bins",
+    "bins_topm_unroll",
+    "bins_topm_schedule",
+    "guarantee_convergence",
+    "replace_val",
+    "interpret",
+  ),
+)
+@functools.wraps(_top_bounded_k)
+def top_bounded_k(
+  logits,
+  k,
+  max_k: int,
+  block_token: int = 8,
+  num_bins: int = NUM_LANES,
+  bins_topm_unroll: int = 64,
+  bins_topm_schedule: tuple[int, ...] | None = None,
+  guarantee_convergence: bool = False,
+  replace_val: float | int | None = None,
+  interpret: bool = False,
+):
+  def _closed_topk(logits: jax.Array, k: jax.Array):
+    return _top_bounded_k(
+      logits,
+      k=k,
+      max_k=max_k,
+      block_token=block_token,
+      num_bins=num_bins,
+      bins_topm_unroll=bins_topm_unroll,
+      bins_topm_schedule=bins_topm_schedule,
+      guarantee_convergence=guarantee_convergence,
+      replace_val=replace_val,
+      interpret=interpret,
+    )
+
+  @custom_partitioning
+  def _sharded_topk(logits, k):
+    return _closed_topk(logits, k)
+
+  def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+    logits_spec = arg_shapes[0].sharding.spec
+    return (NamedSharding(mesh, P(logits_spec[0], None)),) * 2
+
+  def partition(mesh, arg_shapes, out_shapes):
+    if not guarantee_convergence:
+      raise NotImplementedError
+    arg_shardings, out_shardings = jax.tree.map(
+      lambda s: s.sharding, (arg_shapes, out_shapes)
+    )
+    axis_name = arg_shardings[0].spec[1]
+
+    def shmap_fn(logits, k):
+      topk_logits, topk_idxs = _closed_topk(logits, k)
+      if axis_name is None:
+        return topk_logits, topk_idxs
+      # convert idxs to global frame
+      i = jax.lax.axis_index(axis_name)
+      topk_idxs += i * logits.shape[1]
+      # all-gather and top-k
+      operands = [
+        jax.lax.all_gather(x, axis_name, axis=1)
+        for x in (topk_logits, topk_idxs)
+      ]
+      topk_logits, topk_idxs = bitonic_topk(operands, k=max_k)
+      topk_logits = jnp.where(
+        jax.lax.broadcasted_iota(jnp.int32, topk_logits.shape, 1) < k[:, None],
+        topk_logits,
+        replace_val,
+      )
+      return topk_logits, topk_idxs
+
+    return mesh, shmap_fn, out_shardings, arg_shardings
+
+  _sharded_topk.def_partition(
+    infer_sharding_from_operands=infer_sharding_from_operands,
+    partition=partition,
+    sharding_rule="b v, b -> b k, b k",
+  )
+  return _sharded_topk(logits, k)
+
+
+@functools.partial(
+  jit,
+  static_argnames=(
     "k",
     "block_token",
     "num_bins",
@@ -640,6 +733,8 @@ def topk(
       - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
       - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties in value considers lower-index elements larger.
   If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)` instead.
+  
+  Sharding is supported in either/both dimensions
 
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
