@@ -478,7 +478,7 @@ def _top_bounded_k(
   num_bins: int = NUM_LANES,
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
-  guarantee_convergence: bool = False,
+  guarantee_convergence: bool = True,
   replace_val: float | int | None = None,
   interpret: bool = False,
 ):
