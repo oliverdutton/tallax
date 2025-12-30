@@ -217,7 +217,8 @@ def pack_bf16_u16_to_i32(val, index):
   index = jnp.where(val_f32 < 0, index.shape[1] - 1 - index, index)
   return float_to_sortable_int(
     ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
-    standardize_input=False,
+    standardize_nans=False,
+    standardize_zeros=False,
   )
 
 
