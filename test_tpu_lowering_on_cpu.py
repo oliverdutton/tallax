@@ -2,8 +2,6 @@
 
 import os
 os.environ["JAX_PALLAS_CPU_LOWER_AS_TPU"] = "1"
-# Force TPU platform for lowering
-os.environ["JAX_PLATFORMS"] = "cpu"
 
 import time
 import jax
@@ -15,36 +13,56 @@ from tallax.tax import bitonic_top_k
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
 
-def time_lowering_only(fn, *args, name=None, **kwargs):
-    """Time only the lowering stage (without compilation or execution)."""
+def time_lowering_only(fn, *args, name=None, fn_kwargs=None):
+    """Time only the lowering stage (without compilation or execution).
+
+    Args:
+        fn: The function to lower (should be already jitted)
+        *args: Arguments to pass to the function
+        name: Optional name for display
+        fn_kwargs: Keyword arguments to pass to the function (not to .lower())
+    """
+    fn_kwargs = fn_kwargs or {}
     func_name = name or getattr(fn, '__name__', 'unnamed_function')
 
     print(f"\n{'='*60}")
     print(f"Timing lowering for: {func_name}")
     print(f"{'='*60}")
 
-    # Time lowering - call lower() on the jitted function directly
+    # Time lowering
     t0 = time.perf_counter()
     try:
-        # For functions that are already jitted
+        # Call .lower() with lowering_platforms parameter
         if hasattr(fn, 'lower'):
-            lowered = fn.lower(*args, lowering_platforms=("tpu",), **kwargs)
+            # Already jitted - use it directly
+            lowered = fn.lower(*args, **fn_kwargs, lowering_platforms=("tpu",))
         else:
-            # For functions that need to be jitted first
+            # Need to jit first
             jitted = jax.jit(fn)
-            lowered = jitted.lower(*args, lowering_platforms=("tpu",), **kwargs)
+            lowered = jitted.lower(*args, **fn_kwargs, lowering_platforms=("tpu",))
+
         t1 = time.perf_counter()
         lower_time = t1 - t0
-        print(f"  lowering:       {lower_time*1000:.2f} ms")
-        print(f"  SUCCESS")
+        print(f"  Lowering time: {lower_time*1000:.2f} ms")
+        print(f"  ✓ SUCCESS")
         success = True
+
+        # Try to get some info about the lowered code
+        try:
+            hlo_text = lowered.as_text()
+            print(f"  HLO size: {len(hlo_text)} characters")
+        except:
+            pass
+
     except Exception as e:
         t1 = time.perf_counter()
         lower_time = t1 - t0
-        print(f"  lowering:       {lower_time*1000:.2f} ms (FAILED)")
-        print(f"  Error: {type(e).__name__}: {str(e)[:300]}")
-        import traceback
-        traceback.print_exc()
+        print(f"  Lowering time: {lower_time*1000:.2f} ms")
+        print(f"  ✗ FAILED")
+        error_msg = str(e)
+        if len(error_msg) > 200:
+            error_msg = error_msg[:200] + "..."
+        print(f"  Error: {type(e).__name__}: {error_msg}")
         success = False
 
     print(f"{'='*60}\n")
@@ -63,7 +81,7 @@ def test_shape_lowering(shape, dtype=jnp.bfloat16, seed=42):
     print(f"Testing shape={shape}, dtype={dtype}")
     print(f"{'#'*70}")
 
-    # Setup
+    # Setup test data
     key = jax.random.PRNGKey(seed)
     key, topk_key, topp_key, temp_key, logits_key, sample_key = jax.random.split(key, 6)
 
@@ -76,22 +94,33 @@ def test_shape_lowering(shape, dtype=jnp.bfloat16, seed=42):
 
     logits = jax.random.normal(logits_key, shape).astype(dtype)
 
-    # Test top_bounded_k lowering
-    print("\n--- Component: top_bounded_k (divide-and-filter topk) ---")
+    # Test 1: top_bounded_k (the main suspect)
+    print("\n--- Test 1: top_bounded_k (divide-and-filter topk) ---")
     timings_bounded = time_lowering_only(
         top_bounded_k,
         logits,
-        k=tpu_sampling_metadata.top_k,
-        max_k=128,
-        num_bins=256,
-        bins_topm_schedule=(5, 9),
-        guarantee_convergence=True,
-        replace_val=-1e12,
-        name="top_bounded_k"
+        tpu_sampling_metadata.top_k,
+        name="top_bounded_k",
+        fn_kwargs={
+            'max_k': 128,
+            'num_bins': 256,
+            'bins_topm_schedule': (5, 9),
+            'guarantee_convergence': True,
+            'replace_val': -1e12,
+        }
     )
 
-    # Test full pipeline lowering
-    print("\n--- Full Pipeline: topk_topp_and_sample ---")
+    # Test 2: bitonic_top_k (for comparison)
+    print("\n--- Test 2: bitonic_top_k (reference) ---")
+    timings_bitonic = time_lowering_only(
+        bitonic_top_k,
+        logits,
+        name="bitonic_top_k",
+        fn_kwargs={'k': 128}
+    )
+
+    # Test 3: Full pipeline
+    print("\n--- Test 3: topk_topp_and_sample (full pipeline) ---")
     timings_full = time_lowering_only(
         topk_topp_and_sample,
         sample_key,
@@ -100,25 +129,16 @@ def test_shape_lowering(shape, dtype=jnp.bfloat16, seed=42):
         name="topk_topp_and_sample"
     )
 
-    # Test bitonic_top_k for reference
-    print("\n--- For reference: bitonic_top_k ---")
-    timings_bitonic = time_lowering_only(
-        bitonic_top_k,
-        logits,
-        k=128,
-        name="bitonic_top_k"
-    )
-
     return {
         'bounded': timings_bounded,
-        'full': timings_full,
         'bitonic': timings_bitonic,
+        'full': timings_full,
     }
 
 
 def main():
     print("=" * 70)
-    print("TPU Lowering on CPU - Timing Analysis")
+    print("TPU Lowering on CPU - Batch Size Comparison")
     print("=" * 70)
     print(f"JAX version: {jax.__version__}")
     print(f"Backend: {jax.default_backend()}")
@@ -134,22 +154,39 @@ def main():
 
     # Summary comparison
     print("\n" + "=" * 70)
-    print("SUMMARY COMPARISON - LOWERING TIMES ONLY")
+    print("LOWERING TIME COMPARISON")
     print("=" * 70)
 
-    for component in ['bounded', 'full', 'bitonic']:
+    for component in ['bounded', 'bitonic', 'full']:
         print(f"\n{component.upper()}:")
+
+        times = []
         for shape in shapes:
             if results[shape][component]['success']:
-                lower = results[shape][component]['lower']
-                print(f"  {shape}: lower={lower*1000:.0f}ms")
+                lower_ms = results[shape][component]['lower'] * 1000
+                print(f"  {shape}: {lower_ms:.0f} ms")
+                times.append(results[shape][component]['lower'])
             else:
                 print(f"  {shape}: FAILED")
 
-        # Calculate ratio
-        if len(shapes) == 2 and all(results[s][component]['success'] for s in shapes):
-            ratio = results[shapes[1]][component]['lower'] / results[shapes[0]][component]['lower']
-            print(f"  Ratio (256,2048)/(16,2048): {ratio:.2f}x")
+        # Calculate ratio if both succeeded
+        if len(times) == 2:
+            ratio = times[1] / times[0]
+            print(f"  → Ratio (256,2048)/(16,2048): {ratio:.2f}x")
+
+    # Additional analysis
+    print("\n" + "=" * 70)
+    print("ANALYSIS")
+    print("=" * 70)
+
+    # Calculate grid sizes
+    block_token = 8
+    for shape in shapes:
+        num_tokens = shape[0]
+        num_programs = (num_tokens + block_token - 1) // block_token
+        print(f"\n{shape}:")
+        print(f"  Grid size (num_programs): {num_programs}")
+        print(f"  block_token: {block_token}")
 
 
 if __name__ == "__main__":
