@@ -149,7 +149,7 @@ def bitonic_sort_in_vmem_refs(
 
     _maybe_invert(operands)
     operands = bitonic_topk_arrays(
-      operands=operands, k=k, num_keys=num_keys, axis=1
+      operands, k=k, num_keys=num_keys, axis=1
     )
     _maybe_invert(operands)
 
