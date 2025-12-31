@@ -394,6 +394,8 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
 
   @functools.wraps(unsplit_f)
   def split_f(*args, axis=axis_default, **kwargs):
+    if len(args) < num_args:
+      raise ValueError(f'Please pass the first {num_args} as args rather than kwargs to {unsplit_f.__name__}')
     batch_axis = 1 - axis
     batch_size = jax.tree.leaves(args[0])[0].shape[batch_axis]
     # split so the batch axis matches hardware sizes
