@@ -456,7 +456,7 @@ def _extract_static_argnames_signature(f, maybe_static_argnames, args, kwargs):
     for k in maybe_static_kwargs.items()}
   
   
-def maybe_static_jit(func, **jit_kwargs, maybe_static_argnames={}):
+def maybe_static_jit(func, maybe_static_argnames={}, **jit_kwargs):
   fs = {}
   @functools.wraps(func)
   def jit_f(*args, **kwargs):
