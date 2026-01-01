@@ -312,7 +312,11 @@ def dynamic_topk_refs(
   assert block_topk % block_token == 0, 'block_topk must be a multiple of block_token'
 
   pid = pl.program_id(0)
-  token_slice = pl.dslice((pid * block_token) % block_topk, block_token)
+  
+  token_slice = pl.dslice(
+    pl.multiple_of(
+      (pid * block_token) % block_topk, block_token),
+    block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
     shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
