@@ -465,7 +465,7 @@ def maybe_static_jit(func, maybe_static_argnames={}, **jit_kwargs):
     key = sorted(static_argnames_signature.items()).__str__()
     if key not in fs:
       # create the appropriate jit static argnames entry
-      jit_kwargs['static_argnames'] = jit_kwargs.get('static_argnames', ()) + tuple(k for k, b in static_argnames_signature if b)
+      jit_kwargs['static_argnames'] = jit_kwargs.get('static_argnames', ()) + tuple(k for k, b in static_argnames_signature.items() if b)
       fs[key] = jax.jit(func, **jit_kwargs)
     return fs[key](*args, **kwargs)
   return jit_f
