@@ -462,10 +462,11 @@ def maybe_static_jit(func, maybe_static_argnames={}, **jit_kwargs):
   @functools.wraps(func)
   def jit_f(*args, **kwargs):
     static_argnames_signature = _extract_static_argnames_signature(func, maybe_static_argnames=maybe_static_argnames, args=args, kwargs=kwargs)
-    if static_argnames_signature not in fs:
+    key = sorted(static_argnames_signature.items()).__str__()
+    if key not in fs:
       # create the appropriate jit static argnames entry
       jit_kwargs['static_argnames'] = jit_kwargs.get('static_argnames', ()) + tuple(k for k, b in static_argnames_signature if b)
-      fs[static_argnames_signature] = jax.jit(func, **jit_kwargs)
-    return fs[static_argnames_signature](*args, **kwargs)
+      fs[key] = jax.jit(func, **jit_kwargs)
+    return fs[key](*args, **kwargs)
   return jit_f
 
