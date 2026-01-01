@@ -468,9 +468,13 @@ def dynamic_topk_refs(
         )
         topk_vals_ref[...], topk_idxs_ref[...] = vals.astype(topk_vals_ref.dtype), idxs
         if replace_val is not None:
+          k = (k_vmem_ref[...] if block_topk == k_vmem_ref.shape[0]
+            else k_vmem_ref[pl.dslice(token_start, block_topk)])
+          
+          [:, None]
           idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
-            idx < k_vmem_ref[pl.dslice(token_start, block_topk)][:, None], topk_vals_ref[...], replace_val
+            idx < k[:, None], topk_vals_ref[...], replace_val
           )
 
 
