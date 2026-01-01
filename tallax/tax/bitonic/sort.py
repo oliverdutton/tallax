@@ -31,8 +31,7 @@ from tallax.tax.utils import (
 from tallax.tax.symint import SymInt, unwrap
 
 
-@functools.partial(jax.jit, static_argnames=('num_keys', 'has_unique_key'))
-def compare_and_swap(
+def _compare_and_swap_impl(
   lefts,
   rights,
   *,
@@ -41,19 +40,7 @@ def compare_and_swap(
   is_right_half=None,
   has_unique_key=False,
 ):
-  """Compare and conditionally swap array pairs.
-
-  Args:
-    lefts: Tuple of left arrays to compare
-    rights: Tuple of right arrays to compare
-    num_keys: Number of arrays to use as sort keys
-    is_descending: Boolean mask for sort direction (None implies ascending)
-    is_right_half: Mask for subtile comparisons. Needed for handling ties in values correctly.
-    has_unique_key: Whether first key is guaranteed unique (optimizes sort)
-
-  Returns:
-    Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
-  """
+  """Core implementation of compare and swap."""
   num_arrs = len(lefts)
 
   def _compare_pair(i, left, right):
@@ -109,6 +96,63 @@ def compare_and_swap(
     lefts,
     rights,
   )
+
+
+# Create two JIT versions: one with is_descending static, one without
+_compare_and_swap_static = functools.partial(jax.jit, static_argnames=('num_keys', 'has_unique_key', 'is_descending'))(_compare_and_swap_impl)
+_compare_and_swap_dynamic = functools.partial(jax.jit, static_argnames=('num_keys', 'has_unique_key'))(_compare_and_swap_impl)
+
+
+def compare_and_swap(
+  lefts,
+  rights,
+  *,
+  num_keys: int,
+  is_descending: jax.Array | None,
+  is_right_half=None,
+  has_unique_key=False,
+):
+  """Compare and conditionally swap array pairs.
+
+  Routes to JIT-compiled version with is_descending as static arg if it's a scalar,
+  otherwise uses dynamic version.
+
+  Args:
+    lefts: Tuple of left arrays to compare
+    rights: Tuple of right arrays to compare
+    num_keys: Number of arrays to use as sort keys
+    is_descending: Boolean mask for sort direction (None implies ascending)
+    is_right_half: Mask for subtile comparisons. Needed for handling ties in values correctly.
+    has_unique_key: Whether first key is guaranteed unique (optimizes sort)
+
+  Returns:
+    Tuple of (sorted_lefts, sorted_rights) or sorted values for subtile.
+  """
+  # Check if is_descending is a scalar (bool, int, None, or 0-dimensional array)
+  is_scalar = (
+    is_descending is None
+    or isinstance(is_descending, (bool, int))
+    or (hasattr(is_descending, 'ndim') and is_descending.ndim == 0)
+  )
+
+  if is_scalar:
+    # Use static version for scalar is_descending
+    return _compare_and_swap_static(
+      lefts, rights,
+      num_keys=num_keys,
+      is_descending=is_descending,
+      is_right_half=is_right_half,
+      has_unique_key=has_unique_key,
+    )
+  else:
+    # Use dynamic version for array is_descending
+    return _compare_and_swap_dynamic(
+      lefts, rights,
+      num_keys=num_keys,
+      is_descending=is_descending,
+      is_right_half=is_right_half,
+      has_unique_key=has_unique_key,
+    )
 
 
 @lru_cache
@@ -253,7 +297,7 @@ def _compute_is_descending(
 
 @functools.partial(jax.jit, static_argnames=(
   'substage', 'num_keys', 'batch_size', 'sort_dim_offset',
-  'full_size', 'concat_threshold', 'max_reduce'
+  'full_size', 'concat_threshold', 'max_reduce', 'stage'
 ))
 def bitonic_sort_substage(
   arrs_tiles,
