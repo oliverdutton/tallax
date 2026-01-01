@@ -207,8 +207,8 @@ def profile_with_line_profiler(shape=(16, 2048)):
 
 
 def main():
-    # Profile (16, 2048) for fast iteration
-    profile_with_line_profiler(shape=(16, 2048))
+    # Profile (256, 2048) for full analysis
+    profile_with_line_profiler(shape=(256, 2048))
 
 
 if __name__ == "__main__":
