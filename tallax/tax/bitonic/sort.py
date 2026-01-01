@@ -31,6 +31,7 @@ from tallax.tax.utils import (
 from tallax.tax.symint import SymInt, unwrap
 
 
+@functools.partial(jax.jit, static_argnames=('num_keys', 'has_unique_key'))
 def compare_and_swap(
   lefts,
   rights,
@@ -250,6 +251,10 @@ def _compute_is_descending(
   )
 
 
+@functools.partial(jax.jit, static_argnames=(
+  'substage', 'num_keys', 'batch_size', 'sort_dim_offset',
+  'full_size', 'concat_threshold', 'max_reduce'
+))
 def bitonic_sort_substage(
   arrs_tiles,
   *,

@@ -259,8 +259,8 @@ def test_timing_breakdown(shape=(16, 2048)):
 def main():
     print("Testing tracing vs lowering time separation\n")
 
-    # Test on (256, 2048) for full analysis
-    result = test_timing_breakdown(shape=(256, 2048))
+    # Test on (16, 2048) for fast iteration
+    result = test_timing_breakdown(shape=(16, 2048))
 
     print("\n" + "="*70)
     print("SUMMARY")
