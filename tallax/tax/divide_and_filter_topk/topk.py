@@ -468,11 +468,9 @@ def dynamic_topk_refs(
         )
         topk_vals_ref[...], topk_idxs_ref[...] = vals.astype(topk_vals_ref.dtype), idxs
         if replace_val is not None:
-          k = (k_vmem_ref[...] if block_topk == k_vmem_ref.shape[0]
-            else k_vmem_ref[pl.dslice(token_start, block_topk)])
           idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
-            idx < k[:, None], topk_vals_ref[...], replace_val
+            idx < k_vmem_ref[...], topk_vals_ref[...], replace_val
           )
 
 
@@ -623,7 +621,7 @@ def _top_bounded_k(
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
       # for TPU Pallas lowering reasons it's convenient to have both SMEM and VMEM k
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec(memory_space=pltpu.VMEM),
+      pl.BlockSpec((block_topk, 1), lambda i: (i//topk_unroll, 0)),
     ),
     out_shape=output_shapes,
     scratch_shapes=tuple(scratch_shapes),
@@ -631,7 +629,7 @@ def _top_bounded_k(
     out_specs=output_specs,
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
-  )(logits, k, k)
+  )(logits, k, k[:, None])
   topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
   topk_vals, topk_idxs = (
