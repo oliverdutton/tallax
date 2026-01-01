@@ -441,3 +441,30 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
     )
 
   return split_f
+
+
+def _extract_static_argnames_signature(f, maybe_static_argnames, args, kwargs):
+  sig = inspect.signature(f)
+  bound_args = sig.bind(*args, **kwargs)
+  bound_args.apply_defaults()
+  all_kwargs = bound_args.arguments
+  assert len(all_kwargs.pop("args", [])) == 0
+  all_kwargs.update(all_kwargs.pop("kwargs"))
+  maybe_static_kwargs = {k: all_kwargs[k] for k in maybe_static_argnames}   
+  return {k: (
+    v is None or isinstance(v, (bool, int, float))) 
+    for k in maybe_static_kwargs.items()}
+  
+  
+def maybe_static_jit(func, **jit_kwargs, maybe_static_argnames={}):
+  fs = {}
+  @functools.wraps(func)
+  def jit_f(*args, **kwargs):
+    static_argnames_signature = _extract_static_argnames_signature(func, maybe_static_argnames=maybe_static_argnames, args=args, kwargs=kwargs)
+    if static_argnames_signature not in fs:
+      # create the appropriate jit static argnames entry
+      jit_kwargs['static_argnames'] = jit_kwargs.get('static_argnames', ()) + tuple(k for k, b in static_argnames_signature if b)
+      fs[static_argnames_signature] = jax.jit(func, **jit_kwargs)
+    return fs[static_argnames_signature](*args, **kwargs)
+  return jit_f
+
