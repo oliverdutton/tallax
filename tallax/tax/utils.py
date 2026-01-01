@@ -454,7 +454,7 @@ def _extract_static_argnames_signature(f, maybe_static_argnames, args, kwargs):
   maybe_static_kwargs = {k: all_kwargs[k] for k in maybe_static_argnames}   
   return {k: (
     v is None or isinstance(v, (bool, int, float))) 
-    for k in maybe_static_kwargs.items()}
+    for k, v in maybe_static_kwargs.items()}
   
   
 def maybe_static_jit(func, maybe_static_argnames={}, **jit_kwargs):
