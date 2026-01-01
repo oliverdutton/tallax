@@ -23,6 +23,8 @@ from tallax.tax.utils import (
 )
 from tallax.tax.bitonic.sort import (
   bitonic_sort_substage,
+  _rejoin,
+  _resplit,
 )
 
 
@@ -76,6 +78,9 @@ def bitonic_topk_arrays(
   num_keys: int = 1,
   axis: int = 1,
   min_padded_dim0: int | None = None,
+  presort_unroll: int | bool = True,
+  merge_unroll: int | bool = True,
+  transpose_refs=None,
 ):
   """
   Progressive bitonic merge for top-k selection.
@@ -91,6 +96,15 @@ def bitonic_topk_arrays(
         Alternatively padding to (128, 2048) leads to an uncompressed transpose
         of 256 (8, 128) tiles and avoids lane permutes but greatly increases
         ALU work. Can be tuned.
+      presort_unroll: Control presort (k/2 build) unrolling (int or bool)
+          - True: fully unrolled (pure arrays implementation)
+          - False: rolled (uses refs)
+          - int: specific unroll value (m parameter for slice size)
+      merge_unroll: Control merge phase unrolling (int or bool)
+          - True: fully unrolled (pure arrays implementation)
+          - False: rolled (uses refs)
+          - int: specific unroll value (m parameter for slice size)
+      transpose_refs: Scratch memory refs for rolled implementation
 
   Returns:
       List of JAX arrays of shape (original_batch_size, k) with top-k elements
@@ -144,27 +158,161 @@ def bitonic_topk_arrays(
   num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
   num_tile_merges = num_merges - num_sublane_merges - num_lane_merges
 
-  # Build bitonic sequences up to length k/2
-  for stage in range(1, log2(k)):
-    for substage in range(stage)[::-1]:
-      arrs_tiles = _bitonic_sort_substage(
-        arrs_tiles, substage=substage, stage=stage
-      )
+  # full_size is dim0 of the input in compressed transpose format
+  full_size = len(arrs_tiles[0]) * arrs_tiles[0][0].shape[0]
 
-  # Progressive merge tiles together as far as possible first
-  for _ in range(num_tile_merges):
-    # special handling for cross tile as tile to compare to may not exist
-    remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
-    if remainder_length:
-      remainder_arrs_tiles = [x[-remainder_length:] for x in arrs_tiles]
-      arrs_tiles = [x[:-remainder_length] for x in arrs_tiles]
-    arrs_tiles = max_reduce_stage(
-      arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
-    )
-    if remainder_length:
-      arrs_tiles = [
-        x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)
+  # Standardize unroll parameters
+  if type(presort_unroll) == bool:
+    presort_unroll = 1 if not presort_unroll else full_size // (2 * k)
+  if type(merge_unroll) == bool:
+    merge_unroll = 1 if not merge_unroll else full_size // (2 * k)
+
+  # Compute slice sizes for presort and merge phases
+  presort_slice_size = max(presort_unroll * 2 * k, NUM_SUBLANES)
+  presort_slice_size = min(presort_slice_size, full_size)
+  merge_slice_size = max(merge_unroll * 2 * k, NUM_SUBLANES)
+  merge_slice_size = min(merge_slice_size, full_size)
+
+  # Determine if we use rolled or unrolled implementation
+  use_rolled = (presort_slice_size < full_size) or (merge_slice_size < full_size)
+
+  if use_rolled and transpose_refs is None:
+    raise ValueError("transpose_refs required when not fully unrolling")
+
+  if not use_rolled:
+    # Build bitonic sequences up to length k/2 (fully unrolled)
+    for stage in range(1, log2(k)):
+      for substage in range(stage)[::-1]:
+        arrs_tiles = _bitonic_sort_substage(
+          arrs_tiles, substage=substage, stage=stage
+        )
+
+    # Progressive merge tiles together as far as possible first (fully unrolled)
+    for _ in range(num_tile_merges):
+      # special handling for cross tile as tile to compare to may not exist
+      remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
+      if remainder_length:
+        remainder_arrs_tiles = [x[-remainder_length:] for x in arrs_tiles]
+        arrs_tiles = [x[:-remainder_length] for x in arrs_tiles]
+      arrs_tiles = max_reduce_stage(
+        arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
+      )
+      if remainder_length:
+        arrs_tiles = [
+          x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)
+        ]
+  else:
+    # Rolled implementation using transpose_refs
+    # Load data into refs
+    for i, arr in enumerate(_rejoin(arrs_tiles)):
+      transpose_refs[i] = transpose_refs[i].at[: arr.shape[0]]
+      transpose_refs[i][...] = arr
+
+    # Phase 1: Presort - Build bitonic sequences up to length k/2
+    num_presort_slices = full_size // presort_slice_size
+    remainder_presort_size = full_size % presort_slice_size
+
+    def presort_slice(slice_i):
+      slice_start = slice_i * presort_slice_size
+      slice_refs = [
+        ref[pl.dslice(slice_start, presort_slice_size)] for ref in transpose_refs
       ]
+      # Each ref content becomes a single tile
+      slice_tiles = [[ref[...]] for ref in slice_refs]
+
+      for stage in range(1, log2(k)):
+        for substage in range(stage)[::-1]:
+          slice_tiles = _bitonic_sort_substage(
+            slice_tiles, substage=substage, stage=stage
+          )
+
+      # Write back: tiles is list of lists, we need to concatenate inner list
+      for ref, tiles_list in zip(slice_refs, slice_tiles, strict=True):
+        result = jnp.concatenate(tiles_list, axis=0)
+        ref[...] = result
+
+    pl.loop(0, num_presort_slices)(presort_slice)
+
+    # Handle remainder for presort
+    if remainder_presort_size > 0:
+      slice_start = num_presort_slices * presort_slice_size
+      slice_refs = [
+        ref[pl.dslice(slice_start, remainder_presort_size)] for ref in transpose_refs
+      ]
+      slice_tiles = [[ref[...]] for ref in slice_refs]
+
+      for stage in range(1, log2(k)):
+        for substage in range(stage)[::-1]:
+          slice_tiles = _bitonic_sort_substage(
+            slice_tiles, substage=substage, stage=stage
+          )
+
+      for ref, tiles_list in zip(slice_refs, slice_tiles, strict=True):
+        result = jnp.concatenate(tiles_list, axis=0)
+        ref[...] = result
+
+    # Phase 2: Merge - Progressive merge with decreasing active size
+    # Flattened loop over both num_tile_merges and inner slices
+    pair_size = pl.cdiv(k, NUM_SUBLANES)
+    active_size = full_size
+
+    for merge_iter in range(num_tile_merges):
+      # Check for remainder that doesn't have a pair
+      remainder_length = active_size % (2 * pair_size)
+
+      # Number of pairs to process (each pair is 2*pair_size elements)
+      num_pairs = active_size // (2 * pair_size)
+
+      # Process pairs in chunks of merge_unroll
+      num_slice_iterations = (num_pairs + merge_unroll - 1) // merge_unroll
+
+      def process_merge_slices(slice_iter):
+        # Process merge_unroll pairs at a time
+        start_pair = slice_iter * merge_unroll
+        end_pair = min((slice_iter + 1) * merge_unroll, num_pairs)
+        num_pairs_in_slice = end_pair - start_pair
+
+        # Process each pair in this slice
+        for local_pair_i in range(merge_unroll):
+          @pl.when(local_pair_i < num_pairs_in_slice)
+          def process_pair():
+            pair_i = start_pair + local_pair_i
+            slice_start = pair_i * 2 * pair_size
+            slice_size_for_pair = 2 * pair_size
+
+            slice_refs = [
+              ref[pl.dslice(slice_start, slice_size_for_pair)] for ref in transpose_refs
+            ]
+            slice_tiles = [[ref[...]] for ref in slice_refs]
+
+            # Apply max_reduce_stage
+            reduced_tiles = max_reduce_stage(
+              slice_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
+            )
+
+            # Write back only the top half (reduced result) to first half of slice
+            for ref, tiles_list in zip(slice_refs, reduced_tiles, strict=True):
+              result = jnp.concatenate(tiles_list, axis=0)
+              ref[pl.dslice(0, pair_size)] = result
+
+      if num_slice_iterations > 0:
+        pl.loop(0, num_slice_iterations)(process_merge_slices)
+
+      # After processing all pairs, move remainder to follow reduced pairs
+      # New active size = reduced pairs + remainder
+      new_active_size = num_pairs * pair_size + remainder_length
+      if remainder_length > 0:
+        # Move remainder from [num_pairs * 2 * pair_size : num_pairs * 2 * pair_size + remainder_length]
+        # to [num_pairs * pair_size : num_pairs * pair_size + remainder_length]
+        remainder_src_start = num_pairs * 2 * pair_size
+        remainder_dst_start = num_pairs * pair_size
+        for ref in transpose_refs:
+          ref[pl.dslice(remainder_dst_start, remainder_length)] = ref[pl.dslice(remainder_src_start, remainder_length)]
+
+      active_size = new_active_size
+
+    # Back in array flow - extract final reduced size
+    arrs_tiles = [[ref[:active_size]] for ref in transpose_refs]
 
   for i in range(num_lane_merges)[::-1]:
     arrs_tiles = max_reduce_stage(
