@@ -449,7 +449,8 @@ def _extract_static_argnames_signature(f, maybe_static_argnames, args, kwargs):
   bound_args.apply_defaults()
   all_kwargs = bound_args.arguments
   assert len(all_kwargs.pop("args", [])) == 0
-  all_kwargs.update(all_kwargs.pop("kwargs"))
+  if "kwargs" in all_kwargs:
+    all_kwargs.update(all_kwargs.pop("kwargs"))
   maybe_static_kwargs = {k: all_kwargs[k] for k in maybe_static_argnames}   
   return {k: (
     v is None or isinstance(v, (bool, int, float))) 
