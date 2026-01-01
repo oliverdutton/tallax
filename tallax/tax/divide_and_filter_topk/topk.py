@@ -591,8 +591,8 @@ def _top_bounded_k(
   )
 
   output_specs = (
-    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
-    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
