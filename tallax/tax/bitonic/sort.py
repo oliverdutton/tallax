@@ -27,10 +27,12 @@ from tallax.tax.utils import (
   map_batch_dim_to_smaller_than_hardware_tile_size,
   join_tiles_to_array,
   split_array_to_tiles,
+  maybe_static_jit,
 )
 from tallax.tax.symint import SymInt, unwrap
 
 
+@functools.partial(maybe_static_jit, static_argnames=('num_keys', 'has_unique_keys'), maybe_static_argnames=('is_descending',))
 def compare_and_swap(
   lefts,
   rights,
@@ -250,6 +252,11 @@ def _compute_is_descending(
   )
 
 
+@functools.partial(maybe_static_jit, 
+  static_argnames=(
+  'substage', 'num_keys', 'batch_size',
+  'full_size', 'concat_threshold', 'max_reduce'),
+  maybe_static_argnames=('stage', 'sort_dim_offset'))
 def bitonic_sort_substage(
   arrs_tiles,
   *,
