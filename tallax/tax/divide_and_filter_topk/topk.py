@@ -429,8 +429,9 @@ def dynamic_topk_refs(
   def _():
     # Find maximum depth across all tokens
     global_max_depth = jnp.array(0, dtype=jnp.int32)
+    token_start = (grid_i // topk_unroll) * block_topk
     for i in range(block_topk):
-      token_idx = i + (grid_i // topk_unroll) * block_topk
+      token_idx = i + token_start
       global_max_depth = jnp.maximum(
         global_max_depth, 
         # the * deals with OOB access values
@@ -469,7 +470,7 @@ def dynamic_topk_refs(
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
-            idx < k_vmem_ref[...][:, None], topk_vals_ref[...], replace_val
+            idx < k_vmem_ref[pl.dslice(token_start, block_topk)][:, None], topk_vals_ref[...], replace_val
           )
 
 
