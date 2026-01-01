@@ -266,7 +266,8 @@ def bitonic_topk_arrays(
 
     # Rolled merge with decreasing active size
     # Flattened loop over both num_tile_merges and inner slices
-    pair_size = pl.cdiv(k, NUM_SUBLANES)
+    # pair_size is in units of rows (tiles * NUM_SUBLANES)
+    pair_size = pl.cdiv(k, NUM_SUBLANES) * NUM_SUBLANES
     active_size = full_size
 
     for merge_iter in range(num_tile_merges):
@@ -290,12 +291,16 @@ def bitonic_topk_arrays(
           @pl.when(local_pair_i < num_pairs_in_slice)
           def process_pair():
             pair_i = start_pair + local_pair_i
-            slice_start = pair_i * 2 * pair_size
-            slice_size_for_pair = 2 * pair_size
+            # Read from: [pair_i * 2 * pair_size : (pair_i+1) * 2 * pair_size]
+            read_start = pair_i * 2 * pair_size
+            read_size = 2 * pair_size
+            # Write to: [pair_i * pair_size : (pair_i+1) * pair_size]
+            write_start = pair_i * pair_size
+            write_size = pair_size
 
             # Read the slice
             slice_arrs = [
-              ref[pl.dslice(slice_start, slice_size_for_pair)] for ref in transpose_refs
+              ref[pl.dslice(read_start, read_size)] for ref in transpose_refs
             ]
 
             # Split into tiles for max_reduce_stage
@@ -306,10 +311,10 @@ def bitonic_topk_arrays(
               slice_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
             )
 
-            # Rejoin tiles and write back only the top half
+            # Rejoin tiles and write back to compacted location
             for ref, tiles_list in zip(transpose_refs, reduced_tiles, strict=True):
               result = jnp.concatenate(tiles_list, axis=0)
-              ref[pl.dslice(slice_start, result.shape[0])] = result
+              ref[pl.dslice(write_start, write_size)] = result
 
       if num_slice_iterations > 0:
         pl.loop(0, num_slice_iterations)(process_merge_slices)
