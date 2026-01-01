@@ -32,7 +32,7 @@ from tallax.tax.utils import (
 from tallax.tax.symint import SymInt, unwrap
 
 
-@functools.partial(maybe_static_jit, static_argnames=('num_keys', 'has_unique_keys'), maybe_static_argnames=('is_descending',))
+@functools.partial(maybe_static_jit, static_argnames=('num_keys', 'has_unique_key'), maybe_static_argnames=('is_descending',))
 def compare_and_swap(
   lefts,
   rights,
