@@ -312,7 +312,11 @@ def dynamic_topk_refs(
   assert block_topk % block_token == 0, 'block_topk must be a multiple of block_token'
 
   pid = pl.program_id(0)
-  token_slice = pl.dslice((pid * block_token) % block_topk, block_token)
+  
+  token_slice = pl.dslice(
+    pl.multiple_of(
+      (pid * block_token) % block_topk, block_token),
+    block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
     shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
@@ -425,8 +429,9 @@ def dynamic_topk_refs(
   def _():
     # Find maximum depth across all tokens
     global_max_depth = jnp.array(0, dtype=jnp.int32)
+    token_start = (grid_i // topk_unroll) * block_topk
     for i in range(block_topk):
-      token_idx = i + (grid_i // topk_unroll) * block_topk
+      token_idx = i + token_start
       global_max_depth = jnp.maximum(
         global_max_depth, 
         # the * deals with OOB access values
@@ -465,7 +470,7 @@ def dynamic_topk_refs(
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
-            idx < k_vmem_ref[...][:, None], topk_vals_ref[...], replace_val
+            idx < k_vmem_ref[...], topk_vals_ref[...], replace_val
           )
 
 
@@ -587,8 +592,8 @@ def _top_bounded_k(
   )
 
   output_specs = (
-    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
-    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
@@ -616,7 +621,7 @@ def _top_bounded_k(
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
       # for TPU Pallas lowering reasons it's convenient to have both SMEM and VMEM k
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec(memory_space=pltpu.VMEM),
+      pl.BlockSpec((block_topk, 1), lambda i: (i//topk_unroll, 0)),
     ),
     out_shape=output_shapes,
     scratch_shapes=tuple(scratch_shapes),
@@ -624,7 +629,7 @@ def _top_bounded_k(
     out_specs=output_specs,
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
-  )(logits, k, k)
+  )(logits, k, k[:, None])
   topk_vals, topk_idxs, valid, depths, cutoff_vals = outputs
 
   topk_vals, topk_idxs = (
