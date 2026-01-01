@@ -308,9 +308,11 @@ def dynamic_topk_refs(
   # Initialize buffers
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
+  block_topk = bins_topm_vals_ref.shape[0]
+  assert block_topk % block_token == 0, 'block_topk must be a multiple of block_token'
 
   pid = pl.program_id(0)
-  token_slice = pl.dslice(pid * block_token, block_token)
+  token_slice = pl.dslice((pid * block_token) % block_topk, block_token)
 
   bins_topm_vals_ref[token_slice] = jnp.full(
     shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
@@ -323,7 +325,7 @@ def dynamic_topk_refs(
   # Incremental binned top-k computation
   for completed_m, m in zip(bins_topm_schedule, bins_topm_schedule[1:]):
 
-    @pl.when(termination_flag_ref[0] == 0)
+    @pl.when(termination_flag_ref[0] < block_token)
     def _():
       # Compute binned top-m
       bins_topm_vals, bins_topm_idxs = binned_topk(
@@ -365,7 +367,7 @@ def dynamic_topk_refs(
       pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
       num_larger = (
         sum((v >= pivot) for v in bins_topm_vals[: m - 1])
-        .astype(to_32bit_dtype(logits_ref.dtype))
+        .astype(jnp.float32)
         .sum(-1)
       )
 
@@ -385,16 +387,12 @@ def dynamic_topk_refs(
         # Useful for bounds checking if running sharded topk
         cutoff_vals_ref[token_idx] = pivot.squeeze(1)[i]
 
-      # Check if all tokens converged
-      @pl.when(termination_flag_ref[0] != block_token)
-      def _():
-        termination_flag_ref[0] = 0
 
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
   if guarantee_convergence and (m_final < max_k):
 
-    @pl.when(termination_flag_ref[0] == 0)
+    @pl.when(termination_flag_ref[0] < block_token)
     def _():
       # This optimization applies when guarantee_convergence is enabled but
       # we haven't fully converged (m_final != max_k) and termination criterion not met.
@@ -414,17 +412,31 @@ def dynamic_topk_refs(
   ]
   global_topk_schedule = tuple(sorted(set(bins_topm_schedule)))
 
-  # Final top-k extraction (done by last program)
-  @pl.when(pl.program_id(0) == (pl.num_programs(0) - 1))
+  # Final top-k extraction (done on aggregated blocks as implementation gets more efficient)
+  grid_i = pl.program_id(0)
+  grid_size = pl.num_programs(0)
+  topk_unroll = block_topk // block_token
+  completed_i = grid_i + 1
+  @pl.when(
+    # final iter, or buffer filled
+    (completed_i == grid_size) | (
+    ((completed_i % topk_unroll)==0))
+  )
   def _():
     # Find maximum depth across all tokens
-    global_max_depth = jnp.array(0)
-    for i in range(max_depth_ref.shape[0]):
-      global_max_depth = jnp.maximum(global_max_depth, max_depth_ref[i])
+    global_max_depth = jnp.array(0, dtype=jnp.int32)
+    for i in range(block_topk):
+      token_idx = i + (grid_i // topk_unroll) * block_topk
+      global_max_depth = jnp.maximum(
+        global_max_depth, 
+        # the * deals with OOB access values
+        max_depth_ref[token_idx] * (token_idx < max_depth_ref.shape[0])
+      )
 
     valid_ref[0] = (
-      (global_max_depth < bins_topm_schedule[-1])
+      ((global_max_depth < bins_topm_schedule[-1])
       | (bins_topm_schedule[-1] >= max_k)
+      ) & valid_ref[0].astype(bool)
     ).astype(jnp.int32)
 
     # Use appropriate sorting depth based on global_max_depth
@@ -451,7 +463,7 @@ def dynamic_topk_refs(
         )
         topk_vals_ref[...], topk_idxs_ref[...] = vals.astype(topk_vals_ref.dtype), idxs
         if replace_val is not None:
-          idx = jax.lax.broadcasted_iota(jnp.int32, topk_vals_ref.shape, 1)
+          idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
             idx < k_vmem_ref[...][:, None], topk_vals_ref[...], replace_val
           )
@@ -462,6 +474,7 @@ def dynamic_topk_refs(
   static_argnames=(
     "max_k",
     "block_token",
+    "block_topk",
     "num_bins",
     "bins_topm_unroll",
     "bins_topm_schedule",
@@ -474,7 +487,8 @@ def _top_bounded_k(
   logits,
   k,
   max_k: int,
-  block_token: int = 8,
+  block_token: int | None = None,
+  block_topk: int | None = None,
   num_bins: int = NUM_LANES,
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
@@ -506,10 +520,10 @@ def _top_bounded_k(
           of shape [num_tokens].
       max_k: Static maximum k across all tokens. Used for buffer sizing and
           compilation. Must be >= all values in k.
-      block_token: Number of tokens processed per program block (default: 8).
-          Must evenly divide num_tokens.
-      num_bins: Number of bins for parallel binned operations (default: 128).
-      bins_topm_unroll: Loop unroll factor for binned top-m inner loop (default: 32).
+      block_token: Number of tokens processed per program block.
+      block_topk: Number of tokens processed to filtered subsets before subset top-k. Must be a multiple of block_token.
+      num_bins: Number of bins for parallel binned operations.
+      bins_topm_unroll: Loop unroll factor for binned top-m inner loop.
       bins_topm_schedule: Increasing sequence of m values for incremental top-m search.
           If None, automatically computed based on convergence probability thresholds.
       guarantee_convergence: If True, adds max_k to schedule to ensure full convergence
@@ -533,7 +547,16 @@ def _top_bounded_k(
   # pad in first dimension for block spec
   # padding will count as immediately converged as it pads with minimum finite value (not -inf where comparison is difficult to define when checking for convergence)
   num_tokens, vocab_size = logits.shape
+  if block_token is None:
+    block_token = NUM_SUBLANES
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
+  
+  if block_topk is None:
+    block_topk = ceil_multiple(
+      min(num_tokens_padded, NUM_LANES), block_token)
+  if block_topk % block_token != 0:
+    raise ValueError('block_topk must be divisible by block_token')
+  topk_unroll = block_topk // block_token
 
   if jnp.ndim(k) == 0:
     k = jnp.broadcast_to(k, (num_tokens,))
@@ -564,8 +587,8 @@ def _top_bounded_k(
   )
 
   output_specs = (
-    pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
-    pl.BlockSpec((num_tokens_padded, max_k), lambda i: (0, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i%topk_unroll, 0)),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
@@ -574,8 +597,8 @@ def _top_bounded_k(
   # Add scratch shapes
 
   scratch_shapes = [
-    pltpu.VMEM((num_tokens_padded, buffer_size), to_32bit_dtype(logits.dtype)),
-    pltpu.VMEM((num_tokens_padded, buffer_size), jnp.int32),
+    pltpu.VMEM((block_topk, buffer_size), to_32bit_dtype(logits.dtype)),
+    pltpu.VMEM((block_topk, buffer_size), jnp.int32),
     pltpu.SMEM((1,), jnp.int32),
   ]
 
@@ -625,6 +648,7 @@ def _top_bounded_k(
   static_argnames=(
     "max_k",
     "block_token",
+    "block_topk",
     "num_bins",
     "bins_topm_unroll",
     "bins_topm_schedule",
@@ -638,20 +662,26 @@ def top_bounded_k(
   logits,
   k,
   max_k: int,
-  block_token: int = 8,
-  num_bins: int = NUM_LANES,
+  block_token: int | None = None,
+  block_topk: int | None = None,
+  num_bins: int | None = None,
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   guarantee_convergence: bool = False,
   replace_val: float | int | None = None,
   interpret: bool = False,
 ):
+  
+  if num_bins is None:
+    num_bins = NUM_LANES if k <= 16 else 2*NUM_LANES
+
   def _closed_topk(logits: jax.Array, k: jax.Array):
     return _top_bounded_k(
       logits,
       k=k,
       max_k=max_k,
       block_token=block_token,
+      block_topk=block_topk,
       num_bins=num_bins,
       bins_topm_unroll=bins_topm_unroll,
       bins_topm_schedule=bins_topm_schedule,
@@ -711,6 +741,7 @@ def top_bounded_k(
   static_argnames=(
     "k",
     "block_token",
+    "block_topk",
     "num_bins",
     "bins_topm_unroll",
     "bins_topm_schedule",
@@ -720,8 +751,9 @@ def top_bounded_k(
 def topk(
   logits,
   k: int,
-  block_token: int = NUM_SUBLANES,
-  num_bins: int = NUM_LANES,
+  block_token: int | None = None,
+  block_topk: int | None = None,
+  num_bins: int | None = None,
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   interpret: bool = False,
@@ -739,9 +771,10 @@ def topk(
   Args:
       logits: Input logits of shape [num_tokens, vocab_size].
       k: Number of top elements to find (uniform across all tokens).
-      block_token: Number of tokens processed per program block (default: 8).
-      num_bins: Number of bins for parallel operations (default: 128).
-      bins_topm_unroll: Loop unroll factor for inner loop (default: 32).
+      block_token: Number of tokens processed per program block.
+      block_topk: Number of tokens processed to filtered subsets before subset top-k. Must be a multiple of block_token.
+      num_bins: Number of bins for parallel operations if not set a heuristic is used.
+      bins_topm_unroll: Loop unroll factor for inner loop.
       bins_topm_schedule: Optional custom search schedule. If None, automatically
           computed.
       interpret: If True, run in CPU interpret mode (default: False).
@@ -756,6 +789,7 @@ def topk(
     k=k,
     max_k=k,
     block_token=block_token,
+    block_topk=block_topk,
     num_bins=num_bins,
     bins_topm_unroll=bins_topm_unroll,
     bins_topm_schedule=bins_topm_schedule,
