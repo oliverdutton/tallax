@@ -128,13 +128,6 @@ For **k ≤ 128**, top-k can be computed in this format with at most 4 sequentia
 
 **Result:** This Pallas implementation is significantly faster than XLA's top-k.
 
-### Supported Configurations
-
-Currently implemented: **k ≤ 128** (covers most typical LLM top-k usage)
-
-Theoretically extensible to larger k with larger sort dimensions with low batch size while still avoiding excessive lane permutations/transposes with compressed transpose format:
-- k = 256 with `(8, 4096)` or `(16, 2048)`
-
 ## Why Use Bitonic Top-k in the Algorithm and not alternatives?
 
 For computing top-128 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 256 bins, we expect a 99.9999% chance of convergence by bins-top-8. This produces a filtered subset size of only 256 × 8 = 2,048 elements.
@@ -143,7 +136,7 @@ At this reduced size, the choice of final top-k algorithm (Bitonic vs RadixSelec
 
 ## How does this compare to jax.lax.approx_max_k[^8]?
 - As the name says, approx_max_k is just an approximation with weak guarantees, it can miss the 2nd largest element. While tallax top-k guarantees exactness.
-- The underlying **tallax top-k is a generalization** of the approx_max_k algorithm. In approx_max_k the input is split into bins which are top-1'd, before a top-k on the aggregate. Tallax generalizes this to top-m instead of top-1, adding early stopping with convergence checks and an efficient convergence bounds based method for reducing worst case runtime.
+- **tallax top-k is a generalization** of the approx_max_k algorithm. In approx_max_k the input is split into bins which are top-1'd, before a top-k on the aggregate. Tallax generalizes this to top-m instead of top-1, adding early stopping with convergence checks and an efficient convergence bounds based method for reducing worst case runtime.
 - As tallax is a generalization, we provide **tallax.tax.approx_max_k**. Our implementation can be **up to 5x faster** than jax.lax.approx_max_k due to a more efficient bitonic top-k on the aggregated top-1's. See table below:
 
 
