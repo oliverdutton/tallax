@@ -4,6 +4,7 @@ Bitonic Top-K using compressed transpose format.
 
 import functools
 import jax
+import jax.numpy as jnp
 from jax.experimental import pallas as pl
 # from jax.experimental.pallas import tpu as pltpu
 
@@ -179,36 +180,20 @@ def bitonic_topk_arrays(
   if use_rolled and transpose_refs is None:
     raise ValueError("transpose_refs required when not fully unrolling")
 
-  if not use_rolled:
+  # Phase 1: Presort - Build bitonic sequences up to length k/2
+  if presort_slice_size >= full_size:
     # Build bitonic sequences up to length k/2 (fully unrolled)
     for stage in range(1, log2(k)):
       for substage in range(stage)[::-1]:
         arrs_tiles = _bitonic_sort_substage(
           arrs_tiles, substage=substage, stage=stage
         )
-
-    # Progressive merge tiles together as far as possible first (fully unrolled)
-    for _ in range(num_tile_merges):
-      # special handling for cross tile as tile to compare to may not exist
-      remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
-      if remainder_length:
-        remainder_arrs_tiles = [x[-remainder_length:] for x in arrs_tiles]
-        arrs_tiles = [x[:-remainder_length] for x in arrs_tiles]
-      arrs_tiles = max_reduce_stage(
-        arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
-      )
-      if remainder_length:
-        arrs_tiles = [
-          x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)
-        ]
   else:
-    # Rolled implementation using transpose_refs
+    # Rolled presort using transpose_refs
     # Load data into refs
     for i, arr in enumerate(_rejoin(arrs_tiles)):
       transpose_refs[i] = transpose_refs[i].at[: arr.shape[0]]
       transpose_refs[i][...] = arr
-
-    # Phase 1: Presort - Build bitonic sequences up to length k/2
     num_presort_slices = full_size // presort_slice_size
     remainder_presort_size = full_size % presort_slice_size
 
@@ -227,9 +212,9 @@ def bitonic_topk_arrays(
           )
 
       # Write back: tiles is list of lists, we need to concatenate inner list
-      for ref, tiles_list in zip(slice_refs, slice_tiles, strict=True):
+      for ref, tiles_list in zip(transpose_refs, slice_tiles, strict=True):
         result = jnp.concatenate(tiles_list, axis=0)
-        ref[...] = result
+        ref[pl.dslice(slice_start, presort_slice_size)] = result
 
     pl.loop(0, num_presort_slices)(presort_slice)
 
@@ -247,11 +232,39 @@ def bitonic_topk_arrays(
             slice_tiles, substage=substage, stage=stage
           )
 
-      for ref, tiles_list in zip(slice_refs, slice_tiles, strict=True):
+      for ref, tiles_list in zip(transpose_refs, slice_tiles, strict=True):
         result = jnp.concatenate(tiles_list, axis=0)
-        ref[...] = result
+        ref[pl.dslice(slice_start, remainder_presort_size)] = result
 
-    # Phase 2: Merge - Progressive merge with decreasing active size
+    # Convert back to arrs_tiles format only if merge phase is unrolled
+    if merge_slice_size >= full_size:
+      arrs_tiles = [split_array_to_tiles(ref[:full_size]) for ref in transpose_refs]
+
+  # Phase 2: Merge - Progressive tile merges
+  if merge_slice_size >= full_size:
+    # Progressive merge tiles together as far as possible first (fully unrolled)
+    for _ in range(num_tile_merges):
+      # special handling for cross tile as tile to compare to may not exist
+      remainder_length = len(arrs_tiles[0]) % (2 * pl.cdiv(k, NUM_SUBLANES))
+      if remainder_length:
+        remainder_arrs_tiles = [x[-remainder_length:] for x in arrs_tiles]
+        arrs_tiles = [x[:-remainder_length] for x in arrs_tiles]
+      arrs_tiles = max_reduce_stage(
+        arrs_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
+      )
+      if remainder_length:
+        arrs_tiles = [
+          x + rem for x, rem in zip(arrs_tiles, remainder_arrs_tiles, strict=True)
+        ]
+  else:
+    # Rolled merge - load into refs if not already there
+    if presort_slice_size >= full_size:
+      # Data is still in arrs_tiles, need to load into refs
+      for i, arr in enumerate(_rejoin(arrs_tiles)):
+        transpose_refs[i] = transpose_refs[i].at[: arr.shape[0]]
+        transpose_refs[i][...] = arr
+
+    # Rolled merge with decreasing active size
     # Flattened loop over both num_tile_merges and inner slices
     pair_size = pl.cdiv(k, NUM_SUBLANES)
     active_size = full_size
@@ -269,7 +282,7 @@ def bitonic_topk_arrays(
       def process_merge_slices(slice_iter):
         # Process merge_unroll pairs at a time
         start_pair = slice_iter * merge_unroll
-        end_pair = min((slice_iter + 1) * merge_unroll, num_pairs)
+        end_pair = jnp.minimum((slice_iter + 1) * merge_unroll, num_pairs)
         num_pairs_in_slice = end_pair - start_pair
 
         # Process each pair in this slice
@@ -280,20 +293,23 @@ def bitonic_topk_arrays(
             slice_start = pair_i * 2 * pair_size
             slice_size_for_pair = 2 * pair_size
 
-            slice_refs = [
+            # Read the slice
+            slice_arrs = [
               ref[pl.dslice(slice_start, slice_size_for_pair)] for ref in transpose_refs
             ]
-            slice_tiles = [[ref[...]] for ref in slice_refs]
+
+            # Split into tiles for max_reduce_stage
+            slice_tiles = [split_array_to_tiles(arr) for arr in slice_arrs]
 
             # Apply max_reduce_stage
             reduced_tiles = max_reduce_stage(
               slice_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
             )
 
-            # Write back only the top half (reduced result) to first half of slice
-            for ref, tiles_list in zip(slice_refs, reduced_tiles, strict=True):
+            # Rejoin tiles and write back only the top half
+            for ref, tiles_list in zip(transpose_refs, reduced_tiles, strict=True):
               result = jnp.concatenate(tiles_list, axis=0)
-              ref[pl.dslice(0, pair_size)] = result
+              ref[pl.dslice(slice_start, result.shape[0])] = result
 
       if num_slice_iterations > 0:
         pl.loop(0, num_slice_iterations)(process_merge_slices)
@@ -311,8 +327,8 @@ def bitonic_topk_arrays(
 
       active_size = new_active_size
 
-    # Back in array flow - extract final reduced size
-    arrs_tiles = [[ref[:active_size]] for ref in transpose_refs]
+    # Back in array flow - extract final reduced size and split into tiles
+    arrs_tiles = [split_array_to_tiles(ref[:active_size]) for ref in transpose_refs]
 
   for i in range(num_lane_merges)[::-1]:
     arrs_tiles = max_reduce_stage(
