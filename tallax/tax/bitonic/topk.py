@@ -265,38 +265,29 @@ def bitonic_topk_arrays(
         transpose_refs[i][...] = arr
 
     # Rolled merge with decreasing active size
-    # Flattened loop over both num_tile_merges and inner slices
-    # pair_size is in units of rows (tiles * NUM_SUBLANES)
     pair_size = pl.cdiv(k, NUM_SUBLANES) * NUM_SUBLANES
-    active_size = full_size
+    current_active_size = full_size
 
+    # Process each merge iteration
     for merge_iter in range(num_tile_merges):
-      # Check for remainder that doesn't have a pair
-      remainder_length = active_size % (2 * pair_size)
+      remainder_length = current_active_size % (2 * pair_size)
+      num_pairs = current_active_size // (2 * pair_size)
 
-      # Number of pairs to process (each pair is 2*pair_size elements)
-      num_pairs = active_size // (2 * pair_size)
+      # Process pairs in chunks
+      num_full_chunks = num_pairs // merge_unroll
+      remainder_pairs = num_pairs % merge_unroll
 
-      # Process pairs in chunks of merge_unroll
-      num_slice_iterations = (num_pairs + merge_unroll - 1) // merge_unroll
-
-      def process_merge_slices(slice_iter):
-        # Process merge_unroll pairs at a time
-        start_pair = slice_iter * merge_unroll
-        end_pair = jnp.minimum((slice_iter + 1) * merge_unroll, num_pairs)
-        num_pairs_in_slice = end_pair - start_pair
-
-        # Process each pair in this slice
-        for local_pair_i in range(merge_unroll):
-          @pl.when(local_pair_i < num_pairs_in_slice)
-          def process_pair():
-            pair_i = start_pair + local_pair_i
+      # Process full chunks
+      if num_full_chunks > 0:
+        def process_chunk(chunk_i):
+          # Process merge_unroll pairs in this chunk
+          for local_pair_i in range(merge_unroll):
+            pair_i = chunk_i * merge_unroll + local_pair_i
             # Read from: [pair_i * 2 * pair_size : (pair_i+1) * 2 * pair_size]
             read_start = pair_i * 2 * pair_size
             read_size = 2 * pair_size
             # Write to: [pair_i * pair_size : (pair_i+1) * pair_size]
             write_start = pair_i * pair_size
-            write_size = pair_size
 
             # Read the slice
             slice_arrs = [
@@ -314,26 +305,41 @@ def bitonic_topk_arrays(
             # Rejoin tiles and write back to compacted location
             for ref, tiles_list in zip(transpose_refs, reduced_tiles, strict=True):
               result = jnp.concatenate(tiles_list, axis=0)
-              ref[pl.dslice(write_start, write_size)] = result
+              ref[pl.dslice(write_start, pair_size)] = result
 
-      if num_slice_iterations > 0:
-        pl.loop(0, num_slice_iterations)(process_merge_slices)
+        pl.loop(0, num_full_chunks)(process_chunk)
 
-      # After processing all pairs, move remainder to follow reduced pairs
-      # New active size = reduced pairs + remainder
-      new_active_size = num_pairs * pair_size + remainder_length
+      # Process remainder pairs if any
+      if remainder_pairs > 0:
+        for local_pair_i in range(remainder_pairs):
+          pair_i = num_full_chunks * merge_unroll + local_pair_i
+          read_start = pair_i * 2 * pair_size
+          read_size = 2 * pair_size
+          write_start = pair_i * pair_size
+
+          slice_arrs = [
+            ref[pl.dslice(read_start, read_size)] for ref in transpose_refs
+          ]
+          slice_tiles = [split_array_to_tiles(arr) for arr in slice_arrs]
+          reduced_tiles = max_reduce_stage(
+            slice_tiles, reduce_stage=log2(ceil_multiple(k, NUM_SUBLANES))
+          )
+          for ref, tiles_list in zip(transpose_refs, reduced_tiles, strict=True):
+            result = jnp.concatenate(tiles_list, axis=0)
+            ref[pl.dslice(write_start, pair_size)] = result
+
+      # Handle remainder movement for this merge iteration
       if remainder_length > 0:
-        # Move remainder from [num_pairs * 2 * pair_size : num_pairs * 2 * pair_size + remainder_length]
-        # to [num_pairs * pair_size : num_pairs * pair_size + remainder_length]
         remainder_src_start = num_pairs * 2 * pair_size
         remainder_dst_start = num_pairs * pair_size
         for ref in transpose_refs:
           ref[pl.dslice(remainder_dst_start, remainder_length)] = ref[pl.dslice(remainder_src_start, remainder_length)]
 
-      active_size = new_active_size
+      # Update active size for next iteration
+      current_active_size = num_pairs * pair_size + remainder_length
 
     # Back in array flow - extract final reduced size and split into tiles
-    arrs_tiles = [split_array_to_tiles(ref[:active_size]) for ref in transpose_refs]
+    arrs_tiles = [split_array_to_tiles(ref[:current_active_size]) for ref in transpose_refs]
 
   for i in range(num_lane_merges)[::-1]:
     arrs_tiles = max_reduce_stage(
