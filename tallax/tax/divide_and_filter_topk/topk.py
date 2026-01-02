@@ -1,17 +1,3 @@
-
-There’s something wrong, likely in merge unconverged bins code, when num_bins!=NUM_LANES. Step through the code and try work it out. You can make a numpy shadow version and Print the indices being used and work out if all values from the active bins are being packed correctly to the packed_vals and packed_idxs. The problem is that some entries in packed_vals are missing
-
-1024 bins, 32768 vocab, k=16 with bins topm schedule=(2,) or (3,) or (4,) all have the bug I’m trying to fix when inputs do not converge within the time so need merge hnconverged bins.
-
-do not run the jax code, oossibly make shadow versions of bits to help and step through the code mentally yourself to check for out by 1 or cdiv bugs in places
-
-read the readme
-
-m=2
-at most k bins can have max values gt largest 2nd bin.
-
-
-
 import functools
 import jax
 import jax.numpy as jnp
