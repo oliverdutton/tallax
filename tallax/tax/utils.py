@@ -206,23 +206,27 @@ def sortable_int_to_float(i: jnp.ndarray) -> jnp.ndarray:
 ### BF16-U16 Packing for Optimization
 
 
-def pack_bf16_u16_to_i32(val, index):
-  """Pack bfloat16 value and uint16 index into single int32.
+def pack_bf16_u16_to_i32(val, index, stable=True):
+  """Pack bfloat16 value and uint16 index into f32 then convert to sortable int32.
 
   BF16 in F32 has empty lower 16 bits where we pack the index.
   This allows sorting while preserving original indices.
+  stable=True standardizes the bit patterns of NaNs and zeros, and packs the int array so on value ties the lower index element is larger in comparisons.
   """
   assert index.dtype == jnp.int32
-  val_f32 = standardize(val.astype(jnp.float32))
-  index = jnp.where(val_f32 < 0, index.shape[1] - 1 - index, index)
+  val = val.astype(jnp.float32))
+  if stable:
+    val = standardize(val)
+    # ensure stable sort of indices
+    index = jnp.where(val < 0, 2**16 - 1 - index, index)
   return float_to_sortable_int(
-    ((val_f32.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
+    ((val.view(jnp.int32) & ~0xFFFF) | index).view(jnp.float32),
     standardize_nans=False,
     standardize_zeros=False,
   )
 
 
-def unpack_bf16_u16_from_i32(packed):
+def unpack_bf16_u16_from_i32(packed, stable=True):
   """Extract original bfloat16 value and uint16 index from packed int32."""
   assert packed.dtype == jnp.int32, f"found {packed.dtype}"
   packed = sortable_int_to_float(packed)
@@ -230,9 +234,11 @@ def unpack_bf16_u16_from_i32(packed):
     (packed.view(jnp.int32) & ~0xFFFF).view(jnp.float32).astype(jnp.bfloat16)
   )
   index = packed.view(jnp.int32) & 0xFFFF
-  index = jnp.where(
-    val.astype(jnp.float32) < 0, index.shape[1] - 1 - index, index
-  )
+  if stable:
+    # reverse the int mapping required for stable sort
+    index = jnp.where(
+      val.astype(jnp.float32) < 0, 2**16 - 1 - index, index
+    )
   return val, index
 
 
