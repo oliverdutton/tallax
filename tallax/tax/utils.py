@@ -395,7 +395,9 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
   @functools.wraps(unsplit_f)
   def split_f(*args, axis=axis_default, **kwargs):
     if len(args) < num_args:
-      raise ValueError(f'Please pass the first {num_args} as args rather than kwargs to {unsplit_f.__name__}')
+      raise ValueError(
+        f"Please pass the first {num_args} as args rather than kwargs to {unsplit_f.__name__}"
+      )
     batch_axis = 1 - axis
     batch_size = jax.tree.leaves(args[0])[0].shape[batch_axis]
     # split so the batch axis matches hardware sizes
@@ -451,22 +453,35 @@ def _extract_static_argnames_signature(f, maybe_static_argnames, args, kwargs):
   assert len(all_kwargs.pop("args", [])) == 0
   if "kwargs" in all_kwargs:
     all_kwargs.update(all_kwargs.pop("kwargs"))
-  maybe_static_kwargs = {k: all_kwargs[k] for k in maybe_static_argnames}   
-  return {k: (
-    v is None or isinstance(v, (bool, int, float))) 
-    for k, v in maybe_static_kwargs.items()}
-  
-  
-def maybe_static_jit(func, maybe_static_argnames=(), static_argnames=(), **jit_kwargs):
+  maybe_static_kwargs = {k: all_kwargs[k] for k in maybe_static_argnames}
+  return {
+    k: (v is None or isinstance(v, (bool, int, float)))
+    for k, v in maybe_static_kwargs.items()
+  }
+
+
+def maybe_static_jit(
+  func, maybe_static_argnames=(), static_argnames=(), **jit_kwargs
+):
   fs = {}
+
   @functools.wraps(func)
   def jit_f(*args, **kwargs):
-    static_argnames_signature = _extract_static_argnames_signature(func, maybe_static_argnames=maybe_static_argnames, args=args, kwargs=kwargs)
+    static_argnames_signature = _extract_static_argnames_signature(
+      func,
+      maybe_static_argnames=maybe_static_argnames,
+      args=args,
+      kwargs=kwargs,
+    )
     key = sorted(static_argnames_signature.items()).__str__()
     if key not in fs:
       # create the appropriate jit static argnames entry
-      keys_static_argnames = static_argnames + tuple(k for k, b in static_argnames_signature.items() if b)
-      fs[key] = jax.jit(func, static_argnames=keys_static_argnames, **jit_kwargs)
+      keys_static_argnames = static_argnames + tuple(
+        k for k, b in static_argnames_signature.items() if b
+      )
+      fs[key] = jax.jit(
+        func, static_argnames=keys_static_argnames, **jit_kwargs
+      )
     return fs[key](*args, **kwargs)
-  return jit_f
 
+  return jit_f

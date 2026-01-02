@@ -148,9 +148,7 @@ def bitonic_sort_in_vmem_refs(
           operands[i] = jnp.invert(operands[i])
 
     _maybe_invert(operands)
-    operands = bitonic_topk_arrays(
-      operands, k=k, num_keys=num_keys, axis=1
-    )
+    operands = bitonic_topk_arrays(operands, k=k, num_keys=num_keys, axis=1)
     _maybe_invert(operands)
 
   # Unpack bf16-u16 if used

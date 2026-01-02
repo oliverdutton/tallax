@@ -32,7 +32,11 @@ from tallax.tax.utils import (
 from tallax.tax.symint import SymInt, unwrap
 
 
-@functools.partial(maybe_static_jit, static_argnames=('num_keys', 'has_unique_key'), maybe_static_argnames=('is_descending',))
+@functools.partial(
+  maybe_static_jit,
+  static_argnames=("num_keys", "has_unique_key"),
+  maybe_static_argnames=("is_descending",),
+)
 def compare_and_swap(
   lefts,
   rights,
@@ -252,11 +256,18 @@ def _compute_is_descending(
   )
 
 
-@functools.partial(maybe_static_jit, 
+@functools.partial(
+  maybe_static_jit,
   static_argnames=(
-  'substage', 'num_keys', 'batch_size',
-  'full_size', 'concat_threshold', 'max_reduce'),
-  maybe_static_argnames=('stage', 'sort_dim_offset'))
+    "substage",
+    "num_keys",
+    "batch_size",
+    "full_size",
+    "concat_threshold",
+    "max_reduce",
+  ),
+  maybe_static_argnames=("stage", "sort_dim_offset"),
+)
 def bitonic_sort_substage(
   arrs_tiles,
   *,
