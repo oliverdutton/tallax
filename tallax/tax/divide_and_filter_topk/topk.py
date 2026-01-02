@@ -271,14 +271,17 @@ def _merge_unconverged_bins_topk(
     ]
     # Pack into positions based on active bin index
     index = iota_tile(1)
-    for i in range(NUM_LANES // num_packed_bins):
+    # Fix: iterate based on actual number of vals, not NUM_LANES // num_packed_bins
+    # When num_bins > NUM_LANES, vals has fewer elements than NUM_LANES // num_packed_bins
+    num_packing_iters = min(len(vals), (NUM_LANES + num_packed_bins - 1) // num_packed_bins)
+    for i in range(num_packing_iters):
       pack_mask = (
         (index >= i * num_packed_bins)
         & (index < (i + 1) * num_packed_bins)
         & in_range_mask
       )
-      # Pack every num_packed_bins-th chunk starting from i
-      for j, v in enumerate(vals[i :: NUM_LANES // num_packed_bins]):
+      # Pack with stride matching the number of iterations
+      for j, v in enumerate(vals[i :: num_packing_iters]):
         packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
 
   packed_vals = jnp.concat(packed_vals, axis=1)
