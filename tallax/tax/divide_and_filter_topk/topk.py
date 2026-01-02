@@ -18,7 +18,6 @@ from tallax.tax.utils import (
   NUM_LANES,
   NUM_SUBLANES,
   pad,
-  log2,
   get_dtype_info,
   iota_tile,
   to_32bit_dtype,
@@ -607,7 +606,7 @@ def _top_bounded_k(
 
   # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
-  buffer_size = max(max_m, 2 ** log2(max_m - 1)) * num_bins
+  buffer_size = max_m * num_bins
 
   output_shapes = (
     jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),
