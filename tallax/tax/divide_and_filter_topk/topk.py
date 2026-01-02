@@ -203,7 +203,7 @@ def _merge_unconverged_bins_topk(
     # Mark positions where bin index matches the i-th active bin
     indicator |= index == packing_perm[:, i : i + 1]
 
-  # invalidate entries were about to include in active bins top-k
+  # invalidate active bins to avoid double inclusion
   bins_topm_vals_ref[...] = jnp.concat(
     [
       jnp.where(
