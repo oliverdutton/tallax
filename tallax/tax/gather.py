@@ -46,7 +46,9 @@ def take_along_axis_arrays(val, idx, *, axis=1):
       )
       i = idx_offset // tile_shape[axis]
       accumulators[i] = jnp.where(mask, gather_tile, accumulators[i])
-  return jnp.concatenate(accumulators, axis=axis)[: shape[0], : shape[1]].astype(out_dtype)
+  return jnp.concatenate(accumulators, axis=axis)[
+    : shape[0], : shape[1]
+  ].astype(out_dtype)
 
 
 def take_along_axis_refs(values_ref, indices_ref, output_ref, *, axis: int):

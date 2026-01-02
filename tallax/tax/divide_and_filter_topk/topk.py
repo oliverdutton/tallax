@@ -243,7 +243,12 @@ def _merge_unconverged_bins_topk(
         ]
       )
     # apply permutation
-    vals = [jnp.take_along_axis(tile.astype(to_32bit_dtype(tile.dtype)), local_perm, axis=1) for tile in vals]
+    vals = [
+      jnp.take_along_axis(
+        tile.astype(to_32bit_dtype(tile.dtype)), local_perm, axis=1
+      )
+      for tile in vals
+    ]
     # Pack into positions based on active bin index
     index = iota_tile(1)
     for i in range(NUM_LANES // num_packed_bins):
@@ -309,14 +314,15 @@ def dynamic_topk_refs(
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
   block_topk = bins_topm_vals_ref.shape[0]
-  assert block_topk % block_token == 0, 'block_topk must be a multiple of block_token'
+  assert block_topk % block_token == 0, (
+    "block_topk must be a multiple of block_token"
+  )
 
   pid = pl.program_id(0)
-  
+
   token_slice = pl.dslice(
-    pl.multiple_of(
-      (pid * block_token) % block_topk, block_token),
-    block_token)
+    pl.multiple_of((pid * block_token) % block_topk, block_token), block_token
+  )
 
   bins_topm_vals_ref[token_slice] = jnp.full(
     shape, get_dtype_info(logits_ref).min, dtype=bins_topm_vals_ref.dtype
@@ -391,7 +397,6 @@ def dynamic_topk_refs(
         # Useful for bounds checking if running sharded topk
         cutoff_vals_ref[token_idx] = pivot.squeeze(1)[i]
 
-
   # Bin packing optimization for non-convergence cases
   m_final = bins_topm_schedule[-1]
   if guarantee_convergence and (m_final < max_k):
@@ -421,10 +426,10 @@ def dynamic_topk_refs(
   grid_size = pl.num_programs(0)
   topk_unroll = block_topk // block_token
   completed_i = grid_i + 1
+
   @pl.when(
     # final iter, or buffer filled
-    (completed_i == grid_size) | (
-    ((completed_i % topk_unroll)==0))
+    (completed_i == grid_size) | ((completed_i % topk_unroll) == 0)
   )
   def _():
     # Find maximum depth across all tokens
@@ -433,15 +438,17 @@ def dynamic_topk_refs(
     for i in range(block_topk):
       token_idx = i + token_start
       global_max_depth = jnp.maximum(
-        global_max_depth, 
+        global_max_depth,
         # the * deals with OOB access values
-        max_depth_ref[token_idx] * (token_idx < max_depth_ref.shape[0])
+        max_depth_ref[token_idx] * (token_idx < max_depth_ref.shape[0]),
       )
 
     valid_ref[0] = (
-      ((global_max_depth < bins_topm_schedule[-1])
-      | (bins_topm_schedule[-1] >= max_k)
-      ) & valid_ref[0].astype(bool)
+      (
+        (global_max_depth < bins_topm_schedule[-1])
+        | (bins_topm_schedule[-1] >= max_k)
+      )
+      & valid_ref[0].astype(bool)
     ).astype(jnp.int32)
 
     # Use appropriate sorting depth based on global_max_depth
@@ -466,7 +473,10 @@ def dynamic_topk_refs(
           num_keys=1,
           k=max_k,
         )
-        topk_vals_ref[...], topk_idxs_ref[...] = vals.astype(topk_vals_ref.dtype), idxs
+        topk_vals_ref[...], topk_idxs_ref[...] = (
+          vals.astype(topk_vals_ref.dtype),
+          idxs,
+        )
         if replace_val is not None:
           idx = jax.lax.broadcasted_iota(jnp.int32, vals.shape, 1)
           topk_vals_ref[...] = jnp.where(
@@ -516,7 +526,7 @@ def _top_bounded_k(
       - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
       - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties considers lower-index elements larger.
   If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)`
-  
+
   Sharding is supported in either/both dimensions if `guarantee_convergence=True`
 
   Args:
@@ -555,12 +565,11 @@ def _top_bounded_k(
   if block_token is None:
     block_token = NUM_SUBLANES
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
-  
+
   if block_topk is None:
-    block_topk = ceil_multiple(
-      min(num_tokens_padded, NUM_LANES), block_token)
+    block_topk = ceil_multiple(min(num_tokens_padded, NUM_LANES), block_token)
   if block_topk % block_token != 0:
-    raise ValueError('block_topk must be divisible by block_token')
+    raise ValueError("block_topk must be divisible by block_token")
   topk_unroll = block_topk // block_token
 
   if jnp.ndim(k) == 0:
@@ -592,8 +601,8 @@ def _top_bounded_k(
   )
 
   output_specs = (
-    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
-    pl.BlockSpec((block_topk, max_k), lambda i: (i//topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i // topk_unroll, 0)),
+    pl.BlockSpec((block_topk, max_k), lambda i: (i // topk_unroll, 0)),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
     pl.BlockSpec(memory_space=pltpu.SMEM),
@@ -621,7 +630,7 @@ def _top_bounded_k(
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
       # for TPU Pallas lowering reasons it's convenient to have both SMEM and VMEM k
       pl.BlockSpec(memory_space=pltpu.SMEM),
-      pl.BlockSpec((block_topk, 1), lambda i: (i//topk_unroll, 0)),
+      pl.BlockSpec((block_topk, 1), lambda i: (i // topk_unroll, 0)),
     ),
     out_shape=output_shapes,
     scratch_shapes=tuple(scratch_shapes),
@@ -676,9 +685,8 @@ def top_bounded_k(
   replace_val: float | int | None = None,
   interpret: bool = False,
 ):
-  
   if num_bins is None:
-    num_bins = NUM_LANES if k <= 16 else 2*NUM_LANES
+    num_bins = NUM_LANES if k <= 16 else 2 * NUM_LANES
 
   def _closed_topk(logits: jax.Array, k: jax.Array):
     return _top_bounded_k(
@@ -770,7 +778,7 @@ def topk(
       - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
       - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties in value considers lower-index elements larger.
   If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)` instead.
-  
+
   Sharding is supported in either/both dimensions
 
   Args:
