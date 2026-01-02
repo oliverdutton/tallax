@@ -7,7 +7,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import NamedSharding, PartitionSpec as P
 
-from tallax.tax.bitonic.topk import bitonic_topk_arrays
+from tallax.tax.bitonic.topk import bitonic_topk_arrays as _bitonic_topk_arrays
 from tallax.tax.bitonic import bitonic_topk_in_vmem as bitonic_topk
 
 from tallax.tax.divide_and_filter_topk.convergence_theory import (
@@ -23,6 +23,8 @@ from tallax.tax.utils import (
   iota_tile,
   to_32bit_dtype,
   ceil_multiple,
+  pack_bf16_u16_to_i32,
+  unpack_bf16_u16_from_i32,
 )
 
 
@@ -47,6 +49,24 @@ def nan_to_min(x):
 
 def to_comparison_dtype(x):
   return x.astype(to_32bit_dtype(x.dtype))
+
+
+def bitonic_topk_arrays(operands, k, val_dtype=None, max_index=None):
+  '''Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible''' 
+  if val_dtype is None or max_index is None:
+    return _bitonic_topk_arrays(operands, k=k)
+  assert len(operands)==2 and type(operands)==list
+  dtypes = [x.dtype for x in operands]
+  pack = val_dtype==jnp.bfloat16 and max_index<=2**16
+  if pack:
+    operands = [pack_bf16_u16_to_i32(*operands, stable=False)]
+  operands = _bitonic_topk_arrays(operands, k=k)
+  if pack:
+    assert len(operands)==1
+    operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
+    assert len(operands)==2
+  # convert back dtypes (incase theyve changed)
+  return [x.astype(dtype) for x, dtype in zip(operands, dtypes, strict=True)]
 
 
 def binned_topk(
@@ -178,7 +198,7 @@ def _merge_unconverged_bins_topk(
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
   _, sorted_bin_indices = bitonic_topk_arrays(
-    [num_gt_k, bin_indices], k=num_packed_bins, num_keys=1
+    [num_gt_k, bin_indices], k=num_packed_bins,
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
   if num_packed_bins > NUM_LANES:
@@ -274,8 +294,9 @@ def _merge_unconverged_bins_topk(
   packed_vals = nan_to_min(packed_vals)
   val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :max_k]], axis=1)
   idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :max_k]], axis=1)
-  (bins_topm_vals_ref[:, :max_k], bins_topm_idxs_ref[:, :max_k]) = (
-    bitonic_topk_arrays([val_input, idx_input], k=max_k, num_keys=1)
+  (bins_topm_vals_ref[:, :max_k], bins_topm_idxs_ref[:, :max_k]) = bitonic_topk_arrays(
+    [val_input, idx_input], k=max_k,
+    val_dtype=logits_ref.dtype, max_index=logits_ref.shape[1]
   )
 
 
@@ -470,8 +491,8 @@ def dynamic_topk_refs(
         idxs_input = bins_topm_idxs_ref[:, : depth_upper * num_bins]
         vals, idxs = bitonic_topk_arrays(
           [vals_input, idxs_input],
-          num_keys=1,
           k=max_k,
+          val_dtype=logits_ref.dtype, max_index=logits_ref.shape[1]
         )
         topk_vals_ref[...], topk_idxs_ref[...] = (
           vals.astype(topk_vals_ref.dtype),
