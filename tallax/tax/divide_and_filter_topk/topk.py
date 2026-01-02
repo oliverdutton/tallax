@@ -176,11 +176,11 @@ def _merge_unconverged_bins_topk(
   # Derive block_token from logits_ref shape
   block_token = logits_ref.shape[0]
 
+  # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
   # Derive num_packed_bins from max_k and m
-  # Compute smallest power of 2 >= ceil(max_k / (m - 1))
-  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m))
-
-  # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m
+  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m) - 1)
+  if num_packed_bins > NUM_LANES:
+    raise NotImplementedError
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
@@ -189,8 +189,7 @@ def _merge_unconverged_bins_topk(
     [bin_vals, bin_indices], k=num_packed_bins,
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
-  if num_packed_bins > NUM_LANES:
-    raise NotImplementedError
+
   # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
   packing_perm = jnp.take_along_axis(
     sorted_bin_indices, iota_tile(1) % num_packed_bins, axis=1
