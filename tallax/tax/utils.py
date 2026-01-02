@@ -214,7 +214,7 @@ def pack_bf16_u16_to_i32(val, index, stable=True):
   stable=True standardizes the bit patterns of NaNs and zeros, and packs the int array so on value ties the lower index element is larger in comparisons.
   """
   assert index.dtype == jnp.int32
-  val = val.astype(jnp.float32))
+  val = val.astype(jnp.float32)
   if stable:
     val = standardize(val)
     # ensure stable sort of indices
