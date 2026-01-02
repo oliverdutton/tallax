@@ -271,9 +271,13 @@ def _merge_unconverged_bins_topk(
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
 
+  local_idxs = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
+  padding = NUM_LANES % num_packed_bins
   packed_idxs = (
-    jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins
-  ) * num_bins + jnp.concat((packing_perm,) * (n // NUM_LANES), axis=1)
+    # num_packed_bins may not evenly divide NUM_LANES
+    # so we have to offset the junk remainder data
+    (local_idxs - (local_idxs // NUM_LANES) * padding) // num_packed_bins
+  ) * num_bins + pltpu.repeat(packing_perm, n // NUM_LANES, axis=1)
 
   # we calculate the top k vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
