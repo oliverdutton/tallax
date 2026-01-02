@@ -273,7 +273,7 @@ def _merge_unconverged_bins_topk(
     index = iota_tile(1)
     # Fix: iterate based on actual number of vals, not NUM_LANES // num_packed_bins
     # When num_bins > NUM_LANES, vals has fewer elements than NUM_LANES // num_packed_bins
-    num_packing_iters = min(len(vals), (NUM_LANES + num_packed_bins - 1) // num_packed_bins)
+    num_packing_iters = min(len(vals), pl.cdiv(NUM_LANES, num_packed_bins))
     for i in range(num_packing_iters):
       pack_mask = (
         (index >= i * num_packed_bins)
