@@ -178,7 +178,7 @@ def _merge_unconverged_bins_topk(
 
   # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
   # Derive num_packed_bins from max_k and m
-  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m) - 1)
+  num_packed_bins = pl.cdiv(max_k, m) - 1
   if num_packed_bins > NUM_LANES:
     raise NotImplementedError
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
@@ -204,14 +204,14 @@ def _merge_unconverged_bins_topk(
     indicator |= index == packing_perm[:, i : i + 1]
 
   # invalidate active bins to avoid double inclusion
-  bins_topm_vals_ref[...] = jnp.concat(
+  bins_topm_vals_ref[:,:m * num_bins] = jnp.concat(
     [
       jnp.where(
         indicator,
         get_dtype_info(bins_topm_vals_ref).min,
         bins_topm_vals_ref[:, i * num_bins : (i + 1) * num_bins],
       )
-      for i in range(bins_topm_vals_ref.shape[1] // num_bins)
+      for i in range(m)
     ],
     axis=1,
   )
