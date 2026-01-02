@@ -224,7 +224,7 @@ def _merge_unconverged_bins_topk(
       dtype=logits_ref.dtype,
     )
     for _ in range(
-      pl.cdiv(vocab_size, NUM_LANES * (num_bins // num_packed_bins))
+      pl.cdiv(vocab_size, (NUM_LANES // num_packed_bins) * num_bins)
     )
   ]
 
