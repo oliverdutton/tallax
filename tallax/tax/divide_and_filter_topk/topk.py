@@ -1,3 +1,17 @@
+
+There’s something wrong, likely in merge unconverged bins code, when num_bins!=NUM_LANES. Step through the code and try work it out. You can make a numpy shadow version and Print the indices being used and work out if all values from the active bins are being packed correctly to the packed_vals and packed_idxs. The problem is that some entries in packed_vals are missing
+
+1024 bins, 32768 vocab, k=16 with bins topm schedule=(2,) or (3,) or (4,) all have the bug I’m trying to fix when inputs do not converge within the time so need merge hnconverged bins.
+
+do not run the jax code, oossibly make shadow versions of bits to help and step through the code mentally yourself to check for out by 1 or cdiv bugs in places
+
+read the readme
+
+m=2
+at most k bins can have max values gt largest 2nd bin.
+
+
+
 import functools
 import jax
 import jax.numpy as jnp
@@ -178,27 +192,15 @@ def _merge_unconverged_bins_topk(
 
   # Derive num_packed_bins from max_k and m
   # Compute smallest power of 2 >= ceil(max_k / (m - 1))
-  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m - 1))
+  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m))
 
-  # Count contribution of each bin to top-k
-  # bins_topm_vals has shape (block_token, m * num_bins)
-  # We want to count how many values in each bin are >= pivot
-  pivot = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)].max(
-    -1, keepdims=True
-  )
-
-  # Count contributions per bin across the m-1 top bins
-  # Shape: (block_token, num_bins)
-  num_gt_k = jnp.zeros((block_token, num_bins), dtype=jnp.int32)
-  for i in range(m - 1):
-    bin_vals = bins_topm_vals_ref[:, pl.dslice(i * num_bins, num_bins)]
-    num_gt_k += (bin_vals >= pivot).astype(jnp.int32)
-
+  # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m
+  bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
   _, sorted_bin_indices = bitonic_topk_arrays(
-    [num_gt_k, bin_indices], k=num_packed_bins,
+    [bin_vals, bin_indices], k=num_packed_bins,
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
   if num_packed_bins > NUM_LANES:
@@ -216,6 +218,7 @@ def _merge_unconverged_bins_topk(
     # Mark positions where bin index matches the i-th active bin
     indicator |= index == packing_perm[:, i : i + 1]
 
+  # invalidate entries were about to include in active bins top-k
   bins_topm_vals_ref[...] = jnp.concat(
     [
       jnp.where(
