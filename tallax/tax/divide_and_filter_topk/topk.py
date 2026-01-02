@@ -513,7 +513,7 @@ def _top_bounded_k(
   max_k: int,
   block_token: int | None = None,
   block_topk: int | None = None,
-  num_bins: int = NUM_LANES,
+  num_bins: int | None = None,
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   guarantee_convergence: bool = True,
@@ -574,6 +574,11 @@ def _top_bounded_k(
   if block_token is None:
     block_token = NUM_SUBLANES
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
+
+  if num_bins is None and bins_topm_schedule is None and max_k <= 8 and (max_k * vocab_size) < (8 * 2**17):
+    # heuristic for very small k, up until large vocab size just do a bins top-k then aggregate. Provides constant runtime.
+    num_bins = NUM_LANES
+    bins_topm_schedule = (max_k,)
 
   if num_bins is None:
     num_bins = 2 * NUM_LANES
