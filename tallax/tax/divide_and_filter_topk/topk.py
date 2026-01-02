@@ -276,7 +276,7 @@ def _merge_unconverged_bins_topk(
     jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins
   ) * num_bins + jnp.concat((packing_perm,) * (n // NUM_LANES), axis=1)
 
-  # we calculate the top 128 vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
+  # we calculate the top k vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
   # avoid any nans ever entering into bitonic_topk. bins_topm_vals will have no nans, as it uses > comparison for filling and nan > x resolves to False in all cases
   packed_vals = nan_to_min(packed_vals)
