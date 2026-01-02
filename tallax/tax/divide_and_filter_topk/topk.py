@@ -587,6 +587,9 @@ def _top_bounded_k(
     block_token = NUM_SUBLANES
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
 
+  if num_bins is None:
+    num_bins = 2 * NUM_LANES
+
   if block_topk is None:
     block_topk = ceil_multiple(min(num_tokens_padded, NUM_LANES), block_token)
   if block_topk % block_token != 0:
@@ -706,9 +709,6 @@ def top_bounded_k(
   replace_val: float | int | None = None,
   interpret: bool = False,
 ):
-  if num_bins is None:
-    num_bins = NUM_LANES if k <= 16 else 2 * NUM_LANES
-
   def _closed_topk(logits: jax.Array, k: jax.Array):
     return _top_bounded_k(
       logits,
