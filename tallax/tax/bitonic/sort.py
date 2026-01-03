@@ -547,7 +547,7 @@ def _bitonic_sort_arrays(
   )
 
 
-@map_batch_dim_to_smaller_than_hardware_tile_size
+@functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, max_batch_size=NUM_LANES)
 def bitonic_sort_maybe_rolled(
   operands: list[jax.Array],
   num_keys: int = 1,
