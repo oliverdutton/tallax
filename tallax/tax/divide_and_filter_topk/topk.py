@@ -178,7 +178,7 @@ def _merge_unconverged_bins_topk(
   # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
   # Derive num_packed_bins from max_k and m
   num_packed_bins = pl.cdiv(max_k, m) - 1
-  if num_packed_bins > NUM_LANES:
+  if num_packed_bins > NUM_LANES or num_packed_bins > num_bins:
     raise NotImplementedError
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
