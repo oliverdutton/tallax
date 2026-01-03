@@ -18,7 +18,6 @@ from tallax.tax.utils import (
   NUM_LANES,
   NUM_SUBLANES,
   pad,
-  log2,
   get_dtype_info,
   iota_tile,
   to_32bit_dtype,
@@ -178,7 +177,7 @@ def _merge_unconverged_bins_topk(
 
   # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
   # Derive num_packed_bins from max_k and m
-  num_packed_bins = 2 ** log2(pl.cdiv(max_k, m) - 1)
+  num_packed_bins = pl.cdiv(max_k, m) - 1
   if num_packed_bins > NUM_LANES:
     raise NotImplementedError
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
@@ -204,14 +203,14 @@ def _merge_unconverged_bins_topk(
     indicator |= index == packing_perm[:, i : i + 1]
 
   # invalidate active bins to avoid double inclusion
-  bins_topm_vals_ref[...] = jnp.concat(
+  bins_topm_vals_ref[:,:m * num_bins] = jnp.concat(
     [
       jnp.where(
         indicator,
         get_dtype_info(bins_topm_vals_ref).min,
         bins_topm_vals_ref[:, i * num_bins : (i + 1) * num_bins],
       )
-      for i in range(bins_topm_vals_ref.shape[1] // num_bins)
+      for i in range(m)
     ],
     axis=1,
   )
@@ -225,7 +224,7 @@ def _merge_unconverged_bins_topk(
       dtype=logits_ref.dtype,
     )
     for _ in range(
-      pl.cdiv(vocab_size, NUM_LANES * (num_bins // num_packed_bins))
+      pl.cdiv(vocab_size, (NUM_LANES // num_packed_bins) * num_bins)
     )
   ]
 
@@ -272,9 +271,13 @@ def _merge_unconverged_bins_topk(
   packed_vals = jnp.concat(packed_vals, axis=1)
   n = packed_vals.shape[1]
 
+  local_idxs = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
+  padding = NUM_LANES % num_packed_bins
   packed_idxs = (
-    jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1) // num_packed_bins
-  ) * num_bins + jnp.concat((packing_perm,) * (n // NUM_LANES), axis=1)
+    # num_packed_bins may not evenly divide NUM_LANES
+    # so we have to offset the junk remainder data
+    (local_idxs - (local_idxs // NUM_LANES) * padding) // num_packed_bins
+  ) * num_bins + pltpu.repeat(packing_perm, n // NUM_LANES, axis=1)
 
   # we calculate the top k vals from the packed bins and a piece of bins_topm_(val/idx)s we overwrite
   # Build input arrays by concatenating packed vals and the top NUM_LANES values
@@ -607,7 +610,7 @@ def _top_bounded_k(
 
   # binned topk / sort pad len
   max_m = bins_topm_schedule[-1]
-  buffer_size = max(max_m, 2 ** log2(max_m - 1)) * num_bins
+  buffer_size = max_m * num_bins
 
   output_shapes = (
     jax.ShapeDtypeStruct((num_tokens, max_k), logits.dtype),

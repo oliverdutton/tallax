@@ -1,11 +1,12 @@
 """
 vLLM top-k top-p sampling, using two pallas functions
 """
-
+import functools
+import jax
 from tallax.vllm.top_p_and_sample import top_p_and_sample
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
-
+@functools.partial(jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule"))
 def topk_topp_and_sample(
   rng_key,
   logits,
