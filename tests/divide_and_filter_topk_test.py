@@ -59,13 +59,16 @@ def test_divide_and_filter_topk(shape, dtype):
 @pytest.mark.parametrize("k", [17, 128, 157])
 @pytest.mark.parametrize("num_bins", [128, 384, 1024])
 @pytest.mark.parametrize("schedule", [(1,), (2,), (1,4), (4,5), None])
-@pytest.mark.xfail(raises=NotImplementedError, reason="Not supported, probably due to packing related constraints")
 @pytest.mark.skipif(
   is_cpu_platform(),
   reason="Divide and filter top-k tests require TPU/GPU - CPU uses interpret mode which is slow",
 )
 def test_divide_and_filter_topk_worst_case_values(topk_distribution, shape, dtype, k, num_bins, schedule):
   """Test divide and filter top-k implementation with exact match validation."""
+  max_m = max(schedule) if schedule is not None else 1
+  if pl.cdiv(k, max_m) > min(num_bins, NUM_LANES):
+    pytest.skip('Unsupported setup')
+  
   # Generate test data
   key = jax.random.key(0)
   if jnp.isdtype(dtype, 'real floating'):
