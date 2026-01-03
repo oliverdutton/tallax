@@ -8,7 +8,7 @@ Built on the lightning fast top-k a highly optimized vLLM top-k top-p logit samp
 ### 🎯 Scenario 1: Logit sampling
 
 
-📊 Setup: Gemini 3 Pro decoding
+📊 Setup: Gemini 3 Pro decoding  
   Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16[^gemini3]
 
 
