@@ -5,44 +5,45 @@ Built on the lightning fast top-k a highly optimized vLLM top-k top-p logit samp
 
 ## 🔥 Performance Wins
 
-### 🎯 Scenario 1: Logit sampling
+### 🎯 Scenario 1: Logit sampling[^gemini3]
 
 ```
 📊 Setup: Gemini 3 Pro decoding
-  Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16*
+  Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16
 ```
 
 #### 📦 Small Batch (16)
-
 ```
-vLLM    ████████████████████████ 390μs
-tallax  ██ 35μs
+vLLM    ███████████████ 390μs
+tallax  █ 25μs
          
-     🔥 10× AVERAGE SPEEDUP
-     ⚡ 6× WORST-CASE SPEEDUP (70μs)
+     🔥 15× AVERAGE SPEEDUP
+     ⚡  10× WORST-CASE SPEEDUP (36μs)
 ```
 
 #### 📦📦📦 Large Batch (128)
 
 ```
-vLLM    ████████████████████████████████ 11,800μs
-tallax  █ 250μs
+vLLM    ███████████████████████████████████████████████████████████████████████████ 11,800μs
+tallax  █ 150μs
 
-     🔥 45× AVERAGE SPEEDUP
-     ⚡ 23× WORST-CASE SPEEDUP (500μs)
+     🔥 75× AVERAGE SPEEDUP
+     ⚡  45× WORST-CASE SPEEDUP (240μs)
 ```
 
-### 🎯 Scenario 2: Speculative Decoding Top-k
+### 🎯 Scenario 2: Speculative Decoding Top-k[^k5]
 ```
 📊 Setup: Top-5 | Batch=16 | Draft-Vocab=32K | bfloat16
 
-XLA     ████████████████████ 85μs
+XLA     ███████████████ 85μs
 tallax  █ 5.5μs
 
-     🔥 15× FASTER
+     🔥 15× SPEEDUP
 ```
-
-**Gemini 3 Pro uses [fixed top-k=64 and default top-p=0.95](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro). Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely.*
+[^k5]:  ́bins_topm_schedule=(5,), num_bins=128, block_token=8`, This schedule results in constant runtime as the bins top-5 is a superset of the global top-5.
+  
+*Timings all on a single v5e
+[^gemini3]: Gemini 3 Pro uses [fixed top-k=64 and default top-p=0.95](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro). Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely. For tallax.top_k we set  ́bins_topm_schedule=(4,), num_bins=512, block_token=8` where 96% of blocks should early exit after bins top-4.
 
 ----
 
@@ -124,13 +125,13 @@ To recover efficiency:
 1. **Distribute** `sort_dim` across both dimensions
 2. **Example:** `(8, 2048)` → split into 16 tiles of `(8, 128)` → concatenate to `(128, 128)` → transpose
 
-For **k ≤ 128**, top-k can be computed in this format with at most 4 sequential lane permute operations.
+Top-k can be computed in this format with 4 sequential lane permute operations at batch size 8, reducing to zero by batch size 128.
 
 **Result:** This Pallas implementation is significantly faster than XLA's top-k.
 
 ## Why Use Bitonic Top-k in the Algorithm and not alternatives?
 
-For computing top-128 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 256 bins, we expect a 99.9999% chance of convergence by bins-top-8. This produces a filtered subset size of only 256 × 8 = 2,048 elements.
+For computing top-64 of a typical LLM vocabulary size (100–200k tokens) using the divide and filter top-k tactic with 512 bins, we expect a 96% chance of convergence by bins-top-4. This produces a filtered subset size of only 512 × 4 = 2,048 elements.
 
 At this reduced size, the choice of final top-k algorithm (Bitonic vs RadixSelect vs ...) contributes negligibly to overall runtime , so alternatives to bitonic top-k were not explored.​​​​​​​​​​​​​​​​
 
