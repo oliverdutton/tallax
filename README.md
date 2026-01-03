@@ -5,12 +5,12 @@ Built on the lightning fast top-k a highly optimized vLLM top-k top-p logit samp
 
 ## 🔥 Performance Wins
 
-### 🎯 Scenario 1: Logit sampling[^gemini3]
+### 🎯 Scenario 1: Logit sampling
 
-```
+
 📊 Setup: Gemini 3 Pro decoding
-  Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16
-```
+  Top-k=64 | Top-p=0.95 | Vocab=262K | bfloat16[^gemini3]
+
 
 #### 📦 Small Batch (16)
 ```
@@ -18,7 +18,7 @@ vLLM    ███████████████ 390μs
 tallax  █ 25μs
          
      🔥 15× AVERAGE SPEEDUP
-     ⚡  10× WORST-CASE SPEEDUP (36μs)
+     ⚡ 10× WORST-CASE SPEEDUP (36μs)
 ```
 
 #### 📦📦📦 Large Batch (128)
@@ -28,13 +28,12 @@ vLLM    ████████████████████████
 tallax  █ 150μs
 
      🔥 75× AVERAGE SPEEDUP
-     ⚡  45× WORST-CASE SPEEDUP (240μs)
+     ⚡ 45× WORST-CASE SPEEDUP (240μs)
 ```
 
-### 🎯 Scenario 2: Speculative Decoding Top-k[^k5]
+### 🎯 Scenario 2: Speculative Decoding Top-k
+📊 Setup: Top-5 | Batch=16 | Draft-Vocab=32K | bfloat16[^k5]
 ```
-📊 Setup: Top-5 | Batch=16 | Draft-Vocab=32K | bfloat16
-
 XLA     ███████████████ 85μs
 tallax  █ 5.5μs
 
@@ -43,7 +42,7 @@ tallax  █ 5.5μs
 [^k5]:  ́bins_topm_schedule=(5,), num_bins=128, block_token=8`, This schedule results in constant runtime as the bins top-5 is a superset of the global top-5.
   
 *Timings all on a single v5e
-[^gemini3]: Gemini 3 Pro uses [fixed top-k=64 and default top-p=0.95](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro). Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely. For tallax.top_k we set  ́bins_topm_schedule=(4,), num_bins=512, block_token=8` where 96% of blocks should early exit after bins top-4.
+[^gemini3]: Gemini 3 Pro uses [fixed top-k=64 and default top-p=0.95](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/models/gemini/3-pro). Vocab size is not specified, so we use the Gemma 3 vocab size of 262K, logits dtype is not specified but bfloat16 is most likely. For tallax.top_k we set  ́bins_topm_schedule=(4,), num_bins=512, block_token=8` where 96% of blocks should early exit after bins top-4. Test version vllm-tpu==0.12.0. All timings extracted from xprof traces.
 
 ----
 
