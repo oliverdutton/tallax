@@ -11,9 +11,9 @@ def topk_topp_and_sample(
   rng_key,
   logits,
   tpu_sampling_metadata,
-  max_k=128,
-  num_bins=256,
-  bins_topm_schedule=(5, 9),
+  max_k: int,
+  num_bins: int | None = None,
+  bins_topm_schedule: int | None = None,
 ):
   vocab_size = logits.shape[1]
   topk_logits, topk_idxs = top_bounded_k(
