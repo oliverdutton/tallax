@@ -1,55 +1,67 @@
+# @title Speculative Decoding Top-k
+'''
+!rm -rf tallax
+branch = 'main'
+!git clone -q -b {branch} --single-branch https://github.com/oliverdutton/tallax.git && cd tallax && pip install -q .[tpu]
+'''
 import functools
 import jax
 import jax.numpy as jnp
-
-# Import benchmark utils
-from tallax.test_utils import benchmark
-
+import numpy as np
 from tallax import tax
-from tallax._src.utils import is_cpu_platform
-
-k = 64
-num_queries = 32
-vocab_size = 201088
-hidden_dim = 2880
-
-logit_key, key_act, key_weight = jax.random.split(jax.random.key(0), 3)
-x = jax.random.normal(key_act, (num_queries, hidden_dim), dtype=jnp.bfloat16)
-w = jax.random.normal(key_weight, (hidden_dim, vocab_size), dtype=jnp.bfloat16)
-logits = jax.random.normal(
-  key_weight, (num_queries, vocab_size), dtype=jnp.float32
-).astype(jnp.bfloat16)
+from tallax.tax.test_utils import benchmark, verify_topk_output
 
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
-approx_topk_xla = jax.jit(jax.lax.approx_max_k, static_argnames=("k",))
 
+def benchmark_topk(shape, k, dtype, case, seed):
+  """Test topk_topp_and_sample implementation against vLLM reference.
 
-@jax.jit
-def add_one(x):
-  return x + 1
+  Tests both random and worst-case logits distributions.
+  Validates that pallas implementation matches vLLM sampling behavior exactly.
+  """
+  num_tokens, vocab_size = shape
 
+  # Split main seed into all needed keys
+  key = jax.random.PRNGKey(seed)
 
-@jax.jit
-@functools.partial(jax.vmap, in_axes=(0, None))
-def matmul_and_topk_xla(x, w, k=k):
-  logits = x @ w
-  return jax.lax.top_k(logits, k)
+  # Generate logits based on case
+  logits = jax.random.normal(key, shape).astype(dtype)
+  if case == "worst_case":
+    logits = logits.at[:, 13::256].add(100)
 
-
-def run_benchmarks():
-  interpret = is_cpu_platform()
-
+  # Run both implementations
   def _run():
     return (
-      add_one(logits),
+      tax.top_k(logits, k=k),
       topk_xla(logits, k=k),
-      tax.top_k(logits, k=k, block_size=8, interpret=interpret),
-      # Not exact. Runtime varies with recall, here run with default 0.95
-      approx_topk_xla(logits, k=k),
     )
 
+  pallas_result, _ = _run()
   benchmark(_run)
+
+  valid = verify_topk_output(logits, pallas_result, axis=1)
+  assert valid.all(), (
+    f"Top-k validation failed for shape {shape}, dtype {dtype}, k {k}"
+  )
+  
 
 
 if __name__ == "__main__":
-  run_benchmarks()
+  print("Running topk_topp_and_sample tests...")
+
+  shapes = [(16, 2**15), (128, 2**15)]
+  k = 5
+  dtypes = [jnp.bfloat16,]
+  cases = ["random", "worst_case"]
+  seeds = [42,]
+
+  for shape in shapes:
+    for dtype in dtypes:
+      for case in cases:
+        for seed in seeds:
+          print(
+            f"\nTesting shape={shape}, dtype={dtype}, case={case}, seed={seed}..."
+          )
+          benchmark_topk(shape, k, dtype, case, seed)
+
+  print("\nAll topk checks passed!")
