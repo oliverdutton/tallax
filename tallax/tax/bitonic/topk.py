@@ -142,6 +142,8 @@ def bitonic_topk_arrays(
     arrs = jax.tree.map(to_compressed_transpose_format, arrs)
   arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
   num_tiles = len(arrs_tiles[0])
+  unsplit_dim0 = num_tiles * arrs_tiles[0][0].shape[0]
+  assert (unsplit_dim0 % k) == 0
   num_merges = log2(unpadded_sort_dim) - log2(k)
   num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
   num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))
