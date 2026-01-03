@@ -108,6 +108,21 @@ def verify_sort_output(
     return valid and valid_permute
 
 
+def uniquely_define_topk(logits, k):
+  """Ensure topk is well-defined by handling ties at the k-th boundary.
+
+  If more than k values are >= the k-th largest value, set extras at the boundary to -inf.
+  """
+  boundary_val = jax.lax.sort(logits)[-k]
+  mask = (logits == boundary_val)
+  # if more than k values gt k-th largest value, set them to -inf
+  k_covered = (logits > boundary_val).sum()
+  mask = mask & (mask.cumsum() > k - k_covered)
+  logits = jnp.where(mask, float("-inf"), logits)
+  #jax.debug.print('k>=threshold {} for k={}', (logits >= boundary_val).sum(), k)
+  return logits
+
+
 def verify_topk_output(x, outs, axis=1, approximate=False):
   """Validate top-k outputs for correctness.
 
