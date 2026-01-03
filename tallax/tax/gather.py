@@ -1,3 +1,9 @@
+"""TPU-optimized gather operations using Pallas.
+
+This module provides efficient implementations of array gathering operations
+(take_along_axis) optimized for TPU hardware.
+"""
+
 import functools
 import jax
 import jax.numpy as jnp
@@ -15,6 +21,19 @@ from tallax.tax.utils import (
 
 @functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, num_args=2)
 def take_along_axis_arrays(val, idx, *, axis=1):
+  """Take values from array using indices along specified axis.
+
+  Array-based implementation that processes data in tiles for efficient
+  TPU execution.
+
+  Args:
+    val: Source array to gather from.
+    idx: Indices to gather.
+    axis: Axis along which to gather (default: 1).
+
+  Returns:
+    Gathered values with same shape as idx.
+  """
   shape = idx.shape
   out_dtype = val.dtype
   val = val.astype(to_32bit_dtype(val.dtype))

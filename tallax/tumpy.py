@@ -1,3 +1,9 @@
+"""NumPy-compatible sorting operations for JAX using Pallas-based bitonic sort.
+
+This module provides tumpy (TPU NumPy) implementations of common NumPy sorting
+functions, optimized for TPU execution using the Pallas framework.
+"""
+
 from tallax.tax.bitonic import bitonic_sort_in_vmem as lax_sort_pallas
 from tallax.tax.gather import take_along_axis as _take_along_axis
 
