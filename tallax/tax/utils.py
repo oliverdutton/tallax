@@ -1,3 +1,10 @@
+"""Utility functions for TPU-optimized operations.
+
+This module provides common utility functions, constants, and helpers used
+throughout the Tallax library for TPU-specific operations including tiling,
+padding, data format conversions, and loop constructs.
+"""
+
 import functools
 import inspect
 import math
@@ -15,6 +22,11 @@ NUM_LANES = 128
 
 
 def is_cpu_platform():
+  """Check if code is running on CPU platform.
+
+  Returns:
+    True if running on CPU, False otherwise. Emits warning if on CPU.
+  """
   is_cpu = jax.default_backend() == "cpu"
   if is_cpu:
     warnings.warn("Running on CPU, interpret=True will be used.")
@@ -236,9 +248,7 @@ def unpack_bf16_u16_from_i32(packed, stable=True):
   index = packed.view(jnp.int32) & 0xFFFF
   if stable:
     # reverse the int mapping required for stable sort
-    index = jnp.where(
-      val.astype(jnp.float32) < 0, 2**16 - 1 - index, index
-    )
+    index = jnp.where(val.astype(jnp.float32) < 0, 2**16 - 1 - index, index)
   return val, index
 
 
@@ -389,7 +399,9 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1, max_batch_size=None):
+def map_batch_dim_to_smaller_than_hardware_tile_size(
+  unsplit_f, num_args=1, max_batch_size=None
+):
   """Decorator to handle chunking in the batch dimension"""
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
@@ -409,7 +421,11 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1, max_
     # split so the batch axis matches hardware sizes
     # make inputs (NUM_SUBLANES, *) if f on axis 1,
     # or (*, NUM_LANES) if f axis 0
-    max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis] if max_batch_size is None else max_batch_size
+    max_chunk_size = (
+      (NUM_SUBLANES, NUM_LANES)[batch_axis]
+      if max_batch_size is None
+      else max_batch_size
+    )
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
     split_indices = tuple(
       (i + 1) * max_chunk_size

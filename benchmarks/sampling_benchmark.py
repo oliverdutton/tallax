@@ -59,9 +59,7 @@ def benchmark_topk_topp_and_sample(shape, k, dtype, case, seed):
   # Run both implementations
   def _run():
     pallas_results = [
-      topk_topp_and_sample(
-        sample_key, logits, tpu_sampling_metadata, max_k=k
-      ),
+      topk_topp_and_sample(sample_key, logits, tpu_sampling_metadata, max_k=k),
     ]
 
     vllm_result = vllm_sample(sample_key, mesh, logits, tpu_sampling_metadata)
@@ -85,9 +83,15 @@ if __name__ == "__main__":
 
   shapes = [(16, 2**18), (128, 2**18)]
   k = 64
-  dtypes = [jnp.bfloat16,]
+  dtypes = [
+    jnp.bfloat16,
+  ]
   cases = ["random", "worst_case"]
-  seeds = [42, 123, 456,]
+  seeds = [
+    42,
+    123,
+    456,
+  ]
 
   for shape in shapes:
     for dtype in dtypes:

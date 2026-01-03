@@ -1,12 +1,16 @@
 """
 vLLM top-k top-p sampling, using two pallas functions
 """
+
 import functools
 import jax
 from tallax.vllm.top_p_and_sample import top_p_and_sample
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
-@functools.partial(jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule"))
+
+@functools.partial(
+  jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule")
+)
 def topk_topp_and_sample(
   rng_key,
   logits,
@@ -15,6 +19,19 @@ def topk_topp_and_sample(
   num_bins: int | None = None,
   bins_topm_schedule: int | None = None,
 ):
+  """Combined top-k, top-p filtering, and sampling for vLLM inference.
+
+  Args:
+    rng_key: RNG key for sampling.
+    logits: Input logits of shape [batch_size, vocab_size].
+    tpu_sampling_metadata: Metadata containing top_k, top_p, and temperature.
+    max_k: Maximum k value for top-k computation.
+    num_bins: Optional number of bins for divide-and-filter algorithm.
+    bins_topm_schedule: Optional custom schedule for binned top-m computation.
+
+  Returns:
+    Sampled token indices.
+  """
   vocab_size = logits.shape[1]
   topk_logits, topk_idxs = top_bounded_k(
     logits,

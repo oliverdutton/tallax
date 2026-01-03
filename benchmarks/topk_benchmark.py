@@ -1,17 +1,17 @@
 # @title Speculative Decoding Top-k
-'''
+"""
 !rm -rf tallax
 branch = 'main'
 !git clone -q -b {branch} --single-branch https://github.com/oliverdutton/tallax.git && cd tallax && pip install -q .[tpu]
-'''
-import functools
+"""
+
 import jax
 import jax.numpy as jnp
-import numpy as np
 from tallax import tax
 from tallax.tax.test_utils import benchmark, verify_topk_output
 
 topk_xla = jax.jit(jax.lax.top_k, static_argnames=("k",))
+
 
 def benchmark_topk(shape, k, dtype, case, seed):
   """Test topk_topp_and_sample implementation against vLLM reference.
@@ -43,7 +43,6 @@ def benchmark_topk(shape, k, dtype, case, seed):
   assert valid.all(), (
     f"Top-k validation failed for shape {shape}, dtype {dtype}, k {k}"
   )
-  
 
 
 if __name__ == "__main__":
@@ -51,9 +50,13 @@ if __name__ == "__main__":
 
   shapes = [(16, 2**15), (128, 2**15)]
   k = 5
-  dtypes = [jnp.bfloat16,]
+  dtypes = [
+    jnp.bfloat16,
+  ]
   cases = ["random", "worst_case"]
-  seeds = [42,]
+  seeds = [
+    42,
+  ]
 
   for shape in shapes:
     for dtype in dtypes:

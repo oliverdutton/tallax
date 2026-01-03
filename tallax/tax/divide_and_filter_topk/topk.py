@@ -1,3 +1,11 @@
+"""Divide-and-filter top-k algorithm implementation.
+
+This module implements an efficient divide-and-filter approach to computing
+top-k elements on TPU. The algorithm progressively filters candidates by
+partitioning the input into bins and incrementally computing top-m supersets
+until the top-k is guaranteed to be contained within the filtered set.
+"""
+
 import functools
 import jax
 import jax.numpy as jnp
@@ -28,6 +36,15 @@ from tallax.tax.utils import (
 
 
 def _extract_remainder_slice(ref, slice_size):
+  """Extract and pad the remainder slice when input doesn't divide evenly.
+
+  Args:
+    ref: Input reference array.
+    slice_size: Size of each slice.
+
+  Returns:
+    Padded remainder slice or None if no remainder exists.
+  """
   full_size = ref.shape[1]
   num_full_slices = full_size // slice_size
   remainder = full_size % slice_size
@@ -42,28 +59,53 @@ def _extract_remainder_slice(ref, slice_size):
 
 
 def nan_to_min(x):
-  # Replaces nans in an array with the dtype min value
+  """Replace NaNs in an array with the dtype's minimum value.
+
+  Args:
+    x: Input array.
+
+  Returns:
+    Array with NaNs replaced by minimum value.
+  """
   return jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
 
 
 def to_comparison_dtype(x):
+  """Convert array to 32-bit dtype suitable for comparisons.
+
+  Args:
+    x: Input array.
+
+  Returns:
+    Array converted to 32-bit dtype.
+  """
   return x.astype(to_32bit_dtype(x.dtype))
 
 
 def bitonic_topk_arrays(operands, k, val_dtype=None, max_index=None):
-  '''Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible''' 
+  """Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible.
+
+  Args:
+    operands: List of arrays to find top-k from.
+    k: Number of top elements to find.
+    val_dtype: Optional dtype for values (enables packing optimization).
+    max_index: Optional maximum index value (enables packing optimization).
+
+  Returns:
+    List of top-k arrays.
+  """
   if val_dtype is None or max_index is None:
     return _bitonic_topk_arrays(operands, k=k)
-  assert len(operands)==2 and type(operands)==list
+  assert len(operands) == 2 and type(operands) == list
   dtypes = [x.dtype for x in operands]
-  pack = val_dtype==jnp.bfloat16 and max_index<=2**16
+  pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
   if pack:
     operands = [pack_bf16_u16_to_i32(*operands, stable=False)]
   operands = _bitonic_topk_arrays(operands, k=k)
   if pack:
-    assert len(operands)==1
+    assert len(operands) == 1
     operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
-    assert len(operands)==2
+    assert len(operands) == 2
   # convert back dtypes (incase theyve changed)
   return [x.astype(dtype) for x, dtype in zip(operands, dtypes, strict=True)]
 
@@ -185,7 +227,8 @@ def _merge_unconverged_bins_topk(
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   # Sort descending by num_gt_k to get top NUM_LANES bin indices
   _, sorted_bin_indices = bitonic_topk_arrays(
-    [bin_vals, bin_indices], k=num_packed_bins,
+    [bin_vals, bin_indices],
+    k=num_packed_bins,
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
 
@@ -203,7 +246,7 @@ def _merge_unconverged_bins_topk(
     indicator |= index == packing_perm[:, i : i + 1]
 
   # invalidate active bins to avoid double inclusion
-  bins_topm_vals_ref[:,:m * num_bins] = jnp.concat(
+  bins_topm_vals_ref[:, : m * num_bins] = jnp.concat(
     [
       jnp.where(
         indicator,
@@ -285,9 +328,13 @@ def _merge_unconverged_bins_topk(
   packed_vals = nan_to_min(packed_vals)
   val_input = jnp.concat([packed_vals, bins_topm_vals_ref[:, :max_k]], axis=1)
   idx_input = jnp.concat([packed_idxs, bins_topm_idxs_ref[:, :max_k]], axis=1)
-  (bins_topm_vals_ref[:, :max_k], bins_topm_idxs_ref[:, :max_k]) = bitonic_topk_arrays(
-    [val_input, idx_input], k=max_k,
-    val_dtype=logits_ref.dtype, max_index=logits_ref.shape[1]
+  (bins_topm_vals_ref[:, :max_k], bins_topm_idxs_ref[:, :max_k]) = (
+    bitonic_topk_arrays(
+      [val_input, idx_input],
+      k=max_k,
+      val_dtype=logits_ref.dtype,
+      max_index=logits_ref.shape[1],
+    )
   )
 
 
@@ -483,7 +530,8 @@ def dynamic_topk_refs(
         vals, idxs = bitonic_topk_arrays(
           [vals_input, idxs_input],
           k=max_k,
-          val_dtype=logits_ref.dtype, max_index=logits_ref.shape[1]
+          val_dtype=logits_ref.dtype,
+          max_index=logits_ref.shape[1],
         )
         topk_vals_ref[...], topk_idxs_ref[...] = (
           vals.astype(topk_vals_ref.dtype),
@@ -578,18 +626,26 @@ def _top_bounded_k(
     block_token = NUM_SUBLANES
   num_tokens_padded = ceil_multiple(num_tokens, block_token)
 
-  if num_bins is None and bins_topm_schedule is None and max_k <= 8 and (max_k * vocab_size) < (8 * 2**17):
+  if (
+    num_bins is None
+    and bins_topm_schedule is None
+    and max_k <= 8
+    and (max_k * vocab_size) < (8 * 2**17)
+  ):
     # heuristic for very small k, up until large vocab size just do a bins top-k then aggregate. Provides constant runtime.
     num_bins = NUM_LANES
     bins_topm_schedule = (max_k,)
 
   if num_bins is None:
     # larger the input, the more costly bins top-m computing is, so relative to it bins top-m gets cheaper and higher num_bins requires less m for convergence (and filters more strongly for unconverged bins)
-    num_bins = next((n for limit, n in [
-        (2**13, 128), 
-        (2**15, 256), 
-        (2**18, 512)
-    ] if vocab_size <= limit), 1024)
+    num_bins = next(
+      (
+        n
+        for limit, n in [(2**13, 128), (2**15, 256), (2**18, 512)]
+        if vocab_size <= limit
+      ),
+      1024,
+    )
 
   if block_topk is None:
     block_topk = ceil_multiple(min(num_tokens_padded, NUM_LANES), block_token)
@@ -604,10 +660,14 @@ def _top_bounded_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(
-      max_k, num_bins, block_token, target_yields=(
-      # if input is small bins top-m is cheap and we try avoid the lane permutes required for dealing with unconverged bins
-      (0.8, 0.999) if vocab_size <= 2**13 else (0.8,)
-    ))
+      max_k,
+      num_bins,
+      block_token,
+      target_yields=(
+        # if input is small bins top-m is cheap and we try avoid the lane permutes required for dealing with unconverged bins
+        (0.8, 0.999) if vocab_size <= 2**13 else (0.8,)
+      ),
+    )
     bins_topm_schedule = tuple(sorted({min(t + 1, max_k) for t in thresholds}))
     print(
       f"Auto-computed bins top-m schedule for max_k={max_k}, num_bins={num_bins}: {bins_topm_schedule}"

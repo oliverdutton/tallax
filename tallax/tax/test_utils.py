@@ -114,12 +114,12 @@ def uniquely_define_topk(logits, k):
   If more than k values are >= the k-th largest value, set extras at the boundary to -inf.
   """
   boundary_val = jax.lax.sort(logits)[-k]
-  mask = (logits == boundary_val)
+  mask = logits == boundary_val
   # if more than k values gt k-th largest value, set them to -inf
   k_covered = (logits > boundary_val).sum()
   mask = mask & (mask.cumsum() > k - k_covered)
   logits = jnp.where(mask, float("-inf"), logits)
-  #jax.debug.print('k>=threshold {} for k={}', (logits >= boundary_val).sum(), k)
+  # jax.debug.print('k>=threshold {} for k={}', (logits >= boundary_val).sum(), k)
   return logits
 
 

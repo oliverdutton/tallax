@@ -63,7 +63,7 @@ def _compute_padded_shape(
       ceil_multiple(
         ceil_multiple(unpadded_dim1, NUM_LANES * NUM_LANES // dim0),
         # ensure dim1 after compression (but before transpose) is multiple of k
-        max(k, NUM_SUBLANES) * NUM_LANES // dim0
+        max(k, NUM_SUBLANES) * NUM_LANES // dim0,
       ),
     )
     for dim0 in dim0s
@@ -72,7 +72,9 @@ def _compute_padded_shape(
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 
-@functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, max_batch_size=NUM_LANES)
+@functools.partial(
+  map_batch_dim_to_smaller_than_hardware_tile_size, max_batch_size=NUM_LANES
+)
 def bitonic_topk_arrays(
   operands: list[jax.Array],
   k: int,

@@ -1,3 +1,10 @@
+"""Sparse random number generation for TPU.
+
+This module provides efficient random number generation for sparse indices,
+useful for sampling operations on TPU where only specific array locations
+need random values.
+"""
+
 import jax
 import jax.numpy as jnp
 from jax.extend.random import threefry2x32_p

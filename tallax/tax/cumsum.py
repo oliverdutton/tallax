@@ -1,3 +1,9 @@
+"""TPU-optimized cumulative sum operations using Pallas.
+
+This module provides an efficient implementation of cumulative sum (cumsum)
+optimized for TPU hardware using the Pallas framework.
+"""
+
 import functools
 import jax
 import jax.numpy as jnp
@@ -14,6 +20,15 @@ from tallax.tax.utils import (
 
 
 def reverse_tiles(tiles, axis):
+  """Reverse the order of tiles and elements within each tile along axis.
+
+  Args:
+    tiles: List of tile arrays to reverse.
+    axis: Axis along which to reverse.
+
+  Returns:
+    List of reversed tiles with reversed elements.
+  """
   tile_shape = tiles[0].shape
   reverse_perm = tile_shape[axis] - 1 - iota_tile(axis)
   return [
@@ -22,6 +37,15 @@ def reverse_tiles(tiles, axis):
 
 
 def cumsum_tile(tile, axis):
+  """Compute cumulative sum within a single tile using parallel scan.
+
+  Args:
+    tile: Input tile array.
+    axis: Axis along which to compute cumsum.
+
+  Returns:
+    Tile with cumulative sum computed.
+  """
   n = tile.shape[axis]
   idx = iota_tile(axis)
   for stage in range(log2(n)):
