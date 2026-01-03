@@ -584,7 +584,12 @@ def _top_bounded_k(
     bins_topm_schedule = (max_k,)
 
   if num_bins is None:
-    num_bins = 2 * NUM_LANES
+    # larger the input, the more costly bins top-m computing is, so relative to it bins top-m gets cheaper and higher num_bins requires less m for convergence (and filters more strongly for unconverged bins)
+    num_bins = next((n for limit, n in [
+        (8_000, 128), 
+        (32_000, 256), 
+        (262_000, 512)
+    ] if vocab_size <= limit), 1024)
 
   if block_topk is None:
     block_topk = ceil_multiple(min(num_tokens_padded, NUM_LANES), block_token)
@@ -599,8 +604,10 @@ def _top_bounded_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(
-      max_k, num_bins, block_token, target_yields=(0.8, 0.999)
-    )
+      max_k, num_bins, block_token, target_yields=(
+      # if input is small bins top-m is cheap and we try avoid the lane permutes required for dealing with unconverged bins
+      (0.8, 0.999) if vocab_size <= 2**13 else (0.8,)
+    ))
     bins_topm_schedule = tuple(sorted({min(t + 1, max_k) for t in thresholds}))
     print(
       f"Auto-computed bins top-m schedule for max_k={max_k}, num_bins={num_bins}: {bins_topm_schedule}"
