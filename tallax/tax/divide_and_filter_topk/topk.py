@@ -1,10 +1,4 @@
-"""Divide-and-filter top-k algorithm implementation.
-
-This module implements an efficient divide-and-filter approach to computing
-top-k elements on TPU. The algorithm progressively filters candidates by
-partitioning the input into bins and incrementally computing top-m supersets
-until the top-k is guaranteed to be contained within the filtered set.
-"""
+"""Divide-and-filter top-k algorithm implementation."""
 
 import functools
 import jax
