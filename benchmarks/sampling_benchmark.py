@@ -18,7 +18,7 @@ from tallax.vllm.tpu_inference_sampling_as_standalone_file import (
 from tallax.tax.test_utils import benchmark, uniquely_define_topk
 
 
-def benchmark_topk_topp_and_sample(shape, k, dtype, case, seed=42):
+def benchmark_topk_topp_and_sample(shape, k, dtype, case, seed):
   """Test topk_topp_and_sample implementation against vLLM reference.
 
   Tests both random and worst-case logits distributions.
@@ -96,7 +96,7 @@ if __name__ == "__main__":
           print(
             f"\nTesting shape={shape}, dtype={dtype}, case={case}, seed={seed}..."
           )
-          benchmark_topk_topp_and_sample(shape, dtype, case, seed)
+          benchmark_topk_topp_and_sample(shape, k, dtype, case, seed)
           print("  ✓ Passed")
 
   print("\nAll topk_topp_and_sample tests passed!")
