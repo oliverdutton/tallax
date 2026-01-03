@@ -69,7 +69,7 @@ def _compute_padded_shape(
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 
-@map_batch_dim_to_smaller_than_hardware_tile_size
+@functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, max_batch_size=NUM_LANES)
 def bitonic_topk_arrays(
   operands: list[jax.Array],
   k: int,
