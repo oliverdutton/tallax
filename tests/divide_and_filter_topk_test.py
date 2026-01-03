@@ -3,7 +3,7 @@ import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from tallax.tax.divide_and_filter_topk.topk import topk
-from tallax.tax.utils import is_cpu_platform
+from tallax.tax.utils import is_cpu_platform, NUM_LANES
 from tallax.tax.test_utils import verify_topk_output
 
 
