@@ -30,7 +30,7 @@ def test_divide_and_filter_topk(shape, dtype):
 
   # Generate test data
   key = jax.random.key(0)
-  if dtype == jnp.float32:
+  if jnp.isdtype(dtype, 'real floating'):
     logits = jax.random.normal(key, shape, dtype=dtype)
   else:
     logits = jax.random.randint(key, shape, 0, 1000, dtype=dtype)
