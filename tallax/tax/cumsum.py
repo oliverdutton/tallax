@@ -1,8 +1,4 @@
-"""TPU-optimized cumulative sum operations using Pallas.
-
-This module provides an efficient implementation of cumulative sum (cumsum)
-optimized for TPU hardware using the Pallas framework.
-"""
+"""Pallas TPU lowerable cumulative sum operation."""
 
 import functools
 import jax
