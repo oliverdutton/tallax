@@ -65,6 +65,9 @@ def test_divide_and_filter_topk(shape, dtype):
 )
 def test_divide_and_filter_topk_worst_case_values(topk_distribution, shape, dtype, k, num_bins, schedule):
   """Test divide and filter top-k implementation with exact match validation."""
+  if schedule is not None and any(m*num_bins < k for m in schedule):
+    # will try to top-k less than k values
+    pytest.skip('Unsupported setup')
   max_m = max(schedule) if schedule is not None else 1
   if pl.cdiv(k, max_m) > min(num_bins, NUM_LANES):
     pytest.skip('Unsupported setup')
