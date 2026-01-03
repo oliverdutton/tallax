@@ -586,9 +586,9 @@ def _top_bounded_k(
   if num_bins is None:
     # larger the input, the more costly bins top-m computing is, so relative to it bins top-m gets cheaper and higher num_bins requires less m for convergence (and filters more strongly for unconverged bins)
     num_bins = next((n for limit, n in [
-        (8_000, 128), 
-        (32_000, 256), 
-        (262_000, 512)
+        (2**13, 128), 
+        (2**15, 256), 
+        (2**18, 512)
     ] if vocab_size <= limit), 1024)
 
   if block_topk is None:
