@@ -389,7 +389,7 @@ def set_cummax(vs):
   return type(vs)(o)
 
 
-def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
+def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1, max_batch_size=None):
   """Decorator to handle chunking in the batch dimension"""
   # Get the default value for 'axis' from the original function
   sig = inspect.signature(unsplit_f)
@@ -409,7 +409,7 @@ def map_batch_dim_to_smaller_than_hardware_tile_size(unsplit_f, num_args=1):
     # split so the batch axis matches hardware sizes
     # make inputs (NUM_SUBLANES, *) if f on axis 1,
     # or (*, NUM_LANES) if f axis 0
-    max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis]
+    max_chunk_size = (NUM_SUBLANES, NUM_LANES)[batch_axis] if max_batch_size is None else max_batch_size
     # Generate split indices, excluding any that equal batch_size to avoid empty arrays
     split_indices = tuple(
       (i + 1) * max_chunk_size

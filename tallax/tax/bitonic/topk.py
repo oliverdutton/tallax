@@ -33,7 +33,8 @@ def _compute_padded_shape(
 
   This function finds the minimal padded shape that satisfies the constraints:
   - dim0 is a power of 2 between NUM_SUBLANES and NUM_LANES (inclusive)
-  - dim1 is a multiple of k
+  - dim1 is a multiple of k which after compressed transpose becomes dim0 with a multiple of k.
+  Post compressed transpose dim1 maps to dim1 // pl.cdiv(NUM_LANES, dim0)
   - num_elems must be divisible by NUM_LANES^2 so mosaic lowers the split and
     concat on full tiles, subtile concat not supported
 
@@ -46,6 +47,7 @@ def _compute_padded_shape(
     Tuple of (padded_dim0, padded_dim1) compatible with compressed transpose format
   """
   if unpadded_dim0 >= NUM_LANES:
+    # it won't be compressed so simpler rules
     dim0 = ceil_multiple(unpadded_dim0, NUM_LANES)
     dim1 = ceil_multiple(unpadded_dim1, max(k, NUM_SUBLANES))
     return (dim0, dim1)
@@ -60,7 +62,8 @@ def _compute_padded_shape(
       dim0,
       ceil_multiple(
         ceil_multiple(unpadded_dim1, NUM_LANES * NUM_LANES // dim0),
-        max(k, NUM_SUBLANES),
+        # ensure dim1 after compression (but before transpose) is multiple of k
+        max(k, NUM_SUBLANES) * NUM_LANES // dim0
       ),
     )
     for dim0 in dim0s
@@ -69,7 +72,7 @@ def _compute_padded_shape(
   return sorted(shapes, key=lambda x: (x[0] * x[1], -x[0]))[0]
 
 
-@map_batch_dim_to_smaller_than_hardware_tile_size
+@functools.partial(map_batch_dim_to_smaller_than_hardware_tile_size, max_batch_size=NUM_LANES)
 def bitonic_topk_arrays(
   operands: list[jax.Array],
   k: int,
@@ -139,6 +142,8 @@ def bitonic_topk_arrays(
     arrs = jax.tree.map(to_compressed_transpose_format, arrs)
   arrs_tiles = jax.tree.map(split_array_to_tiles, arrs)
   num_tiles = len(arrs_tiles[0])
+  unsplit_dim0 = num_tiles * arrs_tiles[0][0].shape[0]
+  assert (unsplit_dim0 % k) == 0
   num_merges = log2(unpadded_sort_dim) - log2(k)
   num_sublane_merges = log2(pl.cdiv(NUM_SUBLANES, k))
   num_lane_merges = log2(pl.cdiv(unpadded_sort_dim, num_tiles * NUM_SUBLANES))

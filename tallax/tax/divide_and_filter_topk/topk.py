@@ -178,7 +178,7 @@ def _merge_unconverged_bins_topk(
   # The ⌈k/m⌉'th largest value across the m'th largest value in each partition is a lower bound for the top-k threshold, as in ⌈k/m⌉ bins there are at least m values larger or equal to it (⌈k/m⌉ is the ceiling division of k by m). All partitions where the m'th largest value is less than the threshold will not contribute any further values to top-k so only ⌈k/m⌉-1 partitions could possibly contribute to top-k beyond their top-m.
   # Derive num_packed_bins from max_k and m
   num_packed_bins = pl.cdiv(max_k, m) - 1
-  if num_packed_bins > NUM_LANES:
+  if num_packed_bins > NUM_LANES or num_packed_bins > num_bins:
     raise NotImplementedError
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
@@ -584,7 +584,12 @@ def _top_bounded_k(
     bins_topm_schedule = (max_k,)
 
   if num_bins is None:
-    num_bins = 2 * NUM_LANES
+    # larger the input, the more costly bins top-m computing is, so relative to it bins top-m gets cheaper and higher num_bins requires less m for convergence (and filters more strongly for unconverged bins)
+    num_bins = next((n for limit, n in [
+        (2**13, 128), 
+        (2**15, 256), 
+        (2**18, 512)
+    ] if vocab_size <= limit), 1024)
 
   if block_topk is None:
     block_topk = ceil_multiple(min(num_tokens_padded, NUM_LANES), block_token)
@@ -599,8 +604,10 @@ def _top_bounded_k(
   # Auto-compute schedules if not provided
   if bins_topm_schedule is None:
     thresholds = calculate_depth_thresholds(
-      max_k, num_bins, block_token, target_yields=(0.8, 0.999)
-    )
+      max_k, num_bins, block_token, target_yields=(
+      # if input is small bins top-m is cheap and we try avoid the lane permutes required for dealing with unconverged bins
+      (0.8, 0.999) if vocab_size <= 2**13 else (0.8,)
+    ))
     bins_topm_schedule = tuple(sorted({min(t + 1, max_k) for t in thresholds}))
     print(
       f"Auto-computed bins top-m schedule for max_k={max_k}, num_bins={num_bins}: {bins_topm_schedule}"
