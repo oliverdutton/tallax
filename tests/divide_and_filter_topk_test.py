@@ -67,7 +67,7 @@ def test_divide_and_filter_topk_worst_case_values(topk_distribution, shape, dtyp
   """Test divide and filter top-k implementation with exact match validation."""
   # Generate test data
   key = jax.random.key(0)
-  if dtype == jnp.float32:
+  if jnp.isdtype(dtype, 'real floating'):
     logits = jax.random.normal(key, shape, dtype=dtype)
   else:
     logits = jax.random.randint(key, shape, 0, 1000, dtype=dtype)
