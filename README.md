@@ -57,11 +57,11 @@ pip install .[tpu]
 
 ----
 
-# Divide and Filter Top-k Algorithm
+# Divide and Filter Top-k Algorithm[^delegate]
 
 Tallax provides a TPU-optimized algorithm for efficiently finding top-k elements through partitioning, parallel local top-m computation, and opportunistic early stopping.
 
-
+[^delegate]: More officially known as delegate centric top-k, e.g. this GPU implementation paper [here](https://asherliu.github.io/docs/sc21b.pdf)
 
 ## Overview
 
