@@ -809,7 +809,9 @@ def top_bounded_k(
       topk_idxs += i * logits.shape[1]
       # all-gather and top-k
       operands = [
-        jax.lax.all_gather(x, axis_name, axis=1)
+        jax.lax.collapse(
+          jax.lax.all_gather(x, axis_name, axis=1),
+        1)
         for x in (topk_logits, topk_idxs)
       ]
       topk_logits, topk_idxs = bitonic_topk(operands, k=max_k)
