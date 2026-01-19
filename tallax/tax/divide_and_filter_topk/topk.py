@@ -254,58 +254,61 @@ def _merge_unconverged_bins_topk(
 
   # Loop over blocks and pack data from active bins
   vocab_size = logits_ref.shape[1]
-  packed_vals = [
-    jnp.full(
-      (block_token, NUM_LANES),
-      get_dtype_info(logits_ref).min,
-      dtype=logits_ref.dtype,
-    )
-    for _ in range(
-      pl.cdiv(vocab_size, (NUM_LANES // num_packed_bins) * num_bins)
-    )
-  ]
+  empty_tile = jnp.full(
+    (block_token, NUM_LANES),
+    get_dtype_info(logits_ref).min,
+    dtype=logits_ref.dtype,
+  )
 
   assert num_bins % NUM_LANES == 0
-  for offset in range(0, num_bins, NUM_LANES):
-    local_perm = (packing_perm - offset) % NUM_LANES
-    in_range_mask = (packing_perm >= offset) & (
-      packing_perm < (offset + NUM_LANES)
-    )
-
-    # Extract values from all full bins at this offset
-    num_full_slices = vocab_size // num_bins
-    vals = [
-      logits_ref[:, pl.dslice(i * num_bins + offset, NUM_LANES)]
-      for i in range(num_full_slices)
-    ]
-    # deal with remainder if exists
-    if num_full_slices * num_bins + offset < vocab_size:
-      # if start is not out of array, take the full final num_bins slice then pull out this offset portion
-      vals.append(
-        _extract_remainder_slice(logits_ref, slice_size=num_bins)[
-          :, offset : offset + NUM_LANES
-        ]
-      )
+  local_perm = packing_perm % NUM_LANES
+  # Extract values from all full bins at this offset
+  vals = [
+    logits_ref[:, i*NUM_LANES:(i+1)*NUM_LANES]
+    for i in range(vocab_size // NUM_LANES)
+  ]
+  vals.append(
+    _extract_remainder_slice(logits_ref, slice_size=NUM_LANES)
+  )
+  
+  # Reduce num tiles by factor of num_bins // NUM_LANES
+  in_range_masks = [(packing_perm >= offset) & (
+    packing_perm < (offset + NUM_LANES)
+  ) for offset in range(0, num_bins, NUM_LANES)]
+  tile_reduction = num_bins // NUM_LANES
+ 
+  out_tiles = []
+  for i in range(pl.cdiv(len(vals), tile_reduction)):
+    tiles = vals[i*tile_reduction:(i+1)*tile_reduction]
     # apply permutation
-    vals = [
+    tiles = [
       jnp.take_along_axis(
         tile.astype(to_32bit_dtype(tile.dtype)), local_perm, axis=1
       )
-      for tile in vals
+      for tile in tiles
     ]
-    # Pack into positions based on active bin index
-    index = iota_tile(1)
-    for i in range(NUM_LANES // num_packed_bins):
-      pack_mask = (
-        (index >= i * num_packed_bins)
-        & (index < (i + 1) * num_packed_bins)
-        & in_range_mask
-      )
-      # Pack every num_packed_bins-th chunk starting from i
-      for j, v in enumerate(vals[i :: NUM_LANES // num_packed_bins]):
-        packed_vals[j] = jnp.where(pack_mask, v, packed_vals[j])
+    for i in range(1, len(tiles)):
+      tiles[0] = jnp.where(in_range_masks[i], tiles[i], tiles[0])
+    out_tiles.append(tiles[0])
+  vals = out_tiles
 
-  packed_vals = jnp.concat(packed_vals, axis=1)
+  # Reduce num tiles by factor NUM_LANES // num_packed_bins
+  index = iota_tile(1)
+  tile_reduction = NUM_LANES // num_packed_bins
+  packing_masks = [(
+    (index >= i * num_packed_bins)
+    & (index < (i + 1) * num_packed_bins)
+  ) for i in range(tile_reduction)]
+  out_tiles = []
+  num_out_tiles = pl.cdiv(len(vals), tile_reduction)
+  for i in range(num_out_tiles):
+    tiles = vals[i*tile_reduction:(i+1)*tile_reduction]
+    out_tile = empty_tile
+    for tile, mask in zip(tiles, packing_masks, strict=False):
+      out_tile = jnp.where(mask, tile, out_tile)
+    out_tiles.append(out_tile)
+  
+  packed_vals = jnp.concat(out_tiles, axis=1)
   n = packed_vals.shape[1]
 
   local_idxs = jax.lax.broadcasted_iota(jnp.int32, packed_vals.shape, 1)
