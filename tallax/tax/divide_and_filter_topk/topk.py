@@ -267,9 +267,10 @@ def _merge_unconverged_bins_topk(
     logits_ref[:, i*NUM_LANES:(i+1)*NUM_LANES]
     for i in range(vocab_size // NUM_LANES)
   ]
-  vals.append(
-    _extract_remainder_slice(logits_ref, slice_size=NUM_LANES)
-  )
+  if vocab_size % NUM_LANES != 0:
+    vals.append(
+      _extract_remainder_slice(logits_ref, slice_size=NUM_LANES)
+    )
   
   # Reduce num tiles by factor of num_bins // NUM_LANES
   in_range_masks = [(packing_perm >= offset) & (
