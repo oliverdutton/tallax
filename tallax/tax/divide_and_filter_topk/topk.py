@@ -289,7 +289,7 @@ def _merge_unconverged_bins_topk(
       for tile in tiles
     ]
     for i in range(1, len(tiles)):
-      tiles[0] = jnp.where(in_range_masks[i], tiles[i], tiles[0])
+      tiles[0] += tiles[i] 
     out_tiles.append(tiles[0])
   vals = out_tiles
 
@@ -306,7 +306,7 @@ def _merge_unconverged_bins_topk(
     tiles = vals[i*tile_reduction:(i+1)*tile_reduction]
     out_tile = empty_tile
     for tile, mask in zip(tiles, packing_masks, strict=False):
-      out_tile = jnp.where(mask, tile, out_tile)
+      out_tile += tile
     out_tiles.append(out_tile)
   
   packed_vals = jnp.concat(out_tiles, axis=1)
