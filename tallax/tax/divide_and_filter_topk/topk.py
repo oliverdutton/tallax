@@ -61,7 +61,9 @@ def nan_to_min(x):
   Returns:
     Array with NaNs replaced by minimum value.
   """
-  return jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
+  if jnp.issubdtype(x.dtype, jnp.floating):
+    x = jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
+  return x 
 
 
 def to_comparison_dtype(x):
