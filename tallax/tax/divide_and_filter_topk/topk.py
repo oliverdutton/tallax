@@ -76,7 +76,7 @@ def to_comparison_dtype(x):
   return x.astype(to_32bit_dtype(x.dtype))
 
 
-def bitonic_topk_arrays(operands, k, val_dtype=None, max_index=None):
+def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   """Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible.
 
   Args:
@@ -89,13 +89,13 @@ def bitonic_topk_arrays(operands, k, val_dtype=None, max_index=None):
     List of top-k arrays.
   """
   if val_dtype is None or max_index is None:
-    return _bitonic_topk_arrays(operands, k=k)
+    return _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
   assert len(operands) == 2 and type(operands) == list
   dtypes = [x.dtype for x in operands]
   pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
   if pack:
-    operands = [pack_bf16_u16_to_i32(*operands, stable=False)]
-  operands = _bitonic_topk_arrays(operands, k=k)
+    operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys>1)]
+  operands = _bitonic_topk_arrays(operands, k=k, num_keys=min(len(operands), num_keys))
   if pack:
     assert len(operands) == 1
     operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
@@ -158,7 +158,7 @@ def binned_topk(
     for i in range(completed_k, k):
       # Exchange with stored top-k
       # Only perform the swap if the value is larger
-      mask = bubble_vals > bins_topk_vals[i]
+      mask = bubble_vals >= bins_topk_vals[i]
       bins_topk_vals[i], bubble_vals = (
         jnp.where(m, bubble_vals, bins_topk_vals[i]) for m in (mask, ~mask)
       )
@@ -174,12 +174,24 @@ def binned_topk(
       jnp.int32, shape, 1
     )
 
+  num_full_slices = vocab_size // num_bins
   def loop_body(i, bins_topk_outs):
+    # Process in reverse order, due to >= swap
+    # this leads to stable index ordering
+    i = num_full_bins - 1 - i
     vals = logits[..., pl.dslice(num_bins * i, num_bins)]
     idxs = compute_idxs(i)
     return update_bins_topk(vals, idxs, *bins_topk_outs)
 
-  num_full_slices = vocab_size // num_bins
+  # Handle remaining elements if vocab_size doesn't divide num_bins
+  # We do this first as we loop the array backwards, due to >= swap this leads to stable index ordering and cases where the top-k includes -inf
+  rem_vals = _extract_remainder_slice(logits, num_bins)
+  if rem_vals is not None:
+    # Create idxs for the final segment
+    rem_idxs = compute_idxs(num_full_slices)
+    # Update bins topk with the overspill
+    bins_topk_outs = update_bins_topk(rem_vals, rem_idxs, *bins_topk_outs)
+
   bins_topk_outs = unrolled_fori_loop(
     num_full_slices,
     loop_body,
@@ -187,13 +199,6 @@ def binned_topk(
     unroll=unroll,
   )
 
-  # Handle remaining elements if vocab_size doesn't divide num_bins
-  rem_vals = _extract_remainder_slice(logits, num_bins)
-  if rem_vals is not None:
-    # Create idxs for the final segment
-    rem_idxs = compute_idxs(num_full_slices)
-    # Update bins topk with the overspill
-    bins_topk_outs = update_bins_topk(rem_vals, rem_idxs, *bins_topk_outs)
   return bins_topk_outs
 
 
@@ -205,6 +210,7 @@ def _merge_unconverged_bins_topk(
   num_bins: int,
   m: int,
   max_k: int,
+  stable: bool = False,
 ):
   """Compute top-k from most active bins and merge with unconverged bins."""
 
@@ -223,6 +229,7 @@ def _merge_unconverged_bins_topk(
   _, sorted_bin_indices = bitonic_topk_arrays(
     [bin_vals, bin_indices],
     k=num_packed_bins,
+    num_keys=1+int(stable),
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
 
@@ -328,6 +335,7 @@ def _merge_unconverged_bins_topk(
       k=max_k,
       val_dtype=logits_ref.dtype,
       max_index=logits_ref.shape[1],
+      num_keys=1+int(stable),
     )
   )
 
@@ -352,6 +360,7 @@ def dynamic_topk_refs(
   bins_topm_schedule: tuple[int, ...],
   guarantee_convergence: bool,
   replace_val: float | int | None,
+  stable: bool,
 ):
   """
   Pallas kernel for computing binned top-k supersets until global top-k is guaranteed.
@@ -428,8 +437,11 @@ def dynamic_topk_refs(
       # the largest m-th largest value, then top-k is guaranteed to be in bins
       # top-(m-1) collated
       pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
+      # if stable sort, we must include values at the boundary in to the bitonic stable sort 
+      # if not we just need k values greater than or equal to
+      _comp = operator.gt if stable else operator.ge
       num_larger = (
-        sum((v >= pivot) for v in bins_topm_vals[: m - 1])
+        sum((_comp(v, pivot) for v in bins_topm_vals[: m - 1])
         .astype(jnp.float32)
         .sum(-1)
       )
@@ -466,6 +478,7 @@ def dynamic_topk_refs(
         num_bins=num_bins,
         m=m_final,
         max_k=max_k,
+        stable=stable,
       )
 
   # early on bins_topm_schedule are convergence checks so we go to bins-top-(m-1). For final bins-top-(m_max) for convergence guaranteed we only need to consider top-(m_max-1), if not must cover bins-top-(m_max)
@@ -526,6 +539,7 @@ def dynamic_topk_refs(
           k=max_k,
           val_dtype=logits_ref.dtype,
           max_index=logits_ref.shape[1],
+          num_keys=1+int(stable),
         )
         topk_vals_ref[...], topk_idxs_ref[...] = (
           vals.astype(topk_vals_ref.dtype),
@@ -837,6 +851,7 @@ def top_bounded_k(
     "bins_topm_unroll",
     "bins_topm_schedule",
     "interpret",
+    "stable",
   ),
 )
 def topk(
@@ -848,13 +863,13 @@ def topk(
   bins_topm_unroll: int = 64,
   bins_topm_schedule: tuple[int, ...] | None = None,
   interpret: bool = False,
+  stable: bool = True,
 ):
   """
   Compute top-k element.
 
   Behavior differences to jax.lax.top_k:
       - Handling of NaNs is different to jax.lax.top_k, here NaNs are never part of top-k.
-      - Any output where k values are larger than or equal to the k'th largest value is considered valid, unlike jax.lax.top_k which in case of ties in value considers lower-index elements larger.
   If you wish exactly the same behavior, use `tallax.tax.bitonic_top_k(x, k=k, is_stable=True)` instead.
 
   Sharding is supported in either/both dimensions
@@ -869,6 +884,7 @@ def topk(
       bins_topm_schedule: Optional custom search schedule. If None, automatically
           computed.
       interpret: If True, run in CPU interpret mode (default: False).
+      stable: Whether sort should be stable, faster if False. Note: jax.lax.top_k is stable sort. (default: True)
 
   Returns:
       Tuple of (topk_vals, topk_idxs):
@@ -886,4 +902,5 @@ def topk(
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
     interpret=interpret,
+    stable=stable,
   )
