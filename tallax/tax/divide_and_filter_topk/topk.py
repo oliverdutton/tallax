@@ -1,6 +1,7 @@
 """Divide-and-filter top-k algorithm implementation."""
 
 import functools
+import operator
 import jax
 import jax.numpy as jnp
 from jax import jit
@@ -96,7 +97,7 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   dtypes = [x.dtype for x in operands]
   pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
   if pack:
-    operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys>1)]
+    operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys>1))]
   operands = _bitonic_topk_arrays(operands, k=k, num_keys=min(len(operands), num_keys))
   if pack:
     assert len(operands) == 1
@@ -439,11 +440,11 @@ def dynamic_topk_refs(
       # the largest m-th largest value, then top-k is guaranteed to be in bins
       # top-(m-1) collated
       pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
-      # if stable sort, we must include values at the boundary in to the bitonic stable sort 
+      # if stable sort, we must include values at the boundary in to the bitonic stable sort
       # if not we just need k values greater than or equal to
       _comp = operator.gt if stable else operator.ge
       num_larger = (
-        sum((_comp(v, pivot) for v in bins_topm_vals[: m - 1])
+        sum((_comp(v, pivot) for v in bins_topm_vals[: m - 1]))
         .astype(jnp.float32)
         .sum(-1)
       )
@@ -566,6 +567,7 @@ def dynamic_topk_refs(
     "guarantee_convergence",
     "replace_val",
     "interpret",
+    "stable",
   ),
 )
 def _top_bounded_k(
@@ -580,6 +582,7 @@ def _top_bounded_k(
   guarantee_convergence: bool = True,
   replace_val: float | int | None = None,
   interpret: bool = False,
+  stable: bool = True,
 ):
   """
   High-level interface for adaptive binned top-k computation on TPU.
@@ -722,6 +725,7 @@ def _top_bounded_k(
       bins_topm_schedule=bins_topm_schedule,
       guarantee_convergence=guarantee_convergence,
       replace_val=replace_val,
+      stable=stable,
     ),
     in_specs=(
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
@@ -766,6 +770,7 @@ def _top_bounded_k(
     "guarantee_convergence",
     "replace_val",
     "interpret",
+    "stable",
   ),
 )
 @functools.wraps(_top_bounded_k)
@@ -781,6 +786,7 @@ def top_bounded_k(
   guarantee_convergence: bool = False,
   replace_val: float | int | None = None,
   interpret: bool = False,
+  stable: bool = True,
 ):
   def _closed_topk(logits: jax.Array, k: jax.Array):
     return _top_bounded_k(
@@ -795,6 +801,7 @@ def top_bounded_k(
       guarantee_convergence=guarantee_convergence,
       replace_val=replace_val,
       interpret=interpret,
+      stable=stable,
     )
 
   @custom_partitioning
