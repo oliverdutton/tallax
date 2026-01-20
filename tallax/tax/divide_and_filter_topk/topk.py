@@ -94,6 +94,9 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   if val_dtype is None or max_index is None:
     return _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
   assert len(operands) == 2 and type(operands) == list
+  if num_keys == 2:
+    # sort vals descending, indices ascending
+    operands[1] = -operands[1]
   dtypes = [x.dtype for x in operands]
   pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
   if pack:
@@ -103,6 +106,9 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
     assert len(operands) == 1
     operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
     assert len(operands) == 2
+  if num_keys == 2:
+    # invert back so sort vals descending, indices ascending
+    operands[1] = -operands[1]
   # convert back dtypes (incase theyve changed)
   return [x.astype(dtype) for x, dtype in zip(operands, dtypes, strict=True)]
 
