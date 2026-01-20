@@ -181,7 +181,7 @@ def binned_topk(
   def loop_body(i, bins_topk_outs):
     # Process in reverse order, due to >= swap
     # this leads to stable index ordering
-    i = num_full_bins - 1 - i
+    i = num_full_slices - 1 - i
     vals = logits[..., pl.dslice(num_bins * i, num_bins)]
     idxs = compute_idxs(i)
     return update_bins_topk(vals, idxs, *bins_topk_outs)
