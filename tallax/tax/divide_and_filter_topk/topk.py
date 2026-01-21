@@ -242,7 +242,7 @@ def _merge_unconverged_bins_topk(
     )
   # Sort descending by m'th largest value of each bin to get bins which may contribute to top-k
   sorted_bin_indices = bitonic_topk_arrays(
-    bin_operands
+    bin_operands,
     k=num_packed_bins,
     num_keys=1+int(stable),
   )[-1]
