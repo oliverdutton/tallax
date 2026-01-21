@@ -237,20 +237,37 @@ def topk_mask_stable(
     threshold_expanded = jnp.expand_dims(threshold, -1)
     return jnp.where(x >= threshold_expanded, x, replace_val)
 
-  # Stable version: find exact boundary index for tied elements
-  last_valid_idx = stable_topk_mask_jax(x, k, threshold)
+  # Stable version: find exact boundary index for all elements
+  # We need to find the last index position to include such that we have exactly k elements
 
-  # Create mask: include if (val > threshold) OR (val == threshold AND idx <= last_valid_idx)
   threshold_expanded = jnp.expand_dims(threshold, -1)
-  last_valid_idx_expanded = jnp.expand_dims(last_valid_idx, -1)
 
+  # Create masks for values above and at threshold
+  gt_threshold = x > threshold_expanded
+  eq_threshold = x == threshold_expanded
+
+  # Cumulative counts
+  cumsum_gt = jnp.cumsum(gt_threshold.astype(jnp.int32), axis=-1)
+  cumsum_eq = jnp.cumsum(eq_threshold.astype(jnp.int32), axis=-1)
+  total_count = cumsum_gt + cumsum_eq
+
+  # A position is valid if:
+  # 1. It has value >= threshold (either gt or eq)
+  # 2. Including it doesn't exceed k
+  ge_threshold = gt_threshold | eq_threshold
+  valid = (total_count <= k) & ge_threshold
+
+  # Find the last valid position
   indices = jnp.arange(x.shape[-1])
   if len(x.shape) > 1:
     indices = jnp.broadcast_to(indices, x.shape)
 
-  mask = (x > threshold_expanded) | (
-    (x == threshold_expanded) & (indices <= last_valid_idx_expanded)
-  )
+  # Set invalid positions to -1, then take max to get last valid index
+  last_valid_idx = jnp.where(valid, indices, -1).max(axis=-1, keepdims=True)
+
+  # Final mask: keep if index <= last_valid_idx AND value >= threshold
+  # This ensures we keep exactly k elements in order
+  mask = ge_threshold & (indices <= last_valid_idx)
 
   return jnp.where(mask, x, replace_val)
 
