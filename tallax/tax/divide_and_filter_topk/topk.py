@@ -234,12 +234,18 @@ def _merge_unconverged_bins_topk(
   bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
-  # Sort descending by num_gt_k to get top NUM_LANES bin indices
-  _, sorted_bin_indices = bitonic_topk_arrays(
-    [bin_vals, bin_indices],
+  bin_operands = [bin_vals, bin_indices]
+  if stable:
+    # stable sort comparison using indices
+    bin_operands.insert(1,
+      bins_topm_idxs_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
+    )
+  # Sort descending by m'th largest value of each bin to get bins which may contribute to top-k
+  sorted_bin_indices = bitonic_topk_arrays(
+    bin_operands
     k=num_packed_bins,
     num_keys=1+int(stable),
-  )
+  )[-1]
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
 
   # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
