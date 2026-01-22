@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 
-def i64_sum_dim1(x: jax.Array):
+def i64_sum_dim1(x: jax.Array, chunk_size: int = 128):
   """Sum i32 array along dimension 1 with i64 precision using two-stage reduction.
 
   This function performs high-precision summation by splitting i32 values into
@@ -16,30 +16,33 @@ def i64_sum_dim1(x: jax.Array):
   the results back into proper i64 representation.
 
   Algorithm:
-  1. First stage: Split (n, m*128) into m tiles of (n, 128), split each i32 into
+  1. Split input into chunks of chunk_size along axis=1, padding last chunk with zeros if needed
+  2. First stage: Split (n, m, chunk_size) into m tiles, split each i32 into
      upper/lower 16 bits, sum over m dimension (safe for m < 32k)
-  2. Second stage: Split the i64 intermediate results again and sum over 128
+  3. Second stage: Split the i64 intermediate results again and sum over chunk_size
      dimension, harmonize back to final i64 result
 
   The key insight is that by splitting i32 values into 16-bit parts, we can safely
   sum up to 32k (2^15) values without overflow, since (2^16-1) * 2^15 < 2^31.
 
   Summation bounds:
-  - First reduction: m < 32k tiles of size 128, reduces from (n, m*128) to (n, 128) i64
-  - Second reduction: 128 < 32k values, reduces from (n, 128) i64 to (n, 1) i64
-  - Final result can represent sums up to (2^32-1) * 32k * 128 ≈ 2^57
+  - First reduction: m < 32k tiles of size chunk_size, reduces from (n, total) to (n, chunk_size) i64
+  - Second reduction: chunk_size < 32k values, reduces from (n, chunk_size) i64 to (n, 1) i64
+  - Final result can represent sums up to (2^32-1) * 32k * chunk_size ≈ 2^57 (for chunk_size=128)
 
   Args:
-    x: Input array of shape (n, m*128) with i32 dtype where m < 32k
+    x: Input array of shape (n, total) with i32 dtype
+    chunk_size: Size of chunks for splitting (default 128, must be < 32k)
 
   Returns:
     Tuple of (high_i32, low_i32) representing i64 sum of shape (n, 1)
     where value = high * 2^32 + low
 
   Constraints:
-    - x.shape[1] must be < 2^31 and divisible by 128
+    - x.shape[1] must be < 2^31
     - x.ndim must be <= 2
-    - m = x.shape[1] // 128 must be < 32768 (2^15) for safe summation
+    - chunk_size must be < 32768 (2^15) for safe summation
+    - m = ceil(x.shape[1] / chunk_size) must be < 32768 (2^15) for safe summation
 
   Example:
     >>> x = jnp.arange(256, dtype=jnp.int32).reshape(2, 128)
@@ -47,11 +50,23 @@ def i64_sum_dim1(x: jax.Array):
     >>> # high[0] * 2**32 + low[0] equals sum of first row
   """
   assert x.shape[1] < 2**31 and x.ndim <= 2
+  assert chunk_size < 32768, "chunk_size must be < 32k (2^15) for safe summation"
 
   n = x.shape[0]
-  m = x.shape[1] // 128
-  assert m < 32768, "m must be < 32k (2^15) for safe summation"
-  assert x.shape[1] == m * 128, "shape[1] must be divisible by 128"
+  total_len = x.shape[1]
+
+  # Calculate number of full chunks and remainder
+  m = total_len // chunk_size
+  remainder = total_len % chunk_size
+
+  # If there's a remainder, we need one more chunk (padded with zeros)
+  if remainder > 0:
+    m += 1
+    # Pad the input to make it divisible by chunk_size
+    pad_amount = chunk_size - remainder
+    x = jnp.pad(x, ((0, 0), (0, pad_amount)), mode='constant', constant_values=0)
+
+  assert m < 32768, f"m={m} must be < 32k (2^15) for safe summation"
 
   # Bitmask for extracting lower 16 bits
   bitmask_16 = jnp.int32(2**16 - 1)
@@ -60,17 +75,21 @@ def i64_sum_dim1(x: jax.Array):
   # FIRST REDUCTION: Sum over m dimension
   # ============================================================================
 
-  # Reshape to (n, m, 128)
-  x_reshaped = x.reshape(n, m, 128)
+  # Split into m chunks of size chunk_size along axis=1
+  # Result: list of m arrays, each of shape (n, chunk_size)
+  chunks = jnp.split(x, m, axis=1)
+
+  # Stack chunks to create (n, m, chunk_size)
+  x_stacked = jnp.stack(chunks, axis=1)
 
   # Split each i32 into upper 16 bits and lower 16 bits
   # For an i32 value v:
   #   upper = v >> 16      (extracts bits 16-31)
   #   lower = v & 0xFFFF   (extracts bits 0-15)
-  upper = x_reshaped >> 16
-  lower = x_reshaped & bitmask_16
+  upper = x_stacked >> 16
+  lower = x_stacked & bitmask_16
 
-  # Sum over m dimension (axis=1) -> (n, 128)
+  # Sum over m dimension (axis=1) -> (n, chunk_size)
   # Each sum can hold up to (2^16-1) * m where m < 2^15
   # Maximum: (2^16-1) * 2^15 = 2^31 - 2^15 < 2^31, safe for i32
   upper_sum = jnp.sum(upper, axis=1, dtype=jnp.int32)
@@ -92,10 +111,10 @@ def i64_sum_dim1(x: jax.Array):
   low_i32 = ((mid_32 & bitmask_16) << 16) | low_16  # Bits 0-31
 
   # ============================================================================
-  # SECOND REDUCTION: Sum over 128 dimension
+  # SECOND REDUCTION: Sum over chunk_size dimension
   # ============================================================================
 
-  # We now have (n, 128) i64 values represented as (high_i32, low_i32)
+  # We now have (n, chunk_size) i64 values represented as (high_i32, low_i32)
   # Split each i32 part into upper and lower 16 bits again
 
   high_upper = high_i32 >> 16
@@ -103,8 +122,8 @@ def i64_sum_dim1(x: jax.Array):
   low_upper = low_i32 >> 16
   low_lower = low_i32 & bitmask_16
 
-  # Sum over 128 dimension (axis=1) with keepdims=True -> (n, 1)
-  # 128 < 2^15 so safe for i32 without overflow
+  # Sum over chunk_size dimension (axis=1) with keepdims=True -> (n, 1)
+  # chunk_size < 2^15 so safe for i32 without overflow
   high_upper_sum = jnp.sum(high_upper, axis=1, keepdims=True, dtype=jnp.int32)
   high_lower_sum = jnp.sum(high_lower, axis=1, keepdims=True, dtype=jnp.int32)
   low_upper_sum = jnp.sum(low_upper, axis=1, keepdims=True, dtype=jnp.int32)
