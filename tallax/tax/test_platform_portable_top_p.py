@@ -36,29 +36,29 @@ def test_high_precision_uint_basic():
 
 def test_high_precision_uint_sum():
   """Test HighPrecisionUInt summation."""
-  print("Testing HighPrecisionUInt sum_dim1...")
+  print("Testing HighPrecisionUInt sum(axis=1)...")
 
   # Create a small test array
   x = jnp.array([[1, 2, 3, 4], [10, 20, 30, 40]], dtype=jnp.int32)
   hp = HighPrecisionUInt.from_i32_array(x)
 
   # Sum along axis=1
-  sum_hp = hp.sum_dim1()
+  sum_hp = hp.sum(axis=1)
   sum_f32 = sum_hp.to_f32()
 
   expected = jnp.array([[10], [100]], dtype=jnp.float32)
   np.testing.assert_allclose(sum_f32, expected, rtol=1e-5)
-  print(f"  ✓ sum_dim1: {x} -> {sum_f32.squeeze()}")
+  print(f"  ✓ sum(axis=1): {x} -> {sum_f32.squeeze()}")
 
   # Test with larger values
   x_large = jnp.full((2, 1000), 1000, dtype=jnp.int32)
   hp_large = HighPrecisionUInt.from_i32_array(x_large)
-  sum_large_hp = hp_large.sum_dim1()
+  sum_large_hp = hp_large.sum(axis=1)
   sum_large_f32 = sum_large_hp.to_f32()
 
   expected_large = jnp.array([[1000000], [1000000]], dtype=jnp.float32)
   np.testing.assert_allclose(sum_large_f32, expected_large, rtol=1e-5)
-  print(f"  ✓ sum_dim1 large: 1000×1000 = {sum_large_f32.squeeze()}")
+  print(f"  ✓ sum(axis=1) large: 1000×1000 = {sum_large_f32.squeeze()}")
 
   print("✓ Sum operations passed\n")
 
@@ -151,20 +151,21 @@ def test_platform_portable_top_p_different_scales():
   print("Testing different probability scales...")
 
   # Create logits with very different scales
+  # Use top_p=0.7 to ensure some values are masked (top 4 values = 83.8% > 70%)
   logits_small = jnp.array([[0.1, 0.2, 0.3, 0.4, 0.5]], dtype=jnp.float32)
   logits_large = jnp.array([[10.0, 20.0, 30.0, 40.0, 50.0]], dtype=jnp.float32)
 
-  result_small = platform_portable_top_p(logits_small, top_p=0.9)
-  result_large = platform_portable_top_p(logits_large, top_p=0.9)
+  result_small = platform_portable_top_p(logits_small, top_p=0.7)
+  result_large = platform_portable_top_p(logits_large, top_p=0.7)
 
   # Both should mask some values
   mask_small = result_small != -1e12
   mask_large = result_large != -1e12
 
-  assert jnp.any(~mask_small), "Small logits should mask some values"
-  assert jnp.any(~mask_large), "Large logits should mask some values"
+  assert jnp.any(~mask_small), "Small logits should mask some values with top_p=0.7"
+  assert jnp.any(~mask_large), "Large logits should mask some values with top_p=0.7"
 
-  print(f"  ✓ Works with different scales")
+  print(f"  ✓ Works with different scales (top_p=0.7)")
   print(f"    Small logits masked: {(~mask_small).sum()}/5")
   print(f"    Large logits masked: {(~mask_large).sum()}/5")
 

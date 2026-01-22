@@ -70,9 +70,11 @@ def platform_portable_top_p(
   target_sum_hp = HighPrecisionUInt.from_f32(target_sum_f32, num_parts=len(total_sum_hp.parts))
 
   # 5. Binary search for threshold
-  # Predicate: sum(unnorm_probs_i32 >= threshold) >= target_sum
+  # Predicate: sum(unnorm_probs_i32 >= threshold) < target_sum
+  # Binary search finds the largest threshold where predicate is FALSE,
+  # so we invert: return TRUE when cumsum < target_sum
   def predicate_fn(threshold):
-    """Check if cumulative sum of values >= threshold exceeds target."""
+    """Check if cumulative sum of values >= threshold is less than target."""
     # unnorm_probs_i32 has shape [batch, vocab_size]
     # threshold has shape [batch, 1] coming from binary_search broadcasting
     mask = unnorm_probs_i32 >= threshold
@@ -82,8 +84,8 @@ def platform_portable_top_p(
     masked_hp = HighPrecisionUInt.from_i32_array(masked_values)
     cumsum_hp = masked_hp.sum(axis=1)
 
-    # Check if cumsum >= target_sum
-    return cumsum_hp.compare_ge(target_sum_hp)
+    # Return TRUE when cumsum < target_sum (inverted for binary search)
+    return ~cumsum_hp.compare_ge(target_sum_hp)
 
   bound_shape = (logits.shape[0], 1)
   threshold_i32 = binary_search(
