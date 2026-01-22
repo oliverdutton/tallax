@@ -89,8 +89,7 @@ def find_topk_threshold_jax(x: jax.Array, k: int | jax.Array) -> jax.Array:
   Uses binary search in monotonic u32 space to efficiently find the threshold
   value such that there are exactly k values >= threshold.
 
-  Follows the approach from tpu_inference: negate the array and search for
-  the largest value where count(x > threshold) < k.
+  Binary search finds the largest threshold where count(x > threshold) < k.
 
   Args:
     x: Input array of shape [..., vocab_size]
@@ -101,55 +100,43 @@ def find_topk_threshold_jax(x: jax.Array, k: int | jax.Array) -> jax.Array:
   """
   batch_shape = x.shape[:-1]
 
-  # Following tpu_inference approach:
   # Binary search finds LARGEST value where predicate is FALSE
   # predicate(threshold) = count(x > threshold) >= k
   # So we find largest threshold where count(x > threshold) < k
   # This is the k'th largest value
 
-  # Negate x for the search
-  x_neg = -x
-
-  # Binary search with negated values
-  # We want largest threshold_neg where count(x_neg < threshold_neg) < k
-  # Equivalently: largest threshold_neg where NOT(count(x_neg < threshold_neg) >= k)
-
-  # Invariant:
-  # - current_bits represents the "largest value where predicate is FALSE"
-  # - We build it up bit by bit, from MSB to LSB
-
   def loop_body(state):
-    l_neg, r_neg = state
-    m_neg = interp_f32(l_neg, r_neg)
+    l, r = state
+    m = interp_f32(l, r)
 
-    # Predicate: count(x_neg < threshold_neg) >= k
-    # Which is: count(x > -threshold_neg) >= k
-    count_gt = (x_neg < jnp.expand_dims(m_neg, -1)).sum(-1)
+    # Predicate: count(x > threshold) >= k
+    # m has shape (batch, 1), broadcasts correctly with x
+    count_gt = (x > m).sum(-1, keepdims=True)
     predicate_true = count_gt >= k
 
     # We want the largest value where predicate is FALSE
     # If predicate is TRUE at m, then the answer is < m, so update r = m
     # If predicate is FALSE at m, then the answer might be m or > m, so update l = m
-    l_neg = jnp.where(predicate_true, l_neg, m_neg)
-    r_neg = jnp.where(predicate_true, m_neg, r_neg)
+    l = jnp.where(predicate_true, l, m)
+    r = jnp.where(predicate_true, m, r)
 
-    return (l_neg, r_neg)
+    return (l, r)
 
   def cond(state):
-    l_neg, r_neg = state
+    l, r = state
     # Continue while l and r are more than 1 ULP apart
-    m_neg = interp_f32(l_neg, r_neg)
-    return jnp.any(m_neg != l_neg)
+    m = interp_f32(l, r)
+    return jnp.any(m != l)
 
-  # Initialize bounds
-  l_neg = jnp.full(batch_shape, -jnp.inf, dtype=x.dtype)
-  r_neg = jnp.full(batch_shape, jnp.inf, dtype=x.dtype)
+  # Initialize bounds with shape (batch, 1)
+  l = jnp.full(batch_shape + (1,), -jnp.inf, dtype=x.dtype)
+  r = jnp.full(batch_shape + (1,), jnp.inf, dtype=x.dtype)
 
   # Run binary search
-  l_neg, r_neg = lax.while_loop(cond, loop_body, (l_neg, r_neg))
+  l, r = lax.while_loop(cond, loop_body, (l, r))
 
-  # Return negated result
-  return -l_neg
+  # Return with shape (batch,)
+  return l.squeeze(-1)
 
 
 def stable_topk_mask_jax(x: jax.Array, k: int | jax.Array, threshold: jax.Array) -> jax.Array:
