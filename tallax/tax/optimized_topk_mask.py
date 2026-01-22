@@ -100,8 +100,12 @@ def topk_mask_stable(
   # Find threshold
   # Predicate: count(x > threshold) >= k
   # Binary search finds largest threshold where this is FALSE
-  predicate_fn = lambda x, pivot: (x > pivot).sum(-1, keepdims=True) >= k
-  threshold = binary_search(x, predicate_fn)
+  predicate_fn = lambda pivot: (x > pivot).sum(-1, keepdims=True) >= k
+  bound_shape = (x.shape[0], 1)
+  threshold = binary_search(
+    predicate_fn,
+    *(jnp.full(bound_shape, v, x.dtype) for v in (-jnp.inf, jnp.inf))
+  )
 
   if not stable:
     # Simple threshold masking (may include more than k elements if ties)

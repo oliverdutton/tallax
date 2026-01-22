@@ -56,8 +56,7 @@ def platform_portable_top_p(
   # 2. Convert f32 probabilities to i32 range [0, scale]
   unnorm_probs_i32 = jnp.clip(
     (unnorm_probs_f32 * scale).astype(jnp.int32),
-    0,
-    scale
+    0, scale
   )
 
   # 3. Convert to high-precision and sum
@@ -86,9 +85,10 @@ def platform_portable_top_p(
     # Check if cumsum >= target_sum
     return cumsum_hp.compare_ge(target_sum_hp)
 
+  bound_shape = (logits.shape[0], 1)
   threshold_i32 = binary_search(
     predicate_fn,
-    low_bound=0, upper_bound=scale
+    *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
   )
   # 6. Apply mask to original logits
   mask = unnorm_probs_i32 >= threshold_i32

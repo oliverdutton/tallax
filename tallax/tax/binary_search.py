@@ -4,6 +4,7 @@ This module implements binary search using monotonic f32<->u32 conversions
 for efficient searching in float32 space.
 """
 
+from collections.abc import Callable
 import jax
 import jax.numpy as jnp
 from jax import lax
@@ -117,19 +118,8 @@ def binary_search(
     pivot = interp(l, r)
     return jnp.any(pivot != l)
 
-  # Initialize bounds with shape (batch, 1)
-  l, r = (
-      jnp.broadcast_to(bound, x.shape[:-1]) if x.ndim <= 1 else bound
-      for bound in (lower_bound, upper_bound)
-  )
-  l, r = (
-    jnp.expand_dims(bound, axis=-1) if x.ndim <= 1 else bound
-    for bound in (l, r)
-  )
-  assert l.shape == r.shape == x.shape[:-1] + (1,)
-
   # Run binary search
-  l, r = lax.while_loop(cond, loop_body, (l, r))
+  l, _ = lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
 
   # Return with shape (batch, 1)
   return l
