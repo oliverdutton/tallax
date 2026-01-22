@@ -201,7 +201,12 @@ def float32_bsearch(batch_shape, predicate):
   return _monotonic_int32_to_float32(result)
 
 
-def topk_mask(x: jnp.ndarray, k: int, replace_val: jnp.ndarray) -> jnp.ndarray:
+def topk_mask(
+  x: jnp.ndarray,
+  k: int,
+  replace_val: jnp.ndarray,
+  stable: bool = False
+) -> jnp.ndarray:
   """Sets everything to replace_val, except the top k values per batch element.
 
   Sharding considerations: this function does 32 reductions over the vocab_size
@@ -217,8 +222,10 @@ def topk_mask(x: jnp.ndarray, k: int, replace_val: jnp.ndarray) -> jnp.ndarray:
   Args:
     x: Values before masking. [batch..., vocab_size]
     k: Number of masked values to return. In presence of ties, more than k
-      values might be returned.
+      values might be returned when stable=False.
     replace_val: For the masked values of x, what to overwrite them with.
+    stable: If True, ensures exactly k values are kept (matching jax.lax.top_k).
+      When there are ties at the boundary, keeps the first k in order.
 
   Returns:
     masked version of x. [batch..., vocab_size]
@@ -261,11 +268,32 @@ def topk_mask(x: jnp.ndarray, k: int, replace_val: jnp.ndarray) -> jnp.ndarray:
   cutoff = -cutoff
   # cutoff: [batch..., 1]
   cutoff = lax.expand_dims(cutoff, (cutoff.ndim,))
-  return jnp.where(x >= cutoff, x, jnp.full_like(x, replace_val))
+
+  if not stable:
+    # Simple threshold masking (may include more than k elements if ties)
+    return jnp.where(x >= cutoff, x, jnp.full_like(x, replace_val))
+
+  # Stable version: keep exactly k elements, using index order for ties
+  # Count from left to right, keeping the first k elements >= cutoff
+  gt_cutoff = x > cutoff
+  eq_cutoff = x == cutoff
+
+  # Cumulative counts
+  cumsum_gt = jnp.cumsum(gt_cutoff.astype(jnp.int32), axis=-1)
+  cumsum_eq = jnp.cumsum(eq_cutoff.astype(jnp.int32), axis=-1)
+  total_count = cumsum_gt + cumsum_eq
+
+  # Keep if: value > cutoff, OR (value == cutoff AND total_count <= k)
+  mask = gt_cutoff | (eq_cutoff & (total_count <= k))
+
+  return jnp.where(mask, x, jnp.full_like(x, replace_val))
 
 
 def topp_mask(
-  logits: jnp.ndarray, p: float, replace_val: jnp.ndarray
+  logits: jnp.ndarray,
+  p: float,
+  replace_val: jnp.ndarray,
+  stable: bool = False
 ) -> jnp.ndarray:
   """Applies top-p masking to logits.
 
@@ -287,6 +315,8 @@ def topp_mask(
     logits: Logits before masking. [batch..., vocab_size]
     p: Minimum probability mass requested.
     replace_val: For the masked values of logits, what to overwrite them with.
+    stable: If True, ensures deterministic selection when there are ties at
+      the probability threshold, keeping earlier indices.
 
   Returns:
     masked version of x. [batch..., vocab_size]
@@ -331,9 +361,31 @@ def topp_mask(
   threshold = float32_bsearch(batch_shape, predicate)
   # threshold: [batch..., 1]
   threshold = lax.expand_dims(threshold, (threshold.ndim,))
-  return jnp.where(
-    probs >= threshold, logits, jnp.full_like(logits, replace_val)
+
+  if not stable:
+    # Simple threshold masking
+    return jnp.where(
+      probs >= threshold, logits, jnp.full_like(logits, replace_val)
+    )
+
+  # Stable version: keep deterministic subset when there are ties
+  # Keep tokens in order until cumulative probability mass >= p
+  gt_threshold = probs > threshold
+  eq_threshold = probs == threshold
+
+  # Cumulative probability mass
+  cumsum_gt_mass = jnp.cumsum(
+    jnp.where(gt_threshold, probs, 0.0), axis=-1
   )
+  cumsum_eq_mass = jnp.cumsum(
+    jnp.where(eq_threshold, probs, 0.0), axis=-1
+  )
+  total_mass = cumsum_gt_mass + cumsum_eq_mass
+
+  # Keep if: prob > threshold, OR (prob == threshold AND total_mass <= p)
+  mask = gt_threshold | (eq_threshold & (total_mass <= p))
+
+  return jnp.where(mask, logits, jnp.full_like(logits, replace_val))
 
 
 # ============================================================================
@@ -368,13 +420,14 @@ _SAMPLING_EPS = 1e-5
 
 @functools.partial(
   jax.jit,
-  static_argnames=["mesh"],
+  static_argnames=["mesh", "stable"],
 )
 def sample(
   rng: jax.Array,
   mesh: Mesh,
   logits: jax.Array,
   tpu_sampling_metadata: TPUSupportedSamplingMetadata,
+  stable: bool = False,
 ) -> jax.Array:
   # (B, vocab_size)
   if tpu_sampling_metadata.do_sampling:
@@ -387,8 +440,8 @@ def sample(
     return greedy_sampled
 
   logits = logits.astype(jnp.float32)
-  logits = topk_mask(logits, tpu_sampling_metadata.top_k, replace_val=-1e12)
-  logits = topp_mask(logits, tpu_sampling_metadata.top_p, replace_val=-1e12)
+  logits = topk_mask(logits, tpu_sampling_metadata.top_k, replace_val=-1e12, stable=stable)
+  logits = topp_mask(logits, tpu_sampling_metadata.top_p, replace_val=-1e12, stable=stable)
 
   temperatures = tpu_sampling_metadata.temperature.astype(logits.dtype)
   temperatures = jnp.expand_dims(temperatures, axis=-1)
