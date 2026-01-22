@@ -93,10 +93,11 @@ class HighPrecisionUInt:
       result.append(carry)
     return HighPrecisionUInt(result)
 
-  def sum_dim1(self, chunk_size: int = 128) -> 'HighPrecisionUInt':
-    """Sum along axis=1 with chunking to prevent overflow.
+  def sum(self, axis: int = 1, chunk_size: int = 128) -> 'HighPrecisionUInt':
+    """Sum along specified axis.
 
-    Splits the second dimension into chunks of size chunk_size (default 128),
+    Currently only supports axis=1 with chunking to prevent overflow.
+    Splits the dimension into chunks of size chunk_size (default 128),
     sums each chunk separately, then harmonizes carries.
 
     Theory: Each part is < 2^16. We can safely sum up to 2^15 such values:
@@ -107,13 +108,19 @@ class HighPrecisionUInt:
       2. After harmonize, sum chunk_size values -> requires chunk_size <= 2^15
 
     Args:
+      axis: Axis to sum along (must be 1)
       chunk_size: Size of each chunk (default 128, must be <= 2^15)
 
     Returns:
-      HighPrecisionUInt with shape [..., 1] containing sums
+      HighPrecisionUInt with reduced dimension
     """
     if len(self.parts) == 0:
       raise ValueError("Cannot sum empty HighPrecisionUInt")
+
+    if axis != 1:
+        raise NotImplementedError(
+            f"HighPrecisionUInt.sum currently only supports axis=1, got axis={axis}"
+        )
 
     vocab_size = self.parts[0].shape[1]
     num_chunks = (vocab_size + chunk_size - 1) // chunk_size

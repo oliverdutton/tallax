@@ -49,32 +49,36 @@ def monotonic_u32_to_f32(x: jax.Array) -> jax.Array:
   return lax.bitcast_convert_type(x_bits, jnp.float32)
 
 
-def interp_f32(l: jax.Array, r: jax.Array) -> jax.Array:
+def interp(l: jax.Array, r: jax.Array) -> jax.Array:
   """Interpolate between two float32 values in the monotonic u32 space.
 
   Computes the midpoint in uint32 space (avoiding overflow) and converts back.
 
   Args:
-    l: Left boundary (float32)
-    r: Right boundary (float32)
+    l: Left boundary (float32 or int32)
+    r: Right boundary (float32 or int32)
 
   Returns:
-    Midpoint value (float32)
+    Midpoint value (float32 or int32)
   """
-  # Convert to monotonic u32
-  l_u32 = monotonic_f32_to_u32(l)
-  r_u32 = monotonic_f32_to_u32(r)
-
+  assert l.dtype in (jnp.float32, jnp.int32)
+  floating = l.dtype == jnp.float32
+  if floating:
+    l = monotonic_f32_to_u32(l)
+    r = monotonic_f32_to_u32(r)
+  assert l.dtype in (jnp.uint32, jnp.int32)
   # Overflow-safe (l+r)//2 using the formula: (l//2) + (r//2) + ((l&1)+(r&1))//2
-  one = jnp.uint32(1)
-  m_u32 = (l_u32 // 2) + (r_u32 // 2) + ((l_u32 & one) + (r_u32 & one)) // 2
-
-  return monotonic_u32_to_f32(m_u32)
+  one = jnp.array(1, dtype=l.dtype)
+  pivot = (l // 2) + (r // 2) + ((l & one) + (r & one)) // 2
+  if floating:
+    pivot = monotonic_u32_to_f32(pivot)
+  return pivot
 
 
 def binary_search(
-  x: jax.Array,
-  predicate_fn,
+  predicate_fn: Callable[[jax.Array], jax.Array],
+  lower_bound: jax.Array = None,
+  upper_bound: jax.Array = None,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
@@ -89,17 +93,15 @@ def binary_search(
   Returns:
     Threshold array of shape [...]
   """
-  batch_shape = x.shape[:-1]
-
   # Binary search finds LARGEST value where predicate is FALSE
 
   def loop_body(state):
     l, r = state
-    pivot = interp_f32(l, r)
+    pivot = interp(l, r)
 
     # Evaluate predicate at midpoint
     # pivot has shape (batch, 1), broadcasts correctly with x
-    predicate_true = predicate_fn(x, pivot)
+    predicate_true = predicate_fn(pivot)
 
     # We want the largest value where predicate is FALSE
     # If predicate is TRUE at pivot, then the answer is < pivot, so update r = pivot
@@ -112,15 +114,22 @@ def binary_search(
   def cond(state):
     l, r = state
     # Continue while l and r are more than 1 ULP apart
-    pivot = interp_f32(l, r)
+    pivot = interp(l, r)
     return jnp.any(pivot != l)
 
   # Initialize bounds with shape (batch, 1)
-  l = jnp.full(batch_shape + (1,), -jnp.inf, dtype=x.dtype)
-  r = jnp.full(batch_shape + (1,), jnp.inf, dtype=x.dtype)
+  l, r = (
+      jnp.broadcast_to(bound, x.shape[:-1]) if x.ndim <= 1 else bound
+      for bound in (lower_bound, upper_bound)
+  )
+  l, r = (
+    jnp.expand_dims(bound, axis=-1) if x.ndim <= 1 else bound
+    for bound in (l, r)
+  )
+  assert l.shape == r.shape == x.shape[:-1] + (1,)
 
   # Run binary search
   l, r = lax.while_loop(cond, loop_body, (l, r))
 
-  # Return with shape (batch,)
-  return l.squeeze(-1)
+  # Return with shape (batch, 1)
+  return l

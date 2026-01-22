@@ -19,59 +19,7 @@ from jax import lax
 from tallax.tax.high_precision_uint import HighPrecisionUInt
 
 
-def _binary_search_i32(
-  x: jax.Array,
-  predicate_fn,
-  lower_bound: int = 0,
-  upper_bound: int = 2**30,
-) -> jax.Array:
-  """Binary search for i32 values with custom predicate.
-
-  Finds the LARGEST threshold where predicate is FALSE.
-
-  Args:
-    x: Input array of shape [batch, vocab_size]
-    predicate_fn: Function that takes (x, threshold) where threshold has shape
-                  [batch, 1] and returns boolean array of shape [batch, 1]
-    lower_bound: Lower bound for search (inclusive)
-    upper_bound: Upper bound for search (inclusive)
-
-  Returns:
-    Threshold array of shape [batch]
-  """
-  batch_shape = x.shape[:-1]
-
-  def loop_body(state):
-    l, r = state
-    # Integer midpoint (avoid overflow)
-    pivot = (l // 2) + (r // 2) + ((l & 1) + (r & 1)) // 2
-
-    # Evaluate predicate at midpoint
-    predicate_true = predicate_fn(x, pivot)
-
-    # Binary search: find largest value where predicate is FALSE
-    # If predicate is TRUE at pivot, answer is < pivot, so update r = pivot - 1
-    # If predicate is FALSE at pivot, answer might be pivot or > pivot, so update l = pivot
-    l = jnp.where(predicate_true, l, pivot)
-    r = jnp.where(predicate_true, pivot - 1, r)
-
-    return (l, r)
-
-  def cond(state):
-    l, r = state
-    # Continue while l < r
-    return jnp.any(l < r)
-
-  # Initialize bounds with shape [batch, 1]
-  l = jnp.full(batch_shape + (1,), lower_bound, dtype=jnp.int32)
-  r = jnp.full(batch_shape + (1,), upper_bound, dtype=jnp.int32)
-
-  # Run binary search
-  l, r = lax.while_loop(cond, loop_body, (l, r))
-
-  # Return with shape [batch]
-  return l.squeeze(-1)
-
+from tallax.tax.binary_search import binary_search
 
 def platform_portable_top_p(
   logits: jax.Array,
@@ -114,7 +62,7 @@ def platform_portable_top_p(
 
   # 3. Convert to high-precision and sum
   unnorm_probs_hp = HighPrecisionUInt.from_i32_array(unnorm_probs_i32)
-  total_sum_hp = unnorm_probs_hp.sum_dim1()
+  total_sum_hp = unnorm_probs_hp.sum(axis=1)
 
   # 4. Compute target sum: total_sum * top_p
   total_sum_f32 = total_sum_hp.to_f32()
@@ -124,28 +72,24 @@ def platform_portable_top_p(
 
   # 5. Binary search for threshold
   # Predicate: sum(unnorm_probs_i32 >= threshold) >= target_sum
-  def predicate_fn(x, threshold):
+  def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold exceeds target."""
-    # x has shape [batch, vocab_size], threshold has shape [batch, 1]
-    mask = x >= threshold
-    masked_values = jnp.where(mask, x, 0)
+    # unnorm_probs_i32 has shape [batch, vocab_size]
+    # threshold has shape [batch, 1] coming from binary_search broadcasting
+    mask = unnorm_probs_i32 >= threshold
+    masked_values = jnp.where(mask, unnorm_probs_i32, 0)
 
     # Convert to high-precision and sum
     masked_hp = HighPrecisionUInt.from_i32_array(masked_values)
-    cumsum_hp = masked_hp.sum_dim1()
+    cumsum_hp = masked_hp.sum(axis=1)
 
     # Check if cumsum >= target_sum
     return cumsum_hp.compare_ge(target_sum_hp)
 
-  threshold_i32 = _binary_search_i32(
-    unnorm_probs_i32,
+  threshold_i32 = binary_search(
     predicate_fn,
-    lower_bound=0,
-    upper_bound=scale,
+    low_bound=0, upper_bound=scale
   )
-
   # 6. Apply mask to original logits
-  threshold_i32_expanded = threshold_i32[:, None]
-  mask = unnorm_probs_i32 >= threshold_i32_expanded
-
+  mask = unnorm_probs_i32 >= threshold_i32
   return jnp.where(mask, logits, replace_val)
