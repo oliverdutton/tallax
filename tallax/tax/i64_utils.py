@@ -59,15 +59,6 @@ def i64_sum_dim1(x: jax.Array, chunk_size: int = 128):
   m = total_len // chunk_size
   remainder = total_len % chunk_size
 
-  # If there's a remainder, we need one more chunk (padded with zeros)
-  if remainder > 0:
-    m += 1
-    # Pad the input to make it divisible by chunk_size
-    pad_amount = chunk_size - remainder
-    x = jnp.pad(x, ((0, 0), (0, pad_amount)), mode='constant', constant_values=0)
-
-  assert m < 32768, f"m={m} must be < 32k (2^15) for safe summation"
-
   # Bitmask for extracting lower 16 bits
   bitmask_16 = jnp.int32(2**16 - 1)
 
@@ -75,9 +66,36 @@ def i64_sum_dim1(x: jax.Array, chunk_size: int = 128):
   # FIRST REDUCTION: Sum over m dimension
   # ============================================================================
 
-  # Split into m chunks of size chunk_size along axis=1
-  # Result: list of m arrays, each of shape (n, chunk_size)
-  chunks = jnp.split(x, m, axis=1)
+  # Split into chunks of size chunk_size along axis=1
+  # Handle full chunks and remainder separately
+  if remainder == 0:
+    # All full chunks, use split directly
+    chunks = jnp.split(x, m, axis=1)
+  else:
+    # Split full chunks and handle remainder separately
+    full_chunk_len = m * chunk_size
+
+    # Get full chunks
+    if m > 0:
+      full_chunks = jnp.split(x[:, :full_chunk_len], m, axis=1)
+    else:
+      full_chunks = []
+
+    # Get remainder and pad it
+    remainder_chunk = x[:, full_chunk_len:]
+    pad_amount = chunk_size - remainder
+    remainder_chunk_padded = jnp.pad(
+      remainder_chunk,
+      ((0, 0), (0, pad_amount)),
+      mode='constant',
+      constant_values=0
+    )
+
+    # Combine all chunks
+    chunks = full_chunks + [remainder_chunk_padded]
+    m += 1
+
+  assert m < 32768, f"m={m} must be < 32k (2^15) for safe summation"
 
   # Stack chunks to create (n, m, chunk_size)
   x_stacked = jnp.stack(chunks, axis=1)
