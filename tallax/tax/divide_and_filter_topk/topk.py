@@ -80,7 +80,8 @@ def to_comparison_dtype(x):
 
 
 def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
-  """Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible.
+  """Top-k of arrays, first operand of value, second of indices, possibly with further operands.
+  Packing bf16 and indices into single 32-bit dtype if possible.
 
   Args:
     operands: List of arrays to find top-k from.
@@ -91,25 +92,26 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   Returns:
     List of top-k arrays.
   """
-  if val_dtype is None or max_index is None:
-    return _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
-  assert len(operands) == 2 and type(operands) == list
+  assert type(operands) == list
+  stable = num_keys > 1
+  if not jnp.issubdtype(operands[1].dtype, jnp.integer):
+    raise ValueError("Expected second operand to be indices, so integer dtype")
   if num_keys == 2:
-    # sort vals descending, indices ascending
+    # sort vals descending, indices ascending so we negate indices
     operands[1] = -operands[1]
   dtypes = [x.dtype for x in operands]
-  pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
+  pack = val_dtype is not None and max_index is not None and (
+    val_dtype == jnp.bfloat16 and max_index <= 2**16)
   if pack:
-    operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys>1))]
-  operands = _bitonic_topk_arrays(operands, k=k, num_keys=min(len(operands), num_keys))
+    operands = [pack_bf16_u16_to_i32(*operands[:2], stable=stable), *operands[2:]]
+    num_keys = max(1, num_keys-1)
+  operands = _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
   if pack:
-    assert len(operands) == 1
-    operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
-    assert len(operands) == 2
+    operands = list(unpack_bf16_u16_from_i32(operands[0], stable=stable)) + operands[1:]
   if num_keys == 2:
     # invert back so sort vals descending, indices ascending
     operands[1] = -operands[1]
-  # convert back dtypes (incase theyve changed)
+  # convert back dtypes (incase they've changed)
   return [x.astype(dtype) for x, dtype in zip(operands, dtypes, strict=True)]
 
 
