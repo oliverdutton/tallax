@@ -8,7 +8,7 @@ from tallax.tax.optimized_topk_mask import (
   monotonic_f32_to_u32,
   monotonic_u32_to_f32,
   interp_f32,
-  find_topk_threshold_jax,
+  binary_search,
   topk_mask_stable,
 )
 
@@ -48,7 +48,7 @@ def test_threshold_simple():
   x = jnp.array([[10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]])
   k = 3
 
-  threshold = find_topk_threshold_jax(x, k)
+  threshold = binary_search(x, k)
   count_ge = (x >= threshold).sum()
 
   assert count_ge >= k, f"Threshold test failed: count_ge={count_ge}, k={k}"

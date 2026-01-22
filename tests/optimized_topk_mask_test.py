@@ -9,7 +9,7 @@ from tallax.tax.optimized_topk_mask import (
   monotonic_f32_to_u32,
   monotonic_u32_to_f32,
   interp_f32,
-  find_topk_threshold_jax,
+  binary_search,
   topk_mask_stable,
   stable_topk_mask_jax,
 )
@@ -72,7 +72,7 @@ class TestBinarySearchThreshold:
     x = jnp.array([[10.0, 9.0, 8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0]])
     k = 3
 
-    threshold = find_topk_threshold_jax(x, k)
+    threshold = binary_search(x, k)
 
     # Threshold should be 8.0 (the 3rd largest value)
     # Actually, threshold will be such that >= k values are >= threshold
@@ -85,7 +85,7 @@ class TestBinarySearchThreshold:
     x = jnp.array([[10.0, 9.0, 8.0, 8.0, 8.0, 5.0, 4.0, 3.0]])
     k = 4
 
-    threshold = find_topk_threshold_jax(x, k)
+    threshold = binary_search(x, k)
 
     # Should find threshold at or just below 8.0
     count_ge = (x >= threshold).sum()
@@ -99,7 +99,7 @@ class TestBinarySearchThreshold:
     ])
     k = 2
 
-    threshold = find_topk_threshold_jax(x, k)
+    threshold = binary_search(x, k)
 
     # Check that each batch has >= k values >= threshold
     for i in range(2):
@@ -516,7 +516,7 @@ class TestThresholdFindingExtended:
     x = jnp.array([[8.0, 8.0, 8.0, 7.0, 6.0, 5.0]])
     k = 2
 
-    threshold = find_topk_threshold_jax(x, k)
+    threshold = binary_search(x, k)
     count_ge = (x >= threshold).sum()
 
     assert count_ge >= k
@@ -526,7 +526,7 @@ class TestThresholdFindingExtended:
     x = jnp.array([[10.0, 9.0, 8.0, 5.0, 5.0, 5.0]])
     k = 4
 
-    threshold = find_topk_threshold_jax(x, k)
+    threshold = binary_search(x, k)
     count_ge = (x >= threshold).sum()
 
     assert count_ge >= k
@@ -538,14 +538,14 @@ class TestThresholdFindingExtended:
     # Uniform distribution
     x_uniform = jax.random.uniform(rng, (8, 1000))
     k = 50
-    threshold = find_topk_threshold_jax(x_uniform, k)
+    threshold = binary_search(x_uniform, k)
     for i in range(8):
       count_ge = (x_uniform[i] >= threshold[i]).sum()
       assert count_ge >= k
 
     # Normal distribution
     x_normal = jax.random.normal(rng, (8, 1000))
-    threshold = find_topk_threshold_jax(x_normal, k)
+    threshold = binary_search(x_normal, k)
     for i in range(8):
       count_ge = (x_normal[i] >= threshold[i]).sum()
       assert count_ge >= k

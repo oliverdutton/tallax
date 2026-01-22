@@ -83,50 +83,48 @@ def interp_f32(l: jax.Array, r: jax.Array) -> jax.Array:
   return monotonic_u32_to_f32(m_u32)
 
 
-def find_topk_threshold_jax(x: jax.Array, k: int | jax.Array) -> jax.Array:
-  """Find the k'th largest value threshold using binary search.
+def binary_search(
+  x: jax.Array,
+  predicate_fn,
+) -> jax.Array:
+  """Find threshold using binary search with custom predicate.
 
   Uses binary search in monotonic u32 space to efficiently find the threshold
-  value such that there are exactly k values >= threshold.
-
-  Binary search finds the largest threshold where count(x > threshold) < k.
+  value. Binary search finds the LARGEST threshold where predicate is FALSE.
 
   Args:
     x: Input array of shape [..., vocab_size]
-    k: Number of top elements (scalar or array matching batch dims)
+    predicate_fn: Function that takes (x, threshold) where threshold has shape
+                  [..., 1] and returns boolean array of shape [..., 1]
 
   Returns:
-    Threshold array of shape [...] such that (x >= threshold).sum(-1) >= k
+    Threshold array of shape [...]
   """
   batch_shape = x.shape[:-1]
 
   # Binary search finds LARGEST value where predicate is FALSE
-  # predicate(threshold) = count(x > threshold) >= k
-  # So we find largest threshold where count(x > threshold) < k
-  # This is the k'th largest value
 
   def loop_body(state):
     l, r = state
-    m = interp_f32(l, r)
+    pivot = interp_f32(l, r)
 
-    # Predicate: count(x > threshold) >= k
-    # m has shape (batch, 1), broadcasts correctly with x
-    count_gt = (x > m).sum(-1, keepdims=True)
-    predicate_true = count_gt >= k
+    # Evaluate predicate at midpoint
+    # pivot has shape (batch, 1), broadcasts correctly with x
+    predicate_true = predicate_fn(x, pivot)
 
     # We want the largest value where predicate is FALSE
-    # If predicate is TRUE at m, then the answer is < m, so update r = m
-    # If predicate is FALSE at m, then the answer might be m or > m, so update l = m
-    l = jnp.where(predicate_true, l, m)
-    r = jnp.where(predicate_true, m, r)
+    # If predicate is TRUE at pivot, then the answer is < pivot, so update r = pivot
+    # If predicate is FALSE at pivot, then the answer might be pivot or > pivot, so update l = pivot
+    l = jnp.where(predicate_true, l, pivot)
+    r = jnp.where(predicate_true, pivot, r)
 
     return (l, r)
 
   def cond(state):
     l, r = state
     # Continue while l and r are more than 1 ULP apart
-    m = interp_f32(l, r)
-    return jnp.any(m != l)
+    pivot = interp_f32(l, r)
+    return jnp.any(pivot != l)
 
   # Initialize bounds with shape (batch, 1)
   l = jnp.full(batch_shape + (1,), -jnp.inf, dtype=x.dtype)
@@ -217,7 +215,10 @@ def topk_mask_stable(
     Masked array with same shape as x
   """
   # Find threshold
-  threshold = find_topk_threshold_jax(x, k)
+  # Predicate: count(x > threshold) >= k
+  # Binary search finds largest threshold where this is FALSE
+  predicate_fn = lambda x, pivot: (x > pivot).sum(-1, keepdims=True) >= k
+  threshold = binary_search(x, predicate_fn)
 
   if not stable:
     # Simple threshold masking (may include more than k elements if ties)

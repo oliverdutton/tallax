@@ -20,7 +20,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES, unrolled_fori_loop
 from tallax.tax.optimized_topk_mask import (
-  find_topk_threshold_jax,
+  binary_search,
   monotonic_f32_to_u32,
   monotonic_u32_to_f32,
   interp_f32,
@@ -287,7 +287,7 @@ def topk_mask_pallas_kernel(
     k = k_ref[...].astype(jnp.int32)
 
   # Step 1: Find threshold using binary search
-  threshold = find_topk_threshold_jax(logits_ref[...], k)
+  threshold = binary_search(logits_ref[...], k)
 
   if not stable:
     # Simple threshold masking
