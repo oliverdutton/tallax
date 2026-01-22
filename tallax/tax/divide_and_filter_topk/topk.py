@@ -233,15 +233,13 @@ def _merge_unconverged_bins_topk(
   num_packed_bins = pl.cdiv(max_k, m) - 1
   if num_packed_bins > NUM_LANES or num_packed_bins > num_bins:
     raise NotImplementedError
-  bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
+  bin_vals, bin_idxs = (ref[:, pl.dslice((m - 1) * num_bins, num_bins)] for ref in (bins_topm_vals_ref, bins_topm_idxs_ref))
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
   bin_operands = [bin_vals, bin_indices]
   if stable:
     # stable sort comparison using indices
-    bin_operands.insert(1,
-      bins_topm_idxs_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
-    )
+    bin_operands.insert(1, bin_idxs)
   # Sort descending by m'th largest value of each bin to get bins which may contribute to top-k
   sorted_bin_indices = bitonic_topk_arrays(
     bin_operands,
