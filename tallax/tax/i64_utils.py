@@ -1,167 +1,116 @@
 """High-precision i64 utilities for summation without overflow.
 
-This module provides utilities for performing i64-precision summations on i32 arrays
-by splitting values into smaller chunks and carefully tracking overflow across reductions.
+Provides utilities for performing i64-precision summations on u32 arrays by splitting
+values into 16-bit parts and carefully tracking carries across reductions.
 """
 
 import jax
 import jax.numpy as jnp
 
 
-def i64_sum_dim1(x: jax.Array, chunk_size: int = 128):
-  """Sum i32 array along dimension 1 with i64 precision using two-stage reduction.
+def _chunk_and_stack(x: jax.Array, split_dim: int, chunk_size: int, stack_dim: int = 0, pad_val: int = 0) -> jax.Array:
+  """Split array into chunks along a dimension, pad last chunk if needed, and stack."""
+  dim_len = x.shape[split_dim]
+  num_full_chunks = dim_len // chunk_size
+  remainder = dim_len % chunk_size
 
-  This function performs high-precision summation by splitting i32 values into
-  16-bit chunks, summing them separately to avoid overflow, then harmonizing
-  the results back into proper i64 representation.
-
-  Algorithm:
-  1. Split input into chunks of chunk_size along axis=1, padding last chunk with zeros if needed
-  2. First stage: Split (n, m, chunk_size) into m tiles, split each i32 into
-     upper/lower 16 bits, sum over m dimension (safe for m < 32k)
-  3. Second stage: Split the i64 intermediate results again and sum over chunk_size
-     dimension, harmonize back to final i64 result
-
-  The key insight is that by splitting i32 values into 16-bit parts, we can safely
-  sum up to 32k (2^15) values without overflow, since (2^16-1) * 2^15 < 2^31.
-
-  Summation bounds:
-  - First reduction: m < 32k tiles of size chunk_size, reduces from (n, total) to (n, chunk_size) i64
-  - Second reduction: chunk_size < 32k values, reduces from (n, chunk_size) i64 to (n, 1) i64
-  - Final result can represent sums up to (2^32-1) * 32k * chunk_size ≈ 2^57 (for chunk_size=128)
-
-  Args:
-    x: Input array of shape (n, total) with i32 dtype
-    chunk_size: Size of chunks for splitting (default 128, must be < 32k)
-
-  Returns:
-    Tuple of (high_i32, low_i32) representing i64 sum of shape (n, 1)
-    where value = high * 2^32 + low
-
-  Constraints:
-    - x.shape[1] must be < 2^31
-    - x.ndim must be <= 2
-    - chunk_size must be < 32768 (2^15) for safe summation
-    - m = ceil(x.shape[1] / chunk_size) must be < 32768 (2^15) for safe summation
-
-  Example:
-    >>> x = jnp.arange(256, dtype=jnp.int32).reshape(2, 128)
-    >>> high, low = i64_sum_dim1(x)
-    >>> # high[0] * 2**32 + low[0] equals sum of first row
-  """
-  assert x.shape[1] < 2**31 and x.ndim <= 2
-  assert chunk_size < 32768, "chunk_size must be < 32k (2^15) for safe summation"
-
-  n = x.shape[0]
-  total_len = x.shape[1]
-
-  # Calculate number of full chunks and remainder
-  m = total_len // chunk_size
-  remainder = total_len % chunk_size
-
-  # Bitmask for extracting lower 16 bits
-  bitmask_16 = jnp.int32(2**16 - 1)
-
-  # ============================================================================
-  # FIRST REDUCTION: Sum over m dimension
-  # ============================================================================
-
-  # Split into chunks of size chunk_size along axis=1
-  # Handle full chunks and remainder separately
   if remainder == 0:
-    # All full chunks, use split directly
-    chunks = jnp.split(x, m, axis=1)
+    chunks = jnp.split(x, num_full_chunks, axis=split_dim)
   else:
-    # Split full chunks and handle remainder separately
-    full_chunk_len = m * chunk_size
-
-    # Get full chunks
-    if m > 0:
-      full_chunks = jnp.split(x[:, :full_chunk_len], m, axis=1)
+    full_chunk_len = num_full_chunks * chunk_size
+    if num_full_chunks > 0:
+      slices = [slice(None)] * x.ndim
+      slices[split_dim] = slice(None, full_chunk_len)
+      full_chunks = jnp.split(x[tuple(slices)], num_full_chunks, axis=split_dim)
     else:
       full_chunks = []
 
-    # Get remainder and pad it
-    remainder_chunk = x[:, full_chunk_len:]
-    pad_amount = chunk_size - remainder
-    remainder_chunk_padded = jnp.pad(
-      remainder_chunk,
-      ((0, 0), (0, pad_amount)),
-      mode='constant',
-      constant_values=0
-    )
+    slices = [slice(None)] * x.ndim
+    slices[split_dim] = slice(full_chunk_len, None)
+    pad_width = [(0, 0)] * x.ndim
+    pad_width[split_dim] = (0, chunk_size - remainder)
+    remainder_padded = jnp.pad(x[tuple(slices)], pad_width, constant_values=pad_val)
+    chunks = full_chunks + [remainder_padded]
 
-    # Combine all chunks
-    chunks = full_chunks + [remainder_chunk_padded]
-    m += 1
+  return jnp.stack(chunks, axis=stack_dim)
 
-  assert m < 32768, f"m={m} must be < 32k (2^15) for safe summation"
 
-  # Stack chunks to create (n, m, chunk_size)
-  x_stacked = jnp.stack(chunks, axis=1)
+def _split_to_i16s(i32s: list[jax.Array]) -> list[jax.Array]:
+  """Split i32 arrays into i16 parts (LSB first). Masks after shift to avoid sign extension."""
+  i16s = []
+  for i32_arr in i32s:
+    i16s.append(i32_arr & 0xFFFF)
+    i16s.append((i32_arr >> 16) & 0xFFFF)
+  return i16s
 
-  # Split each i32 into upper 16 bits and lower 16 bits
-  # For an i32 value v:
-  #   upper = v >> 16      (extracts bits 16-31)
-  #   lower = v & 0xFFFF   (extracts bits 0-15)
-  upper = x_stacked >> 16
-  lower = x_stacked & bitmask_16
 
-  # Sum over m dimension (axis=1) -> (n, chunk_size)
-  # Each sum can hold up to (2^16-1) * m where m < 2^15
-  # Maximum: (2^16-1) * 2^15 = 2^31 - 2^15 < 2^31, safe for i32
-  upper_sum = jnp.sum(upper, axis=1, dtype=jnp.int32)
-  lower_sum = jnp.sum(lower, axis=1, dtype=jnp.int32)
+def _harmonize_i16s(i16s: list[jax.Array]) -> list[jax.Array]:
+  """Propagate carries through i16 parts from LSB to MSB."""
+  if not i16s:
+    return []
 
-  # Harmonize: convert (upper_sum, lower_sum) to proper i64 representation
-  # The conceptual sum is: sum = (upper_sum << 16) + lower_sum
-  # We need to extract this as (high_i32, low_i32) where value = high * 2^32 + low
+  result = []
+  carry = jnp.zeros_like(i16s[0])
+  for i16 in i16s:
+    i16_with_carry = i16 + carry
+    result.append(i16_with_carry & 0xFFFF)
+    carry = i16_with_carry >> 16
+  result.append(carry)
+  return result
 
-  # Extract bits 16-31 from lower_sum (these need to be added to upper)
-  overflow = lower_sum >> 16
-  low_16 = lower_sum & bitmask_16  # Bits 0-15 of final value
 
-  # Combine upper_sum (which represents bits 16-31 of original values) with overflow
-  mid_32 = upper_sum + overflow  # Represents bits 16-47 of final value
+def _combine_i16s_to_i32s(i16s: list[jax.Array]) -> list[jax.Array]:
+  """Combine i16 parts into i32s (pairs from LSB to MSB)."""
+  i32s = []
+  for i in range(0, len(i16s), 2):
+    i32 = (i16s[i + 1] << 16) | i16s[i] if i + 1 < len(i16s) else i16s[i]
+    i32s.append(i32)
+  return i32s
 
-  # Split mid_32 into final high and low parts
-  high_i32 = mid_32 >> 16  # Bits 32-47 (stored in low 16 bits of i32)
-  low_i32 = ((mid_32 & bitmask_16) << 16) | low_16  # Bits 0-31
 
-  # ============================================================================
-  # SECOND REDUCTION: Sum over chunk_size dimension
-  # ============================================================================
+def i64_sum_dim1(x: jax.Array, chunk_size: int = 128):
+  """Sum u32 array along axis=1 with i64 precision using two-stage reduction.
 
-  # We now have (n, chunk_size) i64 values represented as (high_i32, low_i32)
-  # Split each i32 part into upper and lower 16 bits again
+  Splits u32 values into 16-bit parts, sums separately to avoid overflow, then harmonizes
+  carries. Only supports non-negative integers (requires uint32 dtype).
 
-  high_upper = high_i32 >> 16
-  high_lower = high_i32 & bitmask_16
-  low_upper = low_i32 >> 16
-  low_lower = low_i32 & bitmask_16
+  Algorithm:
+    1. Chunk input along axis=1 into tiles of size chunk_size (pad last with zeros)
+    2. Split each u32 into two i16 parts, sum over chunks dimension -> (n, chunk_size) i64s
+    3. Split i64s into i16 parts, sum over chunk_size dimension -> (n, 1) i64
 
-  # Sum over chunk_size dimension (axis=1) with keepdims=True -> (n, 1)
-  # chunk_size < 2^15 so safe for i32 without overflow
-  high_upper_sum = jnp.sum(high_upper, axis=1, keepdims=True, dtype=jnp.int32)
-  high_lower_sum = jnp.sum(high_lower, axis=1, keepdims=True, dtype=jnp.int32)
-  low_upper_sum = jnp.sum(low_upper, axis=1, keepdims=True, dtype=jnp.int32)
-  low_lower_sum = jnp.sum(low_lower, axis=1, keepdims=True, dtype=jnp.int32)
+  The key insight: splitting into 16-bit parts allows summing up to 32k (2^15) values
+  without overflow, since (2^16-1) * 2^15 < 2^31.
 
-  # Harmonize the 4 parts back to i64 representation (high_i32, low_i32)
+  Args:
+    x: u32 array of shape (n, m) where m < 2^31
+    chunk_size: Tile size (default 128, must be < 32k)
 
-  # Reconstruct low i32 part (bits 0-31 of final i64)
-  low_overflow = low_lower_sum >> 16
-  low_final_16 = low_lower_sum & bitmask_16
-  low_mid = low_upper_sum + low_overflow
-  low_overflow_to_high = low_mid >> 16  # Carry to high part
-  low_final = ((low_mid & bitmask_16) << 16) | low_final_16
+  Returns:
+    List of i32 arrays representing i64 sum of shape (n, 1), LSB first.
+    E.g., [low_i32, high_i32] where value = low + high * 2^32
 
-  # Reconstruct high i32 part (bits 32-63 of final i64)
-  # First add carry from low part to high_lower
-  high_lower_with_carry = high_lower_sum + low_overflow_to_high
-  high_overflow = high_lower_with_carry >> 16
-  high_final_16 = high_lower_with_carry & bitmask_16
-  high_mid = high_upper_sum + high_overflow
-  high_final = (high_mid << 16) | high_final_16
+  Constraints:
+    - x.dtype must be uint32
+    - x.ndim must be 2
+    - chunk_size < 32768 (2^15)
+    - num_chunks = ceil(m / chunk_size) < 32768 (2^15)
+    - Result can hold sums up to (2^32-1) * 32k * chunk_size ≈ 2^57 (for chunk_size=128)
 
-  return high_final, low_final
+  Example:
+    >>> x = jnp.arange(256, dtype=jnp.uint32).reshape(2, 128)
+    >>> i32s = i64_sum_dim1(x)
+    >>> # i32s[0][i, 0] + i32s[1][i, 0] * 2^32 equals sum of row i
+  """
+  if x.dtype != jnp.uint32:
+    raise NotImplementedError("Only supports uint32. Cast your array to uint32 first.")
+  assert x.ndim == 2 and x.shape[1] < 2**31
+  assert chunk_size < 32768, "chunk_size must be < 32k (2^15)"
+  num_chunks = (x.shape[1] + chunk_size - 1) // chunk_size
+  assert num_chunks < 32768, f"num_chunks={num_chunks} must be < 32k (2^15)"
+
+  x_stacked = _chunk_and_stack(x, split_dim=1, stack_dim=0, chunk_size=chunk_size, pad_val=0)
+  i16s = _split_to_i16s([x_stacked])
+  i16s = _harmonize_i16s([i16.sum(axis=0) for i16 in i16s])
+  i32s = _combine_i16s_to_i32s(_harmonize_i16s([i16.sum(axis=1, keepdims=True) for i16 in i16s]))
+  return i32s

@@ -35,24 +35,6 @@ indent-width = 2
 target-version = "py39"
 
 [tool.ruff.lint]
-ignore = [
-    # Unnecessary collection call
-    "C408",
-    # Unnecessary map usage
-    "C417",
-    # Unnecessary dict comprehension for iterable
-    "C420",
-    # Object names too complex
-    "C901",
-    # Local variable is assigned to but never used
-    "F841",
-    # Class could be dataclass or namedtuple
-    "B903",
-    # Raise with from clause inside except block
-    "B904",
-    # Zip without explicit strict parameter
-    "B905",
-]
 select = [
     "B9",
     "C",
