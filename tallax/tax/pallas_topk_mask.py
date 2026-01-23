@@ -49,12 +49,11 @@ def find_boundary_chunk(
       - cumsum_before_chunk: Cumulative matches before this chunk (shape [batch, 1])
   """
   arr = ref if ref_slice is None else ref_slice
-
   # Calculate number of chunks using ceiling division
   num_chunks = pl.cdiv(arr.shape[1], chunk_size)
   # Split into chunks (no padding needed, variable sizes OK)
   chunks = [
-    ref[:, i * chunk_size : min((i + 1) * chunk_size, arr.shape[1])]
+    arr[:, i * chunk_size : min((i + 1) * chunk_size, arr.shape[1])]
     for i in range(num_chunks)
   ]
 
@@ -70,7 +69,10 @@ def find_boundary_chunk(
     cumsums.append(cumsums[i - 1] + num_matches[i])
 
   boundary_idx = sum((c < k) for c in cumsums)
-  k -= sum((i < boundary_idx) * c for i, c in enumerate(cumsums)) # This should be >0
+  # Correct subtraction: subtract counts from all chunks BEFORE the boundary chunk.
+  # cumulative sums[i] contains sum of chunks 0..i.
+  # So we want cumsums[boundary_idx - 1].
+  k -= sum((i == (boundary_idx - 1)) * c for i, c in enumerate(cumsums))
 
   # We'll do batch_size separate dslices into arr
   batch_size = ref.shape[0]
@@ -85,7 +87,7 @@ def find_boundary_chunk(
   # mask to in range indexing
   boundary_slice = jnp.where(
     # index in bounds
-    (boundary_idx * chunk_size + iota1) < ref.shape[1], boundary_slice, get_dtype_info(ref).min)
+    (ref_offset + iota1) < ref.shape[1], boundary_slice, get_dtype_info(ref).min)
   return ref_offset, boundary_slice, k
 
 
