@@ -122,8 +122,5 @@ def binary_search(
     pivot = interp(l, r)
     return jnp.any(pivot != l)
 
-  # Run binary search
-  l, _ = lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
-
-  # Return with shape (batch, 1)
-  return l
+  # Run binary search, user decides if they need l or r
+  return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))

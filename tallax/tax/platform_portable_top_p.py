@@ -89,7 +89,7 @@ def platform_portable_top_p(
     return ~cumsum_hp.compare_ge(target_sum_hp)
 
   bound_shape = (logits.shape[0], 1)
-  threshold_i32 = binary_search(
+  threshold_i32, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
   )

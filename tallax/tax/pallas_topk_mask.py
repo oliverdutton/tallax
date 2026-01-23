@@ -20,6 +20,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
+from tallax.tax.binary_search import binary_search
 from tallax.tax.utils import NUM_LANES, get_dtype_info
 
 
@@ -57,7 +58,7 @@ def _find_boundary_chunk(
   chunks = [active_chunk[:, lb:ub] for lb, ub in zip(chunk_offsets[:-1], chunk_offsets[1:], strict=True)]
   assert sum([c.shape[1] for c in chunks]) == active_chunk.shape[1]
   first_chunk_size = chunks[0].shape[1]
-  assert len(set([c.shape[1] for c in chunks[1:]])) == 1
+  assert len(set([c.shape[1] for c in chunks[1:]])) <= 1
 
   # Count matches in each chunk, keeping (batch, 1) shape
   num_matches = [
@@ -134,36 +135,37 @@ def topk_mask_pallas_kernel(
     stable: Whether to use stable masking
     chunk_size: Size of chunks for parallel reduction
   """
-  batch_size = logits_ref.shape[0]
-  vocab_size = logits_ref.shape[1]
 
-  # Step 1: Find threshold using top_k
-  # Use lax.top_k to find the k'th largest value efficiently
-  # This is simpler and more reliable than binary search in Pallas context
-  threshold_vals, _ = lax.top_k(logits_ref[...], k)
-  # Get the k'th value for each batch (last value in top_k result)
-  threshold = threshold_vals[:, k - 1 : k]  # (batch, 1)
+  # Step 1: Find k'th largest value
+  logits = logits_ref[...]
+  # next value after the largest value where less than k gt it.
+  predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
+  bound_shape = (logits.shape[0], 1)
+  _, threshold = binary_search(
+    predicate_fn,
+    *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf))
+  )
 
   if not stable:
     # Simple threshold masking
     output_ref[...] = jnp.where(
-      logits_ref[...] >= threshold,
-      logits_ref[...],
+      logits >= threshold,
+      logits,
       replace_val
     )
     return
 
   # Step 2: Find exact boundary for stable masking
-  # Two stages
-  boundary_idx = find_boundary_idx(logits_ref, k - (logits_ref[...] > threshold).sum(1, keepdims=True), threshold)
-
-  # Step 3: Apply mask using boundary index
-  # Keep if value >= threshold AND index <= boundary_idx
-  mask = (logits_ref[...] > threshold) | (
-    (logits_ref[...] == threshold) &
+  boundary_idx = find_boundary_idx(
+    logits_ref,
+    k=k - (logits > threshold).sum(1, keepdims=True),
+    threshold=threshold
+  )
+  mask = (logits > threshold) | (
+    (logits == threshold) &
     (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
   )
-  output_ref[...] = jnp.where(mask, logits_ref[...], replace_val)
+  output_ref[...] = jnp.where(mask, logits, replace_val)
 
 
 @functools.partial(
