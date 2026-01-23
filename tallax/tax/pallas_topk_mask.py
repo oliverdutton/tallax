@@ -13,20 +13,23 @@ The approach:
 """
 
 import functools
+import math
 import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.utils import NUM_LANES
+from tallax.tax.utils import NUM_LANES, get_dtype_info
 
 
 def find_boundary_chunk(
-  logits_ref,
+  ref,
   target,
   k,
   chunk_size: int,
+  ref_slice: jax.Array | None = None,
+  ref_offset: jax.Array | int = 0,
 ):
   """Find which chunk contains the k'th element matching target.
 
@@ -45,15 +48,13 @@ def find_boundary_chunk(
       - chunk_index: Index of chunk containing k'th match (shape [batch, 1])
       - cumsum_before_chunk: Cumulative matches before this chunk (shape [batch, 1])
   """
-  batch_size = logits_ref.shape[0]
-  vocab_size = logits_ref.shape[1]
+  arr = ref if ref_slice is None else ref_slice
 
   # Calculate number of chunks using ceiling division
-  num_chunks = pl.cdiv(vocab_size, chunk_size)
-
+  num_chunks = pl.cdiv(arr.shape[1], chunk_size)
   # Split into chunks (no padding needed, variable sizes OK)
   chunks = [
-    logits_ref[:, i * chunk_size : min((i + 1) * chunk_size, vocab_size)]
+    ref[:, i * chunk_size : min((i + 1) * chunk_size, arr.shape[1])]
     for i in range(num_chunks)
   ]
 
@@ -69,8 +70,25 @@ def find_boundary_chunk(
     cumsums.append(cumsums[i - 1] + num_matches[i])
 
   boundary_idx = sum((c < k) for c in cumsums)
-  k_at_boundary = sum((i < boundary_idx) * c for i, c in enumerate(cumsums))
-  return boundary_idx, k_at_boundary
+  k -= sum((i < boundary_idx) * c for i, c in enumerate(cumsums)) # This should be >0
+
+  # We'll do batch_size separate dslices into arr
+  batch_size = ref.shape[0]
+  iota0, iota1 = (jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), dim) for dim in (0, 1))
+  boundary_idx = boundary_idx.squeeze(1)
+  # 8 memory accesses rather than num_chunks
+  ref_offset += boundary_idx * chunk_size
+  # We indead into ref instead of ref_slice as dynamic_slice not supported on arrays
+  boundary_slices = [ref[:, pl.dslice(ref_offset[i], chunk_size)] for i in range(batch_size)]
+  boundary_slice = boundary_slices[0]
+  for i in range(1, batch_size):
+    boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
+  # mask to in range indexing
+  boundary_slice = jnp.where(
+    # index in bounds
+    (boundary_idx * chunk_size + iota1) < ref.shape[1], boundary_slice, get_dtype_info(ref.dtype).min)
+
+  return ref_offset, boundary_slice, k
 
 
 def topk_mask_pallas_kernel(
@@ -115,23 +133,41 @@ def topk_mask_pallas_kernel(
     return
 
   # Step 2: Find exact boundary for stable masking
-  # Compute cumulative count of elements >= threshold
-  gte_threshold = (logits_ref[...] >= threshold).astype(jnp.int32)
-  cumsum_gte = jnp.cumsum(gte_threshold, axis=1)
+  # Two stages
 
-  # Keep the first k elements that are >= threshold
-  # A position is included if its cumulative rank is <= k
-  valid = (gte_threshold == 1) & (cumsum_gte <= k)
-
-  # Find last valid index (for stable sorting)
-  indices = jnp.arange(vocab_size)
-  indices_broadcasted = jnp.broadcast_to(indices, (batch_size, vocab_size))
-  global_boundary_idx = jnp.where(valid, indices_broadcasted, -1).max(axis=1, keepdims=True)
+  ref_offset, boundary_slice, k = find_boundary_chunk(
+    logits_ref,
+    target=threshold,
+    k=k - (logits_ref[...] > threshold).sum(1, keepdims=True),
+    # for 262k -> 2k tiles, so we do (45, 45) instead of 2048
+    chunk_size=math.sqrt(logits_ref.shape[0] // NUM_LANES) * NUM_LANES,
+  )
+  ref_offset, boundary_slice, k = find_boundary_chunk(
+    logits_ref,
+    target=threshold,
+    k=k,
+    # for 262k -> 2k tiles, so we do (45, 45) instead of 2048
+    chunk_size=NUM_LANES,
+    ref_offset=ref_offset,
+    ref_slice=boundary_slice
+  )
+  # Within tile cumsum check
+  # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
+  iota1 = jax.lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)
+  num_matches = [(
+    (boundary_slice == threshold).astype(jnp.int32) * (iota1 == i) 
+    ).sum(1, keepdims=True) for i in range(NUM_LANES)]
+  cumsums = [num_matches[0]]
+  for i in range(1, len(num_matches)):
+    cumsums.append(cumsums[i - 1] + num_matches[i])
+  boundary_idx = ref_offset + sum((c < k) for c in cumsums).squeeze(1)
 
   # Step 3: Apply mask using boundary index
   # Keep if value >= threshold AND index <= boundary_idx
-  mask = (logits_ref[...] >= threshold) & (indices_broadcasted <= global_boundary_idx)
-
+  mask = (logits_ref[...] > threshold) | (
+    logits_ref[...] == threshold &
+    (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
+  )
   output_ref[...] = jnp.where(mask, logits_ref[...], replace_val)
 
 
@@ -175,13 +211,14 @@ def topk_mask_pallas(
   result = pl.pallas_call(
     functools.partial(
       topk_mask_pallas_kernel,
+      k=k,
       replace_val=replace_val,
       stable=stable,
       chunk_size=chunk_size,
     ),
     out_shape=output_shape,
     interpret=interpret,
-  )(x, jnp.array([k], dtype=jnp.int32))
+  )(x)
 
   # Remove padding if added
   if padded:
