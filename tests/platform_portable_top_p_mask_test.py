@@ -54,14 +54,9 @@ def test_top_p_mask(shape, seed, p_threshold):
   )
 
   # Apply tpu_inference_top_p_mask per batch element (expects unsorted logits and scalar p)
-  result_tpu_inference = jnp.zeros_like(logits)
-  for i in range(shape[0]):
-    result_tpu_inference = result_tpu_inference.at[i].set(
-      tpu_inference_top_p_mask(
-        logits[i : i + 1], float(p_array[i]), replace_val
-      )[0]
-    )
-
+  result_tpu_inference = tpu_inference_top_p_mask(
+      logits, p_array, replace_val
+  )
   # Compare results (should match exactly in f32)
   np.testing.assert_array_equal(
     result_portable,

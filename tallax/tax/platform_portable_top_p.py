@@ -54,6 +54,7 @@ def platform_portable_top_p(
   unnorm_probs_f32 = jnp.exp(logits - logits_max)
 
   # 2. Convert f32 probabilities to i32 range [0, scale]
+  # TODO Clip neccessary, try exhastive check?
   unnorm_probs_i32 = jnp.clip(
     (unnorm_probs_f32 * scale).astype(jnp.int32),
     0, scale
