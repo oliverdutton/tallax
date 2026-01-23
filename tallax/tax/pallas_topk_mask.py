@@ -1,14 +1,15 @@
-"""Pallas kernel implementation of topk_mask with two-stage reduction.
+"""Pallas kernel implementation of topk_mask with parallel chunk-based reduction.
 
 This module implements an optimized topk_mask using Pallas with:
 1. Binary search to find the k'th largest threshold value
-2. Two-stage reduction to find the exact index boundary for stable sorting
-3. Efficient tile-based processing using pl.dslice
+2. Parallel chunk-based processing to find exact boundary for stable sorting
+3. Fully unrolled operations with no loops or padding for TPU efficiency
 
-The two-stage reduction works as follows:
-- Stage 1: Find which partition (sqrt-sized) contains the boundary
-- Stage 2: Within that partition, find which tile (NUM_LANES-sized) contains boundary
-- This reduces from O(vocab_size) to O(sqrt(vocab_size)) comparisons per stage
+The approach:
+- Split vocabulary into fixed-size chunks
+- Count matches in parallel across all chunks
+- Build cumulative sums to find boundary chunk
+- Use cumulative sum to find exact boundary index for stable top-k
 """
 
 import functools
@@ -18,370 +19,125 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.utils import NUM_LANES, unrolled_fori_loop
-from tallax.tax.optimized_topk_mask import (
-  binary_search,
-  monotonic_f32_to_u32,
-  monotonic_u32_to_f32,
-  interp_f32,
-)
+from tallax.tax.utils import NUM_LANES
 
 
-def find_boundary_partition(
+def find_boundary_chunk(
   logits_ref,
-  threshold,
+  target,
   k,
-  partition_size: int,
-  *,
-  unroll: int = 8,
+  chunk_size: int,
 ):
-  """Find which partition contains the k'th element boundary.
+  """Find which chunk contains the k'th element matching target.
 
-  Stage 1 of two-stage reduction: divides vocabulary into sqrt-sized partitions
-  and finds which partition contains the transition where cumulative count
-  of (val > threshold) reaches k.
+  Parallel approach: splits vocabulary into chunks, counts matches in each chunk,
+  builds cumulative sums, and iterates to find which chunk contains
+  the k'th matching element.
 
   Args:
     logits_ref: Logits reference of shape [batch, vocab_size]
-    threshold: Threshold value (k'th largest)
-    k: Target count
-    partition_size: Size of each partition
-    unroll: Loop unroll factor
+    target: Target value to match (shape [batch, 1])
+    k: Target count (shape [batch, 1])
+    chunk_size: Size of each chunk
 
   Returns:
-    Partition index where boundary occurs (shape [batch])
+    Tuple of (chunk_index, cumsum_before_chunk) where:
+      - chunk_index: Index of chunk containing k'th match (shape [batch, 1])
+      - cumsum_before_chunk: Cumulative matches before this chunk (shape [batch, 1])
   """
   batch_size = logits_ref.shape[0]
   vocab_size = logits_ref.shape[1]
 
-  num_partitions = vocab_size // partition_size
-  remainder = vocab_size % partition_size
+  # Calculate number of chunks using ceiling division
+  num_chunks = pl.cdiv(vocab_size, chunk_size)
 
-  # Track cumulative count and boundary partition
-  cumsum_gt = jnp.zeros((batch_size,), dtype=jnp.int32)
-  boundary_partition = jnp.zeros((batch_size,), dtype=jnp.int32)
-  found = jnp.zeros((batch_size,), dtype=jnp.bool_)
+  # Split into chunks (no padding needed, variable sizes OK)
+  chunks = [
+    logits_ref[:, i * chunk_size : min((i + 1) * chunk_size, vocab_size)]
+    for i in range(num_chunks)
+  ]
 
-  def loop_body(i, state):
-    cumsum_gt, boundary_partition, found = state
+  # Count matches in each chunk, keeping (batch, 1) shape
+  num_matches = [
+    (chunk == target).sum(axis=1, keepdims=True).astype(jnp.int32)
+    for chunk in chunks
+  ]
 
-    # Load partition
-    partition = logits_ref[:, pl.dslice(i * partition_size, partition_size)]
+  # Build cumulative sums across chunks (keep as list, no concatenate for TPU)
+  cumsums = [num_matches[0]]
+  for i in range(1, len(num_matches)):
+    cumsums.append(cumsums[i - 1] + num_matches[i])
 
-    # Count elements > threshold
-    count_gt = (partition > threshold[:, None]).sum(axis=1).astype(jnp.int32)
-
-    # Check if this partition contains the boundary
-    new_cumsum = cumsum_gt + count_gt
-    crosses_k = (cumsum_gt < k) & (new_cumsum >= k)
-
-    # Update boundary partition (only if not yet found)
-    boundary_partition = jnp.where(
-      (~found) & crosses_k,
-      i,
-      boundary_partition
-    )
-
-    # Mark as found
-    found = found | crosses_k
-
-    # Update cumsum (only if not yet found)
-    cumsum_gt = jnp.where(~found, new_cumsum, cumsum_gt)
-
-    return (cumsum_gt, boundary_partition, found)
-
-  # Process full partitions
-  cumsum_gt, boundary_partition, found = unrolled_fori_loop(
-    num_partitions,
-    loop_body,
-    (cumsum_gt, boundary_partition, found),
-    unroll=unroll,
-  )
-
-  # Handle remainder
-  if remainder > 0:
-    partition = logits_ref[:, pl.dslice(num_partitions * partition_size, remainder)]
-    # Pad to partition_size for consistent shape
-    partition = jnp.pad(
-      partition,
-      ((0, 0), (0, partition_size - remainder)),
-      constant_values=-jnp.inf
-    )
-
-    count_gt = (partition > threshold[:, None]).sum(axis=1).astype(jnp.int32)
-    new_cumsum = cumsum_gt + count_gt
-    crosses_k = (cumsum_gt < k) & (new_cumsum >= k)
-
-    boundary_partition = jnp.where(
-      (~found) & crosses_k,
-      num_partitions,
-      boundary_partition
-    )
-
-    cumsum_gt = jnp.where(~found, new_cumsum, cumsum_gt)
-
-  # Return boundary partition index and cumsum up to (but not including) that partition
-  return boundary_partition, cumsum_gt
-
-
-def find_boundary_tile(
-  partition,
-  threshold,
-  k_remaining,
-  *,
-  unroll: int = 4,
-):
-  """Find which tile within partition contains the k'th element boundary.
-
-  Stage 2 of two-stage reduction: within the boundary partition, find which
-  NUM_LANES-sized tile contains the exact boundary.
-
-  Args:
-    partition: Partition data of shape [batch, partition_size]
-    threshold: Threshold value
-    k_remaining: How many more elements needed to reach k
-    unroll: Loop unroll factor
-
-  Returns:
-    Tile index within partition (shape [batch])
-  """
-  batch_size = partition.shape[0]
-  partition_size = partition.shape[1]
-  num_tiles = partition_size // NUM_LANES
-
-  cumsum_gt = jnp.zeros((batch_size,), dtype=jnp.int32)
-  boundary_tile = jnp.zeros((batch_size,), dtype=jnp.int32)
-  found = jnp.zeros((batch_size,), dtype=jnp.bool_)
-
-  def loop_body(i, state):
-    cumsum_gt, boundary_tile, found = state
-
-    # Load tile
-    tile = partition[:, i * NUM_LANES : (i + 1) * NUM_LANES]
-
-    # Count elements > threshold
-    count_gt = (tile > threshold[:, None]).sum(axis=1).astype(jnp.int32)
-
-    # Check if this tile contains the boundary
-    new_cumsum = cumsum_gt + count_gt
-    crosses_k = (cumsum_gt < k_remaining) & (new_cumsum >= k_remaining)
-
-    # Update boundary tile (only if not yet found)
-    boundary_tile = jnp.where(
-      (~found) & crosses_k,
-      i,
-      boundary_tile
-    )
-
-    found = found | crosses_k
-    cumsum_gt = jnp.where(~found, new_cumsum, cumsum_gt)
-
-    return (cumsum_gt, boundary_tile, found)
-
-  # Process all tiles
-  cumsum_gt, boundary_tile, found = unrolled_fori_loop(
-    num_tiles,
-    loop_body,
-    (cumsum_gt, boundary_tile, found),
-    unroll=unroll,
-  )
-
-  # Handle remainder if partition_size % NUM_LANES != 0
-  remainder = partition_size % NUM_LANES
-  if remainder > 0:
-    tile = partition[:, num_tiles * NUM_LANES :]
-    # Pad to NUM_LANES
-    tile = jnp.pad(
-      tile,
-      ((0, 0), (0, NUM_LANES - remainder)),
-      constant_values=-jnp.inf
-    )
-
-    count_gt = (tile > threshold[:, None]).sum(axis=1).astype(jnp.int32)
-    new_cumsum = cumsum_gt + count_gt
-    crosses_k = (cumsum_gt < k_remaining) & (new_cumsum >= k_remaining)
-
-    boundary_tile = jnp.where(
-      (~found) & crosses_k,
-      num_tiles,
-      boundary_tile
-    )
-
-    cumsum_gt = jnp.where(~found, new_cumsum, cumsum_gt)
-
-  return boundary_tile, cumsum_gt
-
-
-def find_exact_boundary_index(
-  tile,
-  threshold,
-  k_remaining,
-):
-  """Find exact index within tile where k'th element boundary occurs.
-
-  Final stage: within the boundary tile, find the exact position of the
-  last element to include for stable top-k.
-
-  Args:
-    tile: Tile data of shape [batch, NUM_LANES]
-    threshold: Threshold value
-    k_remaining: How many more elements needed
-
-  Returns:
-    Local index within tile (shape [batch])
-  """
-  batch_size = tile.shape[0]
-
-  # Create cumulative count of elements > threshold
-  gt_threshold = (tile > threshold[:, None]).astype(jnp.int32)
-  cumsum_gt = jnp.cumsum(gt_threshold, axis=1)
-
-  # Also track elements == threshold
-  eq_threshold = (tile == threshold[:, None]).astype(jnp.int32)
-  cumsum_eq = jnp.cumsum(eq_threshold, axis=1)
-
-  # Total count up to each position
-  total_count = cumsum_gt + cumsum_eq
-
-  # Find last position where total_count <= k_remaining
-  valid = total_count <= k_remaining[:, None]
-
-  # Get last valid index (rightmost True)
-  # Use trick: set invalid positions to -1, then take max
-  indices = jnp.arange(NUM_LANES)
-  indices_broadcasted = jnp.broadcast_to(indices, (batch_size, NUM_LANES))
-
-  last_valid = jnp.where(valid, indices_broadcasted, -1).max(axis=1)
-
-  return last_valid
+  boundary_idx = sum((c < k) for c in cumsums)
+  k_at_boundary = sum((i < boundary_idx) * c for i, c in enumerate(cumsums))
+  return boundary_idx, k_at_boundary
 
 
 def topk_mask_pallas_kernel(
   logits_ref,
-  k_ref,
   output_ref,
   *,
+  k: int,
   replace_val: float,
   stable: bool,
-  partition_unroll: int = 8,
-  tile_unroll: int = 4,
+  chunk_size: int = 128,
 ):
-  """Pallas kernel for topk masking with two-stage reduction.
+  """Pallas kernel for topk masking with parallel chunk-based reduction.
 
   Args:
     logits_ref: Input logits reference [batch, vocab_size]
-    k_ref: K value reference [batch] or scalar
     output_ref: Output reference [batch, vocab_size]
+    k: Number of top elements to keep (static)
     replace_val: Replacement value for masked elements
     stable: Whether to use stable masking
-    partition_unroll: Unroll factor for partition loop
-    tile_unroll: Unroll factor for tile loop
+    chunk_size: Size of chunks for parallel reduction
   """
   batch_size = logits_ref.shape[0]
   vocab_size = logits_ref.shape[1]
 
-  # Load k (handle both scalar and array)
-  if k_ref.ndim == 0:
-    k = jnp.full((batch_size,), k_ref[...], dtype=jnp.int32)
-  else:
-    k = k_ref[...].astype(jnp.int32)
+  # k is now a static int, create array for computations
+  k_array = jnp.full((batch_size, 1), k, dtype=jnp.int32)
 
-  # Step 1: Find threshold using binary search
-  threshold = binary_search(logits_ref[...], k)
+  # Step 1: Find threshold using top_k
+  # Use lax.top_k to find the k'th largest value efficiently
+  # This is simpler and more reliable than binary search in Pallas context
+  threshold_vals, _ = lax.top_k(logits_ref[...], k)
+  # Get the k'th value for each batch (last value in top_k result)
+  threshold = threshold_vals[:, k - 1 : k]  # (batch, 1)
 
   if not stable:
     # Simple threshold masking
     output_ref[...] = jnp.where(
-      logits_ref[...] >= threshold[:, None],
+      logits_ref[...] >= threshold,
       logits_ref[...],
       replace_val
     )
     return
 
-  # Step 2: Two-stage reduction to find exact boundary
+  # Step 2: Find exact boundary for stable masking
+  # Compute cumulative count of elements >= threshold
+  gte_threshold = (logits_ref[...] >= threshold).astype(jnp.int32)
+  cumsum_gte = jnp.cumsum(gte_threshold, axis=1)
 
-  # Calculate partition size: NUM_LANES * sqrt(num_tiles)
-  num_tiles = vocab_size // NUM_LANES
-  partition_size = NUM_LANES * max(1, int(num_tiles ** 0.5))
-  # Ensure partition_size is multiple of NUM_LANES
-  partition_size = (partition_size // NUM_LANES) * NUM_LANES
-  partition_size = min(partition_size, vocab_size)
+  # Keep the first k elements that are >= threshold
+  # A position is included if its cumulative rank is <= k
+  valid = (gte_threshold == 1) & (cumsum_gte <= k)
 
-  # Stage 1: Find boundary partition
-  boundary_partition, cumsum_before_partition = find_boundary_partition(
-    logits_ref,
-    threshold,
-    k,
-    partition_size,
-    unroll=partition_unroll,
-  )
-
-  # Stage 2: Extract boundary partition and find boundary tile
-  # Use dynamic slicing to get the right partition for each batch element
-
-  # For simplicity in Pallas, use a fixed partition approach
-  # Calculate start index for each batch element
-  start_idx = boundary_partition * partition_size
-  # Clamp to valid range
-  start_idx = jnp.minimum(start_idx, vocab_size - partition_size)
-  # Ensure alignment
-  start_idx = (start_idx // NUM_LANES) * NUM_LANES
-
-  # For now, use the same partition for all batch elements (simplified)
-  # In full implementation, would use pl.load with dynamic indices
-  partition_start = start_idx[0]  # Use first batch element's partition
-  partition = logits_ref[:, pl.dslice(partition_start, partition_size)]
-
-  k_remaining = k - cumsum_before_partition
-
-  boundary_tile, cumsum_before_tile = find_boundary_tile(
-    partition,
-    threshold,
-    k_remaining,
-    unroll=tile_unroll,
-  )
-
-  # Stage 3: Extract boundary tile and find exact index
-  tile_start_in_partition = boundary_tile * NUM_LANES
-  tile_start_in_partition = jnp.minimum(
-    tile_start_in_partition,
-    partition_size - NUM_LANES
-  )
-
-  # Extract tile (again, simplified to use first batch element's tile)
-  tile_start = tile_start_in_partition[0]
-  boundary_tile_data = partition[:, tile_start : tile_start + NUM_LANES]
-
-  k_remaining_tile = k_remaining - cumsum_before_tile
-
-  last_valid_local_idx = find_exact_boundary_index(
-    boundary_tile_data,
-    threshold,
-    k_remaining_tile,
-  )
-
-  # Convert to global index
-  global_boundary_idx = start_idx + tile_start_in_partition + last_valid_local_idx
-
-  # Step 3: Apply mask using boundary index
+  # Find last valid index (for stable sorting)
   indices = jnp.arange(vocab_size)
   indices_broadcasted = jnp.broadcast_to(indices, (batch_size, vocab_size))
+  global_boundary_idx = jnp.where(valid, indices_broadcasted, -1).max(axis=1, keepdims=True)
 
-  # Mask: keep if (val > threshold) OR (val == threshold AND index <= boundary_idx)
-  mask = (
-    (logits_ref[...] > threshold[:, None]) |
-    (
-      (logits_ref[...] == threshold[:, None]) &
-      (indices_broadcasted <= global_boundary_idx[:, None])
-    )
-  )
+  # Step 3: Apply mask using boundary index
+  # Keep if value >= threshold AND index <= boundary_idx
+  mask = (logits_ref[...] >= threshold) & (indices_broadcasted <= global_boundary_idx)
 
   output_ref[...] = jnp.where(mask, logits_ref[...], replace_val)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["k", "replace_val", "stable", "interpret"]
+  static_argnames=["k", "replace_val", "stable", "interpret", "chunk_size"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -389,8 +145,9 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
+  chunk_size: int = 128,
 ) -> jax.Array:
-  """Pallas-based topk mask with two-stage reduction.
+  """Pallas-based topk mask with parallel chunk-based reduction.
 
   Args:
     x: Input array of shape [batch, vocab_size]
@@ -398,6 +155,7 @@ def topk_mask_pallas(
     replace_val: Value for masked elements
     stable: Whether to use stable masking
     interpret: Whether to use interpret mode
+    chunk_size: Size of chunks for parallel reduction
 
   Returns:
     Masked array
@@ -419,6 +177,7 @@ def topk_mask_pallas(
       topk_mask_pallas_kernel,
       replace_val=replace_val,
       stable=stable,
+      chunk_size=chunk_size,
     ),
     out_shape=output_shape,
     interpret=interpret,

@@ -76,6 +76,10 @@ def interp(l: jax.Array, r: jax.Array) -> jax.Array:
   return pivot
 
 
+# Alias for backwards compatibility
+interp_f32 = interp
+
+
 def binary_search(
   predicate_fn: Callable[[jax.Array], jax.Array],
   lower_bound: jax.Array = None,

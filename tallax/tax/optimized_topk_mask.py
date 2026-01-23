@@ -109,16 +109,13 @@ def topk_mask_stable(
 
   if not stable:
     # Simple threshold masking (may include more than k elements if ties)
-    threshold_expanded = jnp.expand_dims(threshold, -1)
-    return jnp.where(x >= threshold_expanded, x, replace_val)
+    return jnp.where(x >= threshold, x, replace_val)
 
   # Stable version: find exact boundary index for all elements
   # We need to find the last index position to include such that we have exactly k elements
 
-  threshold_expanded = jnp.expand_dims(threshold, -1)
-
   # Create masks for values above and at threshold
-  gt_threshold = x > threshold_expanded
+  num_gt_threshold = (x > threshold).sum(1, keepdims=True)
   eq_threshold = x == threshold_expanded
 
   # Cumulative counts
