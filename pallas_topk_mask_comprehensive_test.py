@@ -17,6 +17,11 @@ def compare_with_jax_topk(x, k, test_name, verbose=True):
     topk_vals, topk_idxs = jax.lax.top_k(x, k)
     base = jnp.full_like(our_result, -jnp.inf)
     ref_result = jax.vmap(lambda x, idx, val: x.at[idx].set(val))(base, topk_idxs, topk_vals)
+    if True: #not (our_result==ref_result).all():
+      masks = [(v != -jnp.inf) for v in (our_result, ref_result)]
+      for i, res in enumerate([jnp.nonzero(mask[0]) for mask in masks]):
+          name = ['pallas', 'reference'][i]
+          print(f'{name}: res.shape: {res[0].shape}, res: {res}')
     return (our_result==ref_result).all()
 
 
