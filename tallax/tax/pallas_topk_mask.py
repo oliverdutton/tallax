@@ -137,7 +137,7 @@ def topk_mask_pallas_kernel(
     target=threshold,
     k=k - (logits_ref[...] > threshold).sum(1, keepdims=True),
     # for 262k -> 2k tiles, so we do (45, 45) instead of 2048
-    chunk_size=int(math.sqrt(vocab_size // NUM_LANES) * NUM_LANES),
+    chunk_size=int(math.sqrt(vocab_size // NUM_LANES)) * NUM_LANES,
   )
   ref_offset, boundary_slice, k = find_boundary_chunk(
     logits_ref,
