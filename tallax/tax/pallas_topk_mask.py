@@ -54,7 +54,7 @@ def find_boundary_chunk(
   num_chunks = pl.cdiv(arr.shape[1], chunk_size)
   # Split into chunks (no padding needed, variable sizes OK)
   chunks = [
-    ref[:, i * chunk_size : min((i + 1) * chunk_size, arr.shape[1])]
+    arr[:, i * chunk_size : min((i + 1) * chunk_size, arr.shape[1])]
     for i in range(num_chunks)
   ]
 
@@ -70,7 +70,19 @@ def find_boundary_chunk(
     cumsums.append(cumsums[i - 1] + num_matches[i])
 
   boundary_idx = sum((c < k) for c in cumsums)
-  k -= sum((i < boundary_idx) * c for i, c in enumerate(cumsums)) # This should be >0
+
+  # Stack cumsums into a single JAX array for array-based indexing
+  cumsums_array = jnp.stack(cumsums, axis=0)
+
+  # Get the cumsum of the chunk *before* the boundary
+  # Use take_along_axis for safe indexing with boundary_idx, avoiding negative indices
+  safe_idx = jnp.maximum(0, boundary_idx - 1)
+  cumsum_before = jnp.take_along_axis(
+      cumsums_array, safe_idx[None, ...], axis=0
+  )[0]
+
+  # Correctly subtract the cumsum, handling boundary_idx = 0 case
+  k -= jnp.where(boundary_idx > 0, cumsum_before, 0)
 
   # We'll do batch_size separate dslices into arr
   batch_size = ref.shape[0]
