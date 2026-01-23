@@ -75,19 +75,17 @@ def find_boundary_chunk(
   # We'll do batch_size separate dslices into arr
   batch_size = ref.shape[0]
   iota0, iota1 = (jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), dim) for dim in (0, 1))
-  boundary_idx = boundary_idx.squeeze(1)
   # 8 memory accesses rather than num_chunks
   ref_offset += boundary_idx * chunk_size
   # We indead into ref instead of ref_slice as dynamic_slice not supported on arrays
-  boundary_slices = [ref[:, pl.dslice(ref_offset[i], chunk_size)] for i in range(batch_size)]
+  boundary_slices = [ref[:, pl.dslice(ref_offset[i, 0], chunk_size)] for i in range(batch_size)]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
   # mask to in range indexing
   boundary_slice = jnp.where(
     # index in bounds
-    (boundary_idx * chunk_size + iota1) < ref.shape[1], boundary_slice, get_dtype_info(ref.dtype).min)
-
+    (boundary_idx * chunk_size + iota1) < ref.shape[1], boundary_slice, get_dtype_info(ref).min)
   return ref_offset, boundary_slice, k
 
 
@@ -113,9 +111,6 @@ def topk_mask_pallas_kernel(
   batch_size = logits_ref.shape[0]
   vocab_size = logits_ref.shape[1]
 
-  # k is now a static int, create array for computations
-  k_array = jnp.full((batch_size, 1), k, dtype=jnp.int32)
-
   # Step 1: Find threshold using top_k
   # Use lax.top_k to find the k'th largest value efficiently
   # This is simpler and more reliable than binary search in Pallas context
@@ -140,7 +135,7 @@ def topk_mask_pallas_kernel(
     target=threshold,
     k=k - (logits_ref[...] > threshold).sum(1, keepdims=True),
     # for 262k -> 2k tiles, so we do (45, 45) instead of 2048
-    chunk_size=math.sqrt(logits_ref.shape[0] // NUM_LANES) * NUM_LANES,
+    chunk_size=int(math.sqrt(vocab_size // NUM_LANES) * NUM_LANES),
   )
   ref_offset, boundary_slice, k = find_boundary_chunk(
     logits_ref,
@@ -160,13 +155,13 @@ def topk_mask_pallas_kernel(
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
-  boundary_idx = ref_offset + sum((c < k) for c in cumsums).squeeze(1)
+  boundary_idx = (ref_offset + sum((c < k) for c in cumsums)).squeeze(1)
 
   # Step 3: Apply mask using boundary index
   # Keep if value >= threshold AND index <= boundary_idx
   mask = (logits_ref[...] > threshold) | (
-    logits_ref[...] == threshold &
-    (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
+    (logits_ref[...] == threshold) &
+    (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx[:, None])
   )
   output_ref[...] = jnp.where(mask, logits_ref[...], replace_val)
 

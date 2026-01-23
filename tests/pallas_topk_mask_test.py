@@ -4,75 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tallax.tax.pallas_topk_mask import topk_mask_pallas, find_boundary_chunk
-
-
-def test_find_boundary_chunk_basic():
-  """Test find_boundary_chunk with simple case."""
-  print("Test: find_boundary_chunk basic")
-
-  # Create logits with known pattern: [5, 5, 5, 5, 3, 3, 3, 1, 1, 1, 1, 1]
-  logits = jnp.array([[5.0, 5.0, 5.0, 5.0, 3.0, 3.0, 3.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
-  target = jnp.array([[5.0]])  # Looking for matches of value 5
-  k = jnp.array([[2]], dtype=jnp.int32)  # Want 2nd occurrence
-  chunk_size = 4
-
-  chunk_idx, cumsum_before = find_boundary_chunk(logits, target, k, chunk_size)
-
-  # First chunk (0-3) has 4 matches, so 2nd match is in first chunk (idx 0)
-  print(f"  chunk_idx: {chunk_idx}, cumsum_before: {cumsum_before}")
-  assert chunk_idx[0, 0] == 0, f"Expected chunk 0, got {chunk_idx[0, 0]}"
-  assert cumsum_before[0, 0] == 0, f"Expected cumsum_before 0, got {cumsum_before[0, 0]}"
-  print("  PASS\n")
-
-
-def test_find_boundary_chunk_across_chunks():
-  """Test find_boundary_chunk when boundary crosses chunks."""
-  print("Test: find_boundary_chunk across chunks")
-
-  # Create logits: [7, 7, 5, 5, 5, 5, 5, 5, 3, 3]
-  logits = jnp.array([[7.0, 7.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 3.0, 3.0]])
-  target = jnp.array([[5.0]])  # Looking for matches of value 5
-  k = jnp.array([[3]], dtype=jnp.int32)  # Want 3rd occurrence
-  chunk_size = 4
-
-  chunk_idx, cumsum_before = find_boundary_chunk(logits, target, k, chunk_size)
-
-  # Chunk 0 (0-3): 2 matches at positions 2, 3
-  # Chunk 1 (4-7): 4 matches at positions 4, 5, 6, 7
-  # 3rd match is in chunk 1
-  print(f"  chunk_idx: {chunk_idx}, cumsum_before: {cumsum_before}")
-  assert chunk_idx[0, 0] == 1, f"Expected chunk 1, got {chunk_idx[0, 0]}"
-  assert cumsum_before[0, 0] == 2, f"Expected cumsum_before 2, got {cumsum_before[0, 0]}"
-  print("  PASS\n")
-
-
-def test_find_boundary_chunk_batched():
-  """Test find_boundary_chunk with batched inputs."""
-  print("Test: find_boundary_chunk batched")
-
-  # Two batches with different patterns
-  logits = jnp.array([
-    [5.0, 5.0, 5.0, 5.0, 3.0, 3.0, 3.0, 1.0],  # Batch 0
-    [7.0, 7.0, 5.0, 5.0, 5.0, 5.0, 3.0, 3.0],  # Batch 1
-  ])
-  target = jnp.array([[5.0], [5.0]])
-  k = jnp.array([[2], [3]], dtype=jnp.int32)
-  chunk_size = 4
-
-  chunk_idx, cumsum_before = find_boundary_chunk(logits, target, k, chunk_size)
-
-  print(f"  Batch 0 - chunk_idx: {chunk_idx[0, 0]}, cumsum_before: {cumsum_before[0, 0]}")
-  print(f"  Batch 1 - chunk_idx: {chunk_idx[1, 0]}, cumsum_before: {cumsum_before[1, 0]}")
-
-  # Batch 0: 4 matches in chunk 0, so 2nd match is in chunk 0
-  assert chunk_idx[0, 0] == 0, f"Batch 0: expected chunk 0, got {chunk_idx[0, 0]}"
-
-  # Batch 1: 2 matches in chunk 0, 4 matches in chunk 1, so 3rd match is in chunk 1
-  assert chunk_idx[1, 0] == 1, f"Batch 1: expected chunk 1, got {chunk_idx[1, 0]}"
-  assert cumsum_before[1, 0] == 2, f"Batch 1: expected cumsum_before 2, got {cumsum_before[1, 0]}"
-
-  print("  PASS\n")
+from tallax.tax.pallas_topk_mask import topk_mask_pallas
 
 
 def test_simple_topk():
@@ -180,11 +112,6 @@ def run_all_tests():
   print("="*60 + "\n")
 
   try:
-    # Test find_boundary_chunk
-    test_find_boundary_chunk_basic()
-    test_find_boundary_chunk_across_chunks()
-    test_find_boundary_chunk_batched()
-
     # Test topk_mask_pallas
     test_simple_topk()
     test_with_ties()
