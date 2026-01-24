@@ -146,7 +146,7 @@ def binary_search(
   predicate_fn: Callable[[jax.Array], jax.Array],
   lower_bound: jax.Array = None,
   upper_bound: jax.Array = None,
-  num_pivots: int = 1,
+  num_pivots: int = 3,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
