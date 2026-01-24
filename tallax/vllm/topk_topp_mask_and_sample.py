@@ -166,6 +166,7 @@ def topk_topp_mask_and_sample(
       pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
   )(logits, rng_key, k, p, temperature, dim0_offset_arr)
 

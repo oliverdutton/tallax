@@ -224,6 +224,7 @@ def topk_mask_pallas(
       replace_val=replace_val,
       stable=stable,
     ),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
     interpret=interpret,
   )(x, k)
