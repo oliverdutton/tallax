@@ -84,10 +84,9 @@ def _find_boundary_chunk(
   ref_offset += boundary_idx * chunk_size
   # Assure compiler offset is a multiple of chunk_size
   # This is us guaranteeing when using multiple iterations of find_boundary_chunk that current chunk_size evenly divides all previous chunk_sizes
-  ref_offset = pl.multiple_of(ref_offset, chunk_size)
   # Index into ref (not ref_slice) as dynamic_slice not supported on arrays
   # These dslices may be OOB, which is fine - we mask them out later
-  boundary_slices = [ref[:, pl.dslice(ref_offset[i, 0], chunk_size)] for i in range(batch_size)]
+  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)] for i in range(batch_size)]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
