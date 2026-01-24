@@ -65,6 +65,7 @@ def _find_boundary_chunk(
     (chunk == target).sum(axis=1, keepdims=True).astype(jnp.int32)
     for chunk in chunks
   ]
+
   # Build cumulative sums across chunks (keep as list, no concatenate for TPU)
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
@@ -116,14 +117,12 @@ def find_boundary_idx(ref, k, threshold):
     cumsums.append(cumsums[i - 1] + num_matches[i])
   return (ref_offset + sum((c < k) for c in cumsums))  
 
-def topk_mask_pallas_kernel(
+def topk_mask_ref_inputs(
   logits_ref,
-  output_ref,
+  k_ref,
   *,
-  k: int,
   replace_val: float,
   stable: bool,
-  chunk_size: int = 128,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -138,6 +137,7 @@ def topk_mask_pallas_kernel(
 
   # Step 1: Find k'th largest value
   logits = logits_ref[...]
+  k = k_ref[...]
   # next value after the largest value where less than k gt it.
   predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
@@ -165,12 +165,22 @@ def topk_mask_pallas_kernel(
     (logits == threshold) &
     (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
   )
-  output_ref[...] = jnp.where(mask, logits, replace_val)
+  return jnp.where(mask, logits, replace_val)
+
+def topk_mask_pallas_kernel(
+  logits_ref,
+  k_ref,
+  output_ref,
+  *,
+  replace_val: float,
+  stable: bool,
+):
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["k", "replace_val", "stable", "interpret", "chunk_size"]
+  static_argnames=["replace_val", "stable", "interpret"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -178,7 +188,6 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
-  chunk_size: int = 128,
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -194,31 +203,14 @@ def topk_mask_pallas(
     Masked array
   """
   batch_size, vocab_size = x.shape
-
-  # Ensure vocab_size is multiple of NUM_LANES
-  if vocab_size % NUM_LANES != 0:
-    pad_size = NUM_LANES - (vocab_size % NUM_LANES)
-    x = jnp.pad(x, ((0, 0), (0, pad_size)), constant_values=-jnp.inf)
-    padded = True
-  else:
-    padded = False
-
+  k = jnp.broadcast_to(k, (batch_size, 1))
   output_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
-
-  result = pl.pallas_call(
+  return pl.pallas_call(
     functools.partial(
       topk_mask_pallas_kernel,
-      k=k,
       replace_val=replace_val,
       stable=stable,
-      chunk_size=chunk_size,
     ),
     out_shape=output_shape,
     interpret=interpret,
-  )(x)
-
-  # Remove padding if added
-  if padded:
-    result = result[:, :vocab_size]
-
-  return result
+  )(x, k)

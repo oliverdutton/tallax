@@ -67,7 +67,7 @@ for i in range(num_chunks_1):
 print("\n" + "="*60)
 print("Running actual implementation:")
 print("="*60)
-from tallax.tax.pallas_topk_mask import topk_mask_pallas
+from tallax.vllm.topk_mask import topk_mask_pallas
 result = topk_mask_pallas(x, k, replace_val=-jnp.inf, stable=True, interpret=True)
 
 for i in range(batch_size):

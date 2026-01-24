@@ -16,14 +16,14 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 
-from tallax.tax.high_precision_uint import HighPrecisionUInt
+from tallax.vllm.high_precision_uint import HighPrecisionUInt
 
 
-from tallax.tax.binary_search import binary_search
+from tallax.vllm.binary_search import binary_search
 
-def platform_portable_top_p(
+def topp_mask(
   logits: jax.Array,
-  top_p: float | jax.Array,
+  top_p: jax.Array,
   scale: int = 2**30,
   replace_val: float = -1e12,
 ) -> jax.Array:
@@ -42,12 +42,7 @@ def platform_portable_top_p(
     Masked logits with same shape as input, where values outside top-p are replaced
   """
   # Convert top_p to array if scalar
-  if isinstance(top_p, (float, int)):
-    top_p_arr = jnp.full((logits.shape[0], 1), top_p, dtype=jnp.float32)
-  else:
-    top_p_arr = jnp.asarray(top_p, dtype=jnp.float32)
-    if top_p_arr.ndim == 1:
-      top_p_arr = top_p_arr[:, None]
+  top_p = jnp.broadcast_to(top_p, (logits.shape[0], 1))
 
   # 1. Compute unnormalized probabilities: exp(logits - max(logits))
   logits_max = logits.max(axis=1, keepdims=True)
@@ -66,7 +61,7 @@ def platform_portable_top_p(
 
   # 4. Compute target sum: total_sum * top_p
   total_sum_f32 = total_sum_hp.to_f32()
-  target_sum_f32 = total_sum_f32 * top_p_arr
+  target_sum_f32 = total_sum_f32 * top_p
   # Determine number of parts needed (u64 = 4 parts of 16 bits each)
   target_sum_hp = HighPrecisionUInt.from_f32(target_sum_f32, num_parts=len(total_sum_hp.parts))
 
