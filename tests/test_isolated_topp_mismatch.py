@@ -34,7 +34,7 @@ def reference_impl(logits, rng_key, k, p, temperature, *, stable=True, replace_v
         lambda l, k_val: topk_mask(l, k_val, replace_val=replace_val, stable=stable)
     )(logits, k)
     logits_masked = jax.vmap(
-        lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=stable)
+        lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=False)
     )(logits_masked, p)
     temperature_expanded = jnp.expand_dims(temperature, axis=-1)
     logits_masked = logits_masked / temperature_expanded.astype(logits_masked.dtype)

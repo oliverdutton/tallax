@@ -21,6 +21,14 @@ from tallax.vllm.tpu_inference_sampling_as_standalone_file import (
 from tallax.tax.utils import is_cpu_platform
 
 
+# Helper to call topk_topp_mask_and_sample with interpret=True on CPU
+def _topk_topp_mask_and_sample_auto_interpret(*args, **kwargs):
+  """Wrapper that automatically sets interpret=True on CPU."""
+  if is_cpu_platform():
+    kwargs['interpret'] = True
+  return topk_topp_mask_and_sample(*args, **kwargs)
+
+
 def reference_topk_topp_mask_and_sample(
   logits: jax.Array,
   rng_key: jax.Array,
@@ -63,8 +71,8 @@ def reference_topk_topp_mask_and_sample(
     logits, k
   )
 
-  # Apply top-p masking
-  logits_masked = jax.vmap(lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=stable))(
+  # Apply top-p masking (stable=False for topp, only topk uses stable)
+  logits_masked = jax.vmap(lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=False))(
     logits_masked, p
   )
 
@@ -119,7 +127,7 @@ def test_topk_topp_mask_and_sample_vs_reference(shape, dtype, stable, seed):
   logits = jax.random.normal(logits_key, shape).astype(dtype)
 
   # Run Pallas implementation
-  pallas_result = topk_topp_mask_and_sample(
+  pallas_result = _topk_topp_mask_and_sample_auto_interpret(
     logits,
     sample_key,
     k,
@@ -175,7 +183,7 @@ def test_topk_mask_correctness(shape, dtype, seed):
   logits = jax.random.normal(logits_key, shape).astype(dtype)
 
   # Run the full kernel
-  sampled = topk_topp_mask_and_sample(
+  sampled = _topk_topp_mask_and_sample_auto_interpret(
     logits,
     sample_key,
     k,
@@ -218,7 +226,7 @@ def test_greedy_sampling_low_temperature(shape, seed):
   logits = jax.random.normal(logits_key, shape).astype(jnp.float32)
 
   # Run the kernel
-  sampled = topk_topp_mask_and_sample(
+  sampled = _topk_topp_mask_and_sample_auto_interpret(
     logits,
     sample_key,
     k,
@@ -256,7 +264,7 @@ def test_padding_handling(batch_size, seed):
   logits = jax.random.normal(logits_key, (batch_size, vocab_size)).astype(jnp.float32)
 
   # Run the kernel - should handle padding internally
-  sampled = topk_topp_mask_and_sample(
+  sampled = _topk_topp_mask_and_sample_auto_interpret(
     logits,
     sample_key,
     k,
@@ -288,10 +296,10 @@ def test_deterministic_sampling(seed):
   logits = jax.random.normal(logits_key, (batch_size, vocab_size)).astype(jnp.float32)
 
   # Run twice with same key
-  result1 = topk_topp_mask_and_sample(
+  result1 = _topk_topp_mask_and_sample_auto_interpret(
     logits, sample_key, k, p, temperature, stable=True, block_token=8
   )
-  result2 = topk_topp_mask_and_sample(
+  result2 = _topk_topp_mask_and_sample_auto_interpret(
     logits, sample_key, k, p, temperature, stable=True, block_token=8
   )
 
