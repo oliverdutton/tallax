@@ -142,52 +142,6 @@ def generate_pivots(l: jax.Array, r: jax.Array, num_pivots: int):
     raise ValueError(f"Unsupported num_pivots: {num_pivots}")
 
 
-def find_new_bounds_unrolled(pivots, predicates):
-  """Find new [l, r] bounds using unrolled scan over pivot evaluations.
-
-  Given pivots and their predicate values, find the tightest bounds where:
-  - l is the largest pivot where predicate is FALSE (or original l if all TRUE)
-  - r is the smallest pivot where predicate is TRUE (or original r if all FALSE)
-
-  Args:
-    pivots: List of pivot values in ascending order
-    predicates: List of boolean predicate evaluations at each pivot
-
-  Returns:
-    (new_l, new_r) tuple
-  """
-  num_pivots = len(pivots)
-
-  # General case for num_pivots >= 3 (num_pivots==1 is handled directly in loop_body)
-  pivot_array = jnp.stack(pivots)
-  pred_array = jnp.stack(predicates)
-
-  any_true = jnp.any(pred_array)
-  any_false = jnp.any(~pred_array)
-
-  # Reshape indices to match pred_array shape for proper broadcasting
-  # pred_array has shape (num_pivots, ...), we need indices along first axis
-  indices = jnp.arange(num_pivots).reshape((num_pivots,) + (1,) * (pred_array.ndim - 1))
-
-  # Find index of last FALSE (for new_l)
-  false_indices = jnp.where(~pred_array, indices, -1)
-  last_false_idx = jnp.max(false_indices)
-
-  # Find index of first TRUE (for new_r)
-  true_indices = jnp.where(pred_array, indices, num_pivots)
-  first_true_idx = jnp.min(true_indices)
-
-  # Safe indexing with clip to avoid out-of-bounds
-  last_false_idx_safe = jnp.clip(last_false_idx, 0, num_pivots - 1)
-  first_true_idx_safe = jnp.clip(first_true_idx, 0, num_pivots - 1)
-
-  # Use jnp.where instead of Python if for JAX tracing
-  new_l_value = jnp.where(any_false, pivot_array[last_false_idx_safe], pivots[0])
-  new_r_value = jnp.where(any_true, pivot_array[first_true_idx_safe], pivots[-1])
-
-  return new_l_value, new_r_value, any_false, any_true
-
-
 def binary_search(
   predicate_fn: Callable[[jax.Array], jax.Array],
   lower_bound: jax.Array = None,
@@ -216,35 +170,16 @@ def binary_search(
   def loop_body(state):
     l, r = state
 
-    if num_pivots == 1:
-      # Original single-pivot behavior
-      pivot = interp(l, r)
-      predicate_true = predicate_fn(pivot)
-
+    # Multi-pivot evaluation
+    pivots = generate_pivots(l, r, num_pivots)
+    # Evaluate predicate at all pivots in parallel
+    predicates = [predicate_fn(p) for p in pivots]
+    for pivot, predicate_true in zip(pivots, predicates, strict=True):
       # If predicate is TRUE at pivot, answer is < pivot: update r = pivot
       # If predicate is FALSE at pivot, answer might be pivot or > pivot: update l = pivot
       l = jnp.where(predicate_true, l, pivot)
       r = jnp.where(predicate_true, pivot, r)
-
-      return (l, r)
-
-    else:
-      # Multi-pivot evaluation
-      pivots = generate_pivots(l, r, num_pivots)
-
-      # Evaluate predicate at all pivots in parallel
-      predicates = [predicate_fn(p) for p in pivots]
-
-      # Find new bounds using unrolled scan
-      new_l, new_r, any_false, any_true = find_new_bounds_unrolled(pivots, predicates)
-
-      # Update bounds
-      # If any_false, update l; otherwise keep l
-      # If any_true, update r; otherwise keep r
-      l = jnp.where(any_false, new_l, l)
-      r = jnp.where(any_true, new_r, r)
-
-      return (l, r)
+    return (l, r)
 
   def cond(state):
     l, r = state
