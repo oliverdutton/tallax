@@ -51,10 +51,10 @@ class HighPrecisionUInt:
       f32 array with same shape as each part
     """
     result = self.parts[0].astype(jnp.float32)
-    scale = 2.0 ** 16
+    scale = jnp.float32(2**16)
     for part in self.parts[1:]:
       result += part.astype(jnp.float32) * scale
-      scale *= 2.0 ** 16
+      scale *= jnp.float32(2**16)
     return result
 
   @classmethod
@@ -71,9 +71,9 @@ class HighPrecisionUInt:
     parts = []
     remainder = x
     for _ in range(num_parts):
-      part_f32 = jnp.fmod(remainder, 2.0 ** 16)
+      part_f32 = jnp.fmod(remainder, jnp.float32(2**16))
       parts.append(part_f32.astype(jnp.int32))
-      remainder = jnp.floor(remainder / (2.0 ** 16))
+      remainder = jnp.floor(remainder / jnp.float32(2**16))
     return cls(parts)
 
   def harmonize(self) -> 'HighPrecisionUInt':
