@@ -207,8 +207,8 @@ class HighPrecisionUInt:
 
       # Update result: if still equal and current part is greater, set true
       # if still equal and current part is less, set false
-      result = jnp.where(still_equal & part_greater, True, result)
-      result = jnp.where(still_equal & part_less, False, result)
+      result |= (still_equal & part_greater)
+      result &= ~(still_equal & part_less)
 
       # Update still_equal
       still_equal = still_equal & part_equal
