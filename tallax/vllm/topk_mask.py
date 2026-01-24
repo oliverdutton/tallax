@@ -20,7 +20,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.binary_search import binary_search
+from tallax.vllm.binary_search import binary_search
 from tallax.tax.utils import NUM_LANES, get_dtype_info
 
 
