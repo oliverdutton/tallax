@@ -158,112 +158,34 @@ def find_new_bounds_unrolled(pivots, predicates):
   """
   num_pivots = len(pivots)
 
-  if num_pivots == 1:
-    # Simple case: one pivot
-    pred = predicates[0]
-    # If predicate is TRUE, answer is < pivot (r = pivot, l unchanged)
-    # If predicate is FALSE, answer is >= pivot (l = pivot, r unchanged)
-    return pivots[0], pred
+  # General case for num_pivots >= 3 (num_pivots==1 is handled directly in loop_body)
+  pivot_array = jnp.stack(pivots)
+  pred_array = jnp.stack(predicates)
 
-  elif num_pivots == 3:
-    # Unrolled scan for 3 pivots
-    # Find the transition point where predicate switches from FALSE to TRUE
+  any_true = jnp.any(pred_array)
+  any_false = jnp.any(~pred_array)
 
-    # Build decision logic:
-    # If all FALSE: l = pivots[2], keep r
-    # If predicates = [FALSE, FALSE, TRUE]: l = pivots[1], r = pivots[2]
-    # If predicates = [FALSE, TRUE, *]: l = pivots[0], r = pivots[1]
-    # If all TRUE: keep l, r = pivots[0]
+  # Reshape indices to match pred_array shape for proper broadcasting
+  # pred_array has shape (num_pivots, ...), we need indices along first axis
+  indices = jnp.arange(num_pivots).reshape((num_pivots,) + (1,) * (pred_array.ndim - 1))
 
-    p0, p1, p2 = predicates
+  # Find index of last FALSE (for new_l)
+  false_indices = jnp.where(~pred_array, indices, -1)
+  last_false_idx = jnp.max(false_indices)
 
-    # Find rightmost FALSE pivot (becomes new l)
-    # Start from left, accumulate
-    new_l_candidates = [
-      (True, pivots[2]),           # If all FALSE: use pivots[2]
-      (~p2, pivots[1]),             # If p2 is FALSE: use pivots[1]
-      (~p1 & p2, pivots[0]),        # If p1 FALSE, p2 TRUE: use pivots[0]
-      (~p0 & p1, pivots[0]),        # Should not reach (covered above)
-    ]
+  # Find index of first TRUE (for new_r)
+  true_indices = jnp.where(pred_array, indices, num_pivots)
+  first_true_idx = jnp.min(true_indices)
 
-    # Find leftmost TRUE pivot (becomes new r)
-    new_r_candidates = [
-      (p0, pivots[0]),              # If p0 TRUE: use pivots[0]
-      (~p0 & p1, pivots[1]),        # If p0 FALSE, p1 TRUE: use pivots[1]
-      (~p1 & p2, pivots[2]),        # If p0,p1 FALSE, p2 TRUE: use pivots[2]
-    ]
+  # Safe indexing with clip to avoid out-of-bounds
+  last_false_idx_safe = jnp.clip(last_false_idx, 0, num_pivots - 1)
+  first_true_idx_safe = jnp.clip(first_true_idx, 0, num_pivots - 1)
 
-    # Select using cascading where
-    new_l_idx = (~p2).astype(jnp.int32) * 2 + (~p1 & p2).astype(jnp.int32)
-    new_r_idx = p0.astype(jnp.int32) * 0 + (~p0 & p1).astype(jnp.int32) * 1 + (~p0 & ~p1 & p2).astype(jnp.int32) * 2
+  # Use jnp.where instead of Python if for JAX tracing
+  new_l_value = jnp.where(any_false, pivot_array[last_false_idx_safe], pivots[0])
+  new_r_value = jnp.where(any_true, pivot_array[first_true_idx_safe], pivots[-1])
 
-    # Build arrays and index
-    pivot_array = jnp.stack(pivots)
-    pred_array = jnp.stack(predicates)
-
-    # Find transition: last FALSE and first TRUE
-    # If all FALSE: return last pivot, and indicate "no upper bound found"
-    # If all TRUE: return "no lower bound found", and first pivot
-
-    any_true = jnp.any(pred_array)
-    any_false = jnp.any(~pred_array)
-
-    # Find index of last FALSE (for new_l)
-    # Scan from right: find last occurrence of FALSE
-    false_indices = jnp.where(~pred_array, jnp.arange(num_pivots), -1)
-    last_false_idx = jnp.max(false_indices)
-
-    # Find index of first TRUE (for new_r)
-    true_indices = jnp.where(pred_array, jnp.arange(num_pivots), num_pivots)
-    first_true_idx = jnp.min(true_indices)
-
-    new_l_value = pivot_array[last_false_idx] if any_false else pivots[0]
-    new_r_value = pivot_array[first_true_idx] if any_true else pivots[-1]
-
-    return new_l_value, new_r_value, any_false, any_true
-
-  elif num_pivots == 7:
-    # Unrolled scan for 7 pivots
-    pred_array = jnp.stack(predicates)
-    pivot_array = jnp.stack(pivots)
-
-    any_true = jnp.any(pred_array)
-    any_false = jnp.any(~pred_array)
-
-    # Find last FALSE and first TRUE
-    false_indices = jnp.where(~pred_array, jnp.arange(num_pivots), -1)
-    last_false_idx = jnp.max(false_indices)
-
-    true_indices = jnp.where(pred_array, jnp.arange(num_pivots), num_pivots)
-    first_true_idx = jnp.min(true_indices)
-
-    new_l_value = pivot_array[last_false_idx] if any_false else pivots[0]
-    new_r_value = pivot_array[first_true_idx] if any_true else pivots[-1]
-
-    return new_l_value, new_r_value, any_false, any_true
-
-  else:
-    # General case for larger num_pivots
-    pred_array = jnp.stack(predicates)
-    pivot_array = jnp.stack(pivots)
-
-    any_true = jnp.any(pred_array)
-    any_false = jnp.any(~pred_array)
-
-    false_indices = jnp.where(~pred_array, jnp.arange(num_pivots), -1)
-    last_false_idx = jnp.max(false_indices)
-
-    true_indices = jnp.where(pred_array, jnp.arange(num_pivots), num_pivots)
-    first_true_idx = jnp.min(true_indices)
-
-    # Safe indexing with clip
-    last_false_idx = jnp.clip(last_false_idx, 0, num_pivots - 1)
-    first_true_idx = jnp.clip(first_true_idx, 0, num_pivots - 1)
-
-    new_l_value = jnp.where(any_false, pivot_array[last_false_idx], pivots[0])
-    new_r_value = jnp.where(any_true, pivot_array[first_true_idx], pivots[-1])
-
-    return new_l_value, new_r_value, any_false, any_true
+  return new_l_value, new_r_value, any_false, any_true
 
 
 def binary_search(
