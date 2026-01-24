@@ -91,6 +91,8 @@ def reference_topk_topp_mask_and_sample(
   "shape",
   [
     (8, 1024),
+    (8, 2048),
+    (8, 4096),
     (16, 2048),
     (24, 4096),
     (32, 8192),
