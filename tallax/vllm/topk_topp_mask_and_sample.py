@@ -56,7 +56,7 @@ def topk_topp_mask_and_sample_kernel(
 
   # Random key splitting is based on idx in ravelled array
   # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-  batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + dim0_offset_ref[0]
+  batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
   next_tokens = sparse_random_categorical(
     rng_key_ref,
     logits,
