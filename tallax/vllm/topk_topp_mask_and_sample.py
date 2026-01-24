@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
 from tallax.vllm.topk_mask import topk_mask_ref_inputs
@@ -158,11 +159,11 @@ def topk_topp_mask_and_sample(
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      pl.BlockSpec((1, 2), lambda i: (0, 0)),  # rng_key
+      pl.BlockSpec(memory_space=pltpu.SMEM),  # rng_key
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature
-      pl.BlockSpec((1,), lambda i: (0,)),  # dim0_offset
+      pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
     interpret=interpret,

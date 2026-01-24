@@ -93,6 +93,8 @@ def reference_topk_topp_mask_and_sample(
     (8, 1024),
     (8, 2048),
     (8, 4096),
+    (8, 8192),
+    (8, 3570),  # Non-aligned batch size
     (16, 2048),
     (24, 4096),
     (32, 8192),
