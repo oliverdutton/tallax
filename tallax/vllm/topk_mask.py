@@ -163,12 +163,11 @@ def topk_mask_ref_inputs(
 
   if not stable:
     # Simple threshold masking
-    output_ref[...] = jnp.where(
+    return jnp.where(
       logits >= threshold,
       logits,
       replace_val
     )
-    return
 
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
