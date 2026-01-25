@@ -140,17 +140,27 @@ def alu_minus_gt(lhs, rhs):
   assert lhs.dtype == jnp.float32
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
-def fast_sum(x, num_parallel=3):
+def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
+  assert logits.shape[1] % NUM_LANES == 0
+  compare = lambda lhs, rhs: (lhs > rhs) if not use_alu else alu_minus_gt(logits, pivot)
+  chunks = [logits[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(pl.cdiv(logits.shape[1], NUM_LANES))]
+
+  # (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel))
   if num_parallel == 0:
-    return x.sum(1, keepdims=True)
-  running_sums = [
-    x[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(num_parallel)
-  ]
-  i = num_parallel
-  while i * NUM_LANES < x.shape[1]:
-    running_sums[i % num_parallel] += x[:, i*NUM_LANES:(i+1)*NUM_LANES]
-    i += 1
-  return sum(running_sums).sum(1, keepdims=True)
+    return compare(logits, pivot).sum(1, keepdims=True)
+
+  running_sums = chunks[:num_parallel]
+  for i, chunk in enumerate(chunks[num_parallel:]):
+    running_sums[i % num_parallel] += compare(chunk, pivot)
+  while len(running_sums) > 1:
+    n = len(running_sums)
+    for i in range(pl.cdiv(n, 2)):
+      running_sums[i] += running_sums[i + n//2]
+    running_sums = running_sums[:pl.cdiv(n, 2)]
+  total_sum = running_sums[0].sum(1, keepdims=True)
+  if use_alu:
+    total_sum = -total_sum
+  return total_sum
 
 
 def topk_mask_ref_inputs(
@@ -177,13 +187,10 @@ def topk_mask_ref_inputs(
   logits = logits_ref[...]
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
-  if use_alu:
-    print("Use ALU gt")
-    # Use ALU as more vector registers than mask registers.
-    predicate_fn = lambda pivot: (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel)) < k
-  else:
-    print("Use gt")
-    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) < k
+
+  # Use ALU as more vector registers than mask registers.
+  predicate_fn = lambda pivot: fast_gt_sum(logits, pivot, num_parallel=num_parallel, use_alu=use_alu) < k
+
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
