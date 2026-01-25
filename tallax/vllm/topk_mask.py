@@ -161,7 +161,7 @@ def topk_mask_ref_inputs(
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
   if use_alu:
-    predicate_fn = lambda pivot: alu_gt(logits, pivot).sum(-1, keepdim=True) < k # Use ALU as faster
+    predicate_fn = lambda pivot: alu_gt(logits, pivot).sum(-1, keepdims=True) < k # Use ALU as faster
   else:
     predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
