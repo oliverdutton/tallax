@@ -138,6 +138,8 @@ def alu_gt(lhs, rhs):
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
 def fast_sum(x, num_parallel=3):
+  if num_parallel == 0:
+    return x.sum(1, keepdims=True)
   running_sums = [
     x[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(num_parallel)
   ]
@@ -174,10 +176,10 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   if use_alu:
     print("Use ALU gt")
-    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot), num_parallel=num_parallel) #.sum(-1, keepdims=True) < k # Use ALU as faster
+    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot), num_parallel=num_parallel) < k #.sum(-1, keepdims=True) < k # Use ALU as faster
   else:
     print("Use gt")
-    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) #.sum(-1, keepdims=True) < k
+    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) < k #.sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
