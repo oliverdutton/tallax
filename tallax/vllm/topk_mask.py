@@ -155,7 +155,7 @@ def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
     while len(running_sums) > 1:
       n = len(running_sums)
       for i in range(n // 2):
-        running_sums[i] += running_sums[i + n//2]
+        running_sums[i] += running_sums[i + pl.cdiv(n, 2)]
       running_sums = running_sums[:pl.cdiv(n, 2)]
     total_sum = running_sums[0].sum(1, keepdims=True)
   if use_alu:
