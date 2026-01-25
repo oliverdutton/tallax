@@ -147,17 +147,17 @@ def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
 
   # (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel))
   if num_parallel == 0:
-    return compare(logits, pivot).sum(1, keepdims=True)
-
-  running_sums = [compare(chunk, pivot).astype(jnp.int32) for chunk in chunks[:num_parallel]]
-  for i, chunk in enumerate(chunks[num_parallel:]):
-    running_sums[i % num_parallel] += compare(chunk, pivot)
-  while len(running_sums) > 1:
-    n = len(running_sums)
-    for i in range(pl.cdiv(n, 2)):
-      running_sums[i] += running_sums[i + n//2]
-    running_sums = running_sums[:pl.cdiv(n, 2)]
-  total_sum = running_sums[0].sum(1, keepdims=True)
+    total_sum = compare(logits, pivot).sum(1, keepdims=True)
+  else:
+    running_sums = [compare(chunk, pivot).astype(jnp.int32) for chunk in chunks[:num_parallel]]
+    for i, chunk in enumerate(chunks[num_parallel:]):
+      running_sums[i % num_parallel] += compare(chunk, pivot)
+    while len(running_sums) > 1:
+      n = len(running_sums)
+      for i in range(n // 2):
+        running_sums[i] += running_sums[i + n//2]
+      running_sums = running_sums[:pl.cdiv(n, 2)]
+    total_sum = running_sums[0].sum(1, keepdims=True)
   if use_alu:
     total_sum = -total_sum
   return total_sum
