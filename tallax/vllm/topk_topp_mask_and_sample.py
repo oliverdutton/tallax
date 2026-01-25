@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
 from tallax.vllm.topk_mask import topk_mask_ref_inputs
@@ -44,6 +45,8 @@ def topk_topp_mask_and_sample_kernel(
   greedy_sampled = max_arrays(
     [logits_ref[...], token_idx], num_keys=1+int(stable), axis=1
   )[1]
+  # Reshape to (block_token, 1) to match output ref
+  greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
 
   logits = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
   logits = topp_mask(
@@ -53,7 +56,7 @@ def topk_topp_mask_and_sample_kernel(
 
   # Random key splitting is based on idx in ravelled array
   # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-  batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + dim0_offset_ref[0]
+  batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
   next_tokens = sparse_random_categorical(
     rng_key_ref,
     logits,
@@ -62,6 +65,8 @@ def topk_topp_mask_and_sample_kernel(
     axis=1,  # Sample along vocab axis
     dtype=jnp.float32,
   )[1]  # Take sampled token indices
+  # Reshape to (block_token, 1) to match output ref
+  next_tokens = jnp.expand_dims(next_tokens, axis=-1)
 
   sampled_tokens_ref[...] = jnp.where(temperature_ref[...] < _SAMPLING_EPS, greedy_sampled, next_tokens)
 
@@ -103,14 +108,33 @@ def topk_topp_mask_and_sample(
   batch_size, vocab_size = logits.shape
 
   # Ensure inputs have correct shapes
-  k = jnp.broadcast_to(k, (batch_size, 1))
-  p = jnp.broadcast_to(p, (batch_size, 1))
-  temperature = jnp.broadcast_to(temperature, (batch_size, 1))
+  # First ensure they're at least 1D arrays, then reshape to (batch_size, 1)
+  k = jnp.atleast_1d(k)
+  p = jnp.atleast_1d(p)
+  temperature = jnp.atleast_1d(temperature)
+
+  # Broadcast to batch_size if scalar, then add dimension
+  if k.shape[0] == 1:
+    k = jnp.broadcast_to(k, (batch_size,))
+  if p.shape[0] == 1:
+    p = jnp.broadcast_to(p, (batch_size,))
+  if temperature.shape[0] == 1:
+    temperature = jnp.broadcast_to(temperature, (batch_size,))
+
+  # Now reshape to (batch_size, 1)
+  k = jnp.reshape(k, (batch_size, 1))
+  p = jnp.reshape(p, (batch_size, 1))
+  temperature = jnp.reshape(temperature, (batch_size, 1))
   dim0_offset_arr = jnp.array([dim0_offset], dtype=jnp.int32)
 
-  # Prepare RNG key
+  # Prepare RNG key - always ensure it's (1, 2) shape
   if rng_key.ndim == 0:
-    rng_key = jnp.reshape(jax.random.key_data(rng_key), (1, 2))
+    rng_key = jax.random.key_data(rng_key)
+  if rng_key.ndim == 1:
+    rng_key = jnp.reshape(rng_key, (1, 2))
+  elif rng_key.shape != (1, 2):
+    # If it's already 2D, ensure it's (1, 2)
+    rng_key = jnp.reshape(rng_key, (1, 2))
 
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
@@ -135,13 +159,14 @@ def topk_topp_mask_and_sample(
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      pl.BlockSpec((1, 2), lambda i: (0, 0)),  # rng_key
+      pl.BlockSpec(memory_space=pltpu.SMEM),  # rng_key
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature
-      pl.BlockSpec((1,), lambda i: (0,)),  # dim0_offset
+      pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
   )(logits, rng_key, k, p, temperature, dim0_offset_arr)
 

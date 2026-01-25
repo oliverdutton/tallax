@@ -20,7 +20,7 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.binary_search import binary_search
+from tallax.vllm.binary_search import binary_search
 from tallax.tax.utils import NUM_LANES, get_dtype_info
 
 
@@ -39,26 +39,27 @@ def _find_boundary_chunk(
   the k'th matching element.
 
   Args:
-    logits_ref: Logits reference of shape [batch, vocab_size]
+    ref: Reference array of shape [batch, vocab_size]
     target: Target value to match (shape [batch, 1])
     k: Target count (shape [batch, 1])
     chunk_size: Size of each chunk
+    active_chunk: Optional subset of ref to search in
+    ref_offset: Offset into ref for indexing
 
   Returns:
-    Tuple of (chunk_index, cumsum_before_chunk) where:
-      - chunk_index: Index of chunk containing k'th match (shape [batch, 1])
-      - cumsum_before_chunk: Cumulative matches before this chunk (shape [batch, 1])
+    Tuple of (ref_offset, boundary_slice, k) where:
+      - ref_offset: Updated offset to boundary chunk start
+      - boundary_slice: Extracted boundary chunk [batch, chunk_size]
+      - k: Updated k count after subtracting earlier chunks
   """
-  active_chunk = ref if active_chunk is None else active_chunk
+  arr = ref if active_chunk is None else active_chunk
   # Calculate number of chunks using ceiling division
-  num_chunks = pl.cdiv(active_chunk.shape[1], chunk_size)
-  # If chunk size doesn't evenly divide array, we make the first chunk smaller. This choice avoids OOB indexing to extract chunk_size length slices later.
-  chunk_offsets = [0] + sorted(filter(lambda x: x>0, [active_chunk.shape[1] - i * chunk_size for i in range(num_chunks)]))
-  # Split into chunks (no padding needed, variable sizes OK)
-  chunks = [active_chunk[:, lb:ub] for lb, ub in zip(chunk_offsets[:-1], chunk_offsets[1:], strict=True)]
-  assert sum([c.shape[1] for c in chunks]) == active_chunk.shape[1]
-  first_chunk_size = chunks[0].shape[1]
-  assert len(set([c.shape[1] for c in chunks[1:]])) <= 1
+  num_chunks = pl.cdiv(arr.shape[1], chunk_size)
+  # Split into chunks with multiples of chunk_size (may be OOB for last chunk)
+  chunks = [
+    arr[:, i * chunk_size : (i + 1) * chunk_size]
+    for i in range(num_chunks)
+  ]
 
   # Count matches in each chunk, keeping (batch, 1) shape
   num_matches = [
@@ -70,20 +71,33 @@ def _find_boundary_chunk(
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
+
   boundary_idx = sum((c < k) for c in cumsums)
+  # Subtract counts from all chunks BEFORE the boundary chunk
   k -= sum((i == (boundary_idx - 1)) * c for i, c in enumerate(cumsums))
 
   # We'll do batch_size separate dslices into arr
   batch_size = ref.shape[0]
   iota0, iota1 = (jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), dim) for dim in (0, 1))
-  
-  # first chunk may not be chunk_size in length if arr doesn't evenly divide
-  ref_offset += jnp.maximum(first_chunk_size + (boundary_idx - 1) * chunk_size, 0)
-  # We indead into ref instead of ref_slice as dynamic_slice not supported on arrays
-  boundary_slices = [ref[:, pl.dslice(ref_offset[i, 0], chunk_size)] for i in range(batch_size)]
+
+  # Update offset by multiples of chunk_size
+  ref_offset += boundary_idx * chunk_size
+  # Assure compiler offset is a multiple of chunk_size
+  # This is us guaranteeing when using multiple iterations of find_boundary_chunk that current chunk_size evenly divides all previous chunk_sizes
+  # Index into ref (not ref_slice) as dynamic_slice not supported on arrays
+  # These dslices may be OOB, which is fine - we mask them out later
+  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)] for i in range(batch_size)]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
+
+  # Mask OOB indices to dtype min to ensure they don't interfere with comparisons
+  if num_chunks * chunk_size != arr.shape[1]:
+    boundary_slice = jnp.where(
+      (ref_offset + iota1) < ref.shape[1],
+      boundary_slice,
+      get_dtype_info(ref).min
+    )
   return ref_offset, boundary_slice, k
 
 def find_boundary_idx(ref, k, threshold):
@@ -117,12 +131,19 @@ def find_boundary_idx(ref, k, threshold):
     cumsums.append(cumsums[i - 1] + num_matches[i])
   return (ref_offset + sum((c < k) for c in cumsums))  
 
+def alu_gt(lhs, rhs):
+   # equiv to (logits > pivot).astype(jnp.int32), but avoids masks
+   # Only valid if no NaN and no inf/-inf in values.
+  assert lhs.dtype == jnp.float32
+  return ((rhs - lhs).view(jnp.int32) >> 31)
+
 def topk_mask_ref_inputs(
   logits_ref,
   k_ref,
   *,
   replace_val: float,
   stable: bool,
+  use_alu: bool,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -139,7 +160,10 @@ def topk_mask_ref_inputs(
   logits = logits_ref[...]
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
-  predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
+  if use_alu:
+    predicate_fn = lambda pivot: alu_gt(logits, pivot).sum(-1, keepdims=True) < k # Use ALU as faster
+  else:
+    predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
@@ -148,12 +172,11 @@ def topk_mask_ref_inputs(
 
   if not stable:
     # Simple threshold masking
-    output_ref[...] = jnp.where(
+    return jnp.where(
       logits >= threshold,
       logits,
       replace_val
     )
-    return
 
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
@@ -174,13 +197,14 @@ def topk_mask_pallas_kernel(
   *,
   replace_val: float,
   stable: bool,
+  use_alu: bool,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["replace_val", "stable", "interpret"]
+  static_argnames=["replace_val", "stable", "interpret", "use_alu"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -188,6 +212,7 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
+  use_alu: bool = False
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -210,7 +235,9 @@ def topk_mask_pallas(
       topk_mask_pallas_kernel,
       replace_val=replace_val,
       stable=stable,
+      use_alu=use_alu,
     ),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
     interpret=interpret,
   )(x, k)

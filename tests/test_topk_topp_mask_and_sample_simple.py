@@ -61,8 +61,8 @@ def reference_topk_topp_mask_and_sample(
     logits, k
   )
 
-  # Apply top-p masking
-  logits_masked = jax.vmap(lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=stable))(
+  # Apply top-p masking (stable=False for topp, only topk uses stable)
+  logits_masked = jax.vmap(lambda l, p_val: topp_mask(l, p_val, replace_val=replace_val, stable=False))(
     logits_masked, p
   )
 

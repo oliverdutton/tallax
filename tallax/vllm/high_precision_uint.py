@@ -51,10 +51,10 @@ class HighPrecisionUInt:
       f32 array with same shape as each part
     """
     result = self.parts[0].astype(jnp.float32)
-    scale = 2.0 ** 16
+    scale = jnp.float32(2**16)
     for part in self.parts[1:]:
       result += part.astype(jnp.float32) * scale
-      scale *= 2.0 ** 16
+      scale *= jnp.float32(2**16)
     return result
 
   @classmethod
@@ -71,9 +71,9 @@ class HighPrecisionUInt:
     parts = []
     remainder = x
     for _ in range(num_parts):
-      part_f32 = jnp.fmod(remainder, 2.0 ** 16)
+      part_f32 = jnp.fmod(remainder, jnp.float32(2**16))
       parts.append(part_f32.astype(jnp.int32))
-      remainder = jnp.floor(remainder / (2.0 ** 16))
+      remainder = jnp.floor(remainder / jnp.float32(2**16))
     return cls(parts)
 
   def harmonize(self) -> 'HighPrecisionUInt':
@@ -197,20 +197,17 @@ class HighPrecisionUInt:
     other_parts = other.parts + [0] * (max_len - len(other.parts))
 
     # Compare from MSB to LSB
-    result = jnp.ones_like(self.parts[0], dtype=bool)
+    result = jnp.zeros_like(self.parts[0], dtype=bool)
     still_equal = jnp.ones_like(self.parts[0], dtype=bool)
 
     for i in range(max_len - 1, -1, -1):
       part_greater = self_parts[i] > other_parts[i]
-      part_less = self_parts[i] < other_parts[i]
       part_equal = self_parts[i] == other_parts[i]
 
       # Update result: if still equal and current part is greater, set true
       # if still equal and current part is less, set false
-      result = jnp.where(still_equal & part_greater, True, result)
-      result = jnp.where(still_equal & part_less, False, result)
-
+      result |= (still_equal & part_greater)
       # Update still_equal
       still_equal = still_equal & part_equal
 
-    return result
+    return result | still_equal

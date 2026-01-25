@@ -60,10 +60,9 @@ def topp_mask(
   total_sum_hp = unnorm_probs_hp.sum(axis=1)
 
   # 4. Compute target sum: total_sum * top_p
-  total_sum_f32 = total_sum_hp.to_f32()
-  target_sum_f32 = total_sum_f32 * top_p
-  # Determine number of parts needed (u64 = 4 parts of 16 bits each)
-  target_sum_hp = HighPrecisionUInt.from_f32(target_sum_f32, num_parts=len(total_sum_hp.parts))
+  target_sum_hp = HighPrecisionUInt.from_f32(
+    total_sum_hp.to_f32() * top_p,
+    num_parts=len(total_sum_hp.parts))
 
   # 5. Binary search for threshold
   # Predicate: sum(unnorm_probs_i32 >= threshold) < target_sum
