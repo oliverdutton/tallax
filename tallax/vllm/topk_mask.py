@@ -147,18 +147,22 @@ def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
     return compare_fn(vals, threshold).sum(1, keepdims=True)
   chunks = [vals[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(vals.shape[1] // NUM_LANES)]
   num_parallel = min(num_parallel, len(chunks)) # guard num_parallel
-  remainder_chunk_sum = vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:].sum(1, keepdims=True)
+  if (has_remainder := (vals.shape[1] % NUM_LANES)):
+    remainder_chunk_sum = vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:].sum(1, keepdims=True)
 
-  running_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
+  partial_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
   for i, chunk in enumerate(chunks[num_parallel:]):
-    running_sums[i % num_parallel] += compare_fn(chunk, threshold)
-  while len(running_sums) > 1:
+    partial_sums[i % num_parallel] += compare_fn(chunk, threshold)
+  while len(partial_sums) > 1:
     # Reduce sum pairs
-    n = len(running_sums)
+    n = len(partial_sums)
     for i in range(n // 2):
-      running_sums[i] += running_sums[i + pl.cdiv(n, 2)]
-    running_sums = running_sums[:pl.cdiv(n, 2)]
-  return running_sums[0].sum(1, keepdims=True) + remainder_chunk_sum
+      partial_sums[i] += partial_sums[i + pl.cdiv(n, 2)]
+    partial_sums = partial_sums[:pl.cdiv(n, 2)]
+  full_sum = partial_sums[0].sum(1, keepdims=True)
+  if has_remainder:
+    full_sum += remainder_chunk_sum
+  return full_sum
 
 
 def topk_mask_ref_inputs(
