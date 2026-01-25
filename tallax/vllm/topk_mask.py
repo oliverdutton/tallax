@@ -150,7 +150,7 @@ def fast_sum(x, num_parallel=3):
   while i * NUM_LANES < x.shape[1]:
     running_sums[i % num_parallel] += x[:, i*NUM_LANES:(i+1)*NUM_LANES]
     i += 1
-  return sum(x for x in running_sums).sum(1, keepdims=True)
+  return sum(running_sums).sum(1, keepdims=True)
 
 
 def topk_mask_ref_inputs(
@@ -197,6 +197,8 @@ def topk_mask_ref_inputs(
       logits,
       replace_val
     )
+
+  print("Using stable top-k")
 
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
