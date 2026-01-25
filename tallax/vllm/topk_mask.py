@@ -137,6 +137,17 @@ def alu_gt(lhs, rhs):
   assert lhs.dtype == jnp.float32
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
+def fast_sum(x, num_parallel=3):
+  running_sums = [
+    x[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(num_parallel)
+  ]
+  i = num_parallel
+  while i * NUM_LANES < x.shape[1]:
+    running_sums[i % num_parallel] += x[:, i*NUM_LANES:(i+1)*NUM_LANES]
+    i += 1
+  return sum(x.sum(1, keepdims=True) for x in running_sums)
+
+
 def topk_mask_ref_inputs(
   logits_ref,
   k_ref,
@@ -162,10 +173,10 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   if use_alu:
     print("Use ALU gt")
-    predicate_fn = lambda pivot: alu_gt(logits, pivot).sum(-1, keepdims=True) < k # Use ALU as faster
+    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot)) #.sum(-1, keepdims=True) < k # Use ALU as faster
   else:
     print("Use gt")
-    predicate_fn = lambda pivot: (logits > pivot).sum(-1, keepdims=True) < k
+    predicate_fn = lambda pivot: fast_sum(logits > pivot) #.sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
@@ -183,7 +194,7 @@ def topk_mask_ref_inputs(
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
     logits_ref,
-    k=k - (logits > threshold).sum(1, keepdims=True),
+    k=k - fast_sum(logits > threshold), #.sum(1, keepdims=True),
     threshold=threshold
   )
   mask = (logits > threshold) | (
