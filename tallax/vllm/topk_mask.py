@@ -132,7 +132,7 @@ def find_boundary_idx(ref, k, threshold):
   return (ref_offset + sum((c < k) for c in cumsums))  
 
 def alu_gt(lhs, rhs):
-   # equiv to (logits > pivot).astype(jnp.int32), but avoids masks
+   # equiv to (lhs > rhs).astype(jnp.int32), but avoids masks
    # Only valid if no NaN and no inf/-inf in values.
   assert lhs.dtype == jnp.float32
   return ((rhs - lhs).view(jnp.int32) >> 31)
@@ -147,7 +147,7 @@ def fast_sum(x, num_parallel=3):
   while i * NUM_LANES < x.shape[1]:
     running_sums[i % num_parallel] += x[:, i*NUM_LANES:(i+1)*NUM_LANES]
     i += 1
-  return sum(x.sum(1, keepdims=True) for x in running_sums)
+  return sum(x for x in running_sums).sum(1, keepdims=True)
 
 
 def topk_mask_ref_inputs(
