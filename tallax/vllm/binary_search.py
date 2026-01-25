@@ -124,7 +124,8 @@ def binary_search(
     return jnp.any(pivot != l)
 
   # Run binary search, user decides if they need l or r
-  # state = (lower_bound, upper_bound)
-  # for _ in range(32): # compile faster
-  #   state = loop_body(state)
+  state = (lower_bound, upper_bound)
+  for _ in range(32): # compile faster
+    state = loop_body(state)
+  return state
   return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
