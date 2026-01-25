@@ -149,7 +149,7 @@ def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
   if num_parallel == 0:
     return compare(logits, pivot).sum(1, keepdims=True)
 
-  running_sums = [compare(chunk, pivot) for chunk in chunks[:num_parallel]]
+  running_sums = [compare(chunk, pivot).astype(jnp.int32) for chunk in chunks[:num_parallel]]
   for i, chunk in enumerate(chunks[num_parallel:]):
     running_sums[i % num_parallel] += compare(chunk, pivot)
   while len(running_sums) > 1:
