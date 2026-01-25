@@ -13,6 +13,7 @@ The approach:
 """
 
 import functools
+import operator
 import math
 import jax
 import jax.numpy as jnp
@@ -140,27 +141,24 @@ def alu_minus_gt(lhs, rhs):
   assert lhs.dtype == jnp.float32
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
-def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
-  assert logits.shape[1] % NUM_LANES == 0
-  compare = lambda lhs, rhs: (lhs > rhs) if not use_alu else alu_minus_gt(lhs, rhs)
-  chunks = [logits[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(pl.cdiv(logits.shape[1], NUM_LANES))]
+def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
+  """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently"""
+  if num_parallel == 0 or vals.shape[1] < NUM_LANES:
+    return compare_fn(vals, threshold).sum(1, keepdims=True)
+  chunks = [vals[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(vals.shape[1] // NUM_LANES)]
+  num_parallel = min(num_parallel, len(chunks)) # guard num_parallel
+  remainder_chunk_sum = vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:].sum(1, keepdims=True)
 
-  # (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel))
-  if num_parallel == 0:
-    total_sum = compare(logits, pivot).sum(1, keepdims=True)
-  else:
-    running_sums = [compare(chunk, pivot).astype(jnp.int32) for chunk in chunks[:num_parallel]]
-    for i, chunk in enumerate(chunks[num_parallel:]):
-      running_sums[i % num_parallel] += compare(chunk, pivot)
-    while len(running_sums) > 1:
-      n = len(running_sums)
-      for i in range(n // 2):
-        running_sums[i] += running_sums[i + n//2]
-      running_sums = running_sums[:pl.cdiv(n, 2)]
-    total_sum = running_sums[0].sum(1, keepdims=True)
-  if use_alu:
-    total_sum = -total_sum
-  return total_sum
+  running_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
+  for i, chunk in enumerate(chunks[num_parallel:]):
+    running_sums[i % num_parallel] += compare_fn(chunk, threshold)
+  while len(running_sums) > 1:
+    # Reduce sum pairs
+    n = len(running_sums)
+    for i in range(n // 2):
+      running_sums[i] += running_sums[i + pl.cdiv(n, 2)]
+    running_sums = running_sums[:pl.cdiv(n, 2)]
+  return running_sums[0].sum(1, keepdims=True) + remainder_chunk_sum
 
 
 def topk_mask_ref_inputs(
@@ -187,9 +185,7 @@ def topk_mask_ref_inputs(
   logits = logits_ref[...]
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
-
-  # Use ALU as more vector registers than mask registers.
-  predicate_fn = lambda pivot: fast_gt_sum(logits, pivot, num_parallel=num_parallel, use_alu=use_alu) < k
+  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt) < k
 
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
@@ -210,7 +206,7 @@ def topk_mask_ref_inputs(
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
     logits_ref,
-    k=k - fast_gt_sum(logits, threshold), #.sum(1, keepdims=True),
+    k=k - reduce_compare_sum(logits, threshold, operator.gt),
     threshold=threshold
   )
   mask = (logits > threshold) | (
