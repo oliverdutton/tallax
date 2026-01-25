@@ -131,9 +131,12 @@ def find_boundary_idx(ref, k, threshold):
     cumsums.append(cumsums[i - 1] + num_matches[i])
   return (ref_offset + sum((c < k) for c in cumsums))  
 
-def alu_gt(lhs, rhs):
-   # equiv to (lhs > rhs).astype(jnp.int32), but avoids masks
+def alu_minus_gt(lhs, rhs):
+   # equiv to -(lhs > rhs).astype(jnp.int32), but avoids masks
    # Only valid if no NaN and no inf/-inf in values.
+  # When lhs > rhs: rhs - lhs < 0 → sign bit = 1 → >> 31 gives -1 → negation gives 1 ✓
+  # When lhs < rhs: rhs - lhs > 0 → sign bit = 0 → >> 31 gives 0 → negation gives 0 ✓
+  # When lhs == rhs: rhs - lhs == 0 → sign bit = 0 → >> 31 gives 0 → negation gives 0 ✓
   assert lhs.dtype == jnp.float32
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
@@ -176,10 +179,11 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   if use_alu:
     print("Use ALU gt")
-    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot), num_parallel=num_parallel) < k #.sum(-1, keepdims=True) < k # Use ALU as faster
+    # Use ALU as more vector registers than mask registers.
+    predicate_fn = lambda pivot: (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel)) < k
   else:
     print("Use gt")
-    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) < k #.sum(-1, keepdims=True) < k
+    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) < k
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
