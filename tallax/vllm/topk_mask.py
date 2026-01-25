@@ -142,14 +142,14 @@ def alu_minus_gt(lhs, rhs):
 
 def fast_gt_sum(logits, pivot, num_parallel: int=3, use_alu: bool = False):
   assert logits.shape[1] % NUM_LANES == 0
-  compare = lambda lhs, rhs: (lhs > rhs) if not use_alu else alu_minus_gt(logits, pivot)
+  compare = lambda lhs, rhs: (lhs > rhs) if not use_alu else alu_minus_gt(lhs, rhs)
   chunks = [logits[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(pl.cdiv(logits.shape[1], NUM_LANES))]
 
   # (-fast_sum(alu_minus_gt(logits, pivot), num_parallel=num_parallel))
   if num_parallel == 0:
     return compare(logits, pivot).sum(1, keepdims=True)
 
-  running_sums = chunks[:num_parallel]
+  running_sums = [compare(chunk, pivot) for chunk in chunks[:num_parallel]]
   for i, chunk in enumerate(chunks[num_parallel:]):
     running_sums[i % num_parallel] += compare(chunk, pivot)
   while len(running_sums) > 1:
@@ -210,7 +210,7 @@ def topk_mask_ref_inputs(
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
     logits_ref,
-    k=k - fast_sum(logits > threshold), #.sum(1, keepdims=True),
+    k=k - fast_gt_sum(logits, threshold), #.sum(1, keepdims=True),
     threshold=threshold
   )
   mask = (logits > threshold) | (
