@@ -155,6 +155,7 @@ def topk_mask_ref_inputs(
   replace_val: float,
   stable: bool,
   use_alu: bool,
+  num_parallel: int,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -173,10 +174,10 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   if use_alu:
     print("Use ALU gt")
-    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot)) #.sum(-1, keepdims=True) < k # Use ALU as faster
+    predicate_fn = lambda pivot: fast_sum(alu_gt(logits, pivot), num_parallel=num_parallel) #.sum(-1, keepdims=True) < k # Use ALU as faster
   else:
     print("Use gt")
-    predicate_fn = lambda pivot: fast_sum(logits > pivot) #.sum(-1, keepdims=True) < k
+    predicate_fn = lambda pivot: fast_sum(logits > pivot, num_parallel=num_parallel) #.sum(-1, keepdims=True) < k
   bound_shape = (logits.shape[0], 1)
   _, threshold = binary_search(
     predicate_fn,
@@ -211,13 +212,14 @@ def topk_mask_pallas_kernel(
   replace_val: float,
   stable: bool,
   use_alu: bool,
+  num_parallel: int,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu)
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu, num_parallel=num_parallel)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["replace_val", "stable", "interpret", "use_alu"]
+  static_argnames=["replace_val", "stable", "interpret", "use_alu", "num_parallel"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -225,7 +227,8 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
-  use_alu: bool = False
+  use_alu: bool = False,
+  num_parallel: int = 3,
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -249,6 +252,7 @@ def topk_mask_pallas(
       replace_val=replace_val,
       stable=stable,
       use_alu=use_alu,
+      num_parallel=num_parallel,
     ),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
