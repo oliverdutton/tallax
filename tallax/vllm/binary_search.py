@@ -100,6 +100,7 @@ def binary_search(
   """
   # Binary search finds LARGEST value where predicate is FALSE
 
+  @jax.jit
   def loop_body(state):
     l, r = state
     pivot = interp(l, r)
@@ -116,11 +117,15 @@ def binary_search(
 
     return (l, r)
 
-  def cond(state):
-    l, r = state
-    # Continue while l and r are more than 1 ULP apart
-    pivot = interp(l, r)
-    return jnp.any(pivot != l)
+  # def cond(state):
+  #   l, r = state
+  #   # Continue while l and r are more than 1 ULP apart
+  #   pivot = interp(l, r)
+  #   return jnp.any(pivot != l)
 
   # Run binary search, user decides if they need l or r
-  return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
+  state = (lower_bound, upper_bound)
+  for _ in range(32): # compile faster
+    state = loop_body(state)
+  return state
+# lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
