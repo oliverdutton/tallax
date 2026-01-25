@@ -197,8 +197,9 @@ def topk_mask_pallas_kernel(
   *,
   replace_val: float,
   stable: bool,
+  use_alu: bool,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu)
 
 
 @functools.partial(
