@@ -205,8 +205,6 @@ def topk_mask_ref_inputs(
       replace_val
     )
 
-  print("Using stable top-k")
-
   # Step 2: Find exact boundary for stable masking
   boundary_idx = find_boundary_idx(
     logits_ref,
