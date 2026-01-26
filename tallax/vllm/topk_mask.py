@@ -206,8 +206,13 @@ def topk_mask_ref_inputs(
 
   if not stable:
     # Simple threshold masking
+    assert logits.shape[1] % NUM_LANES == 0
     return jnp.where(
-      logits >= threshold,
+      logits >= pltpu.repeat(
+        threshold,
+        logits.shape[1] // NUM_LANES,
+        axis=1,
+      ),
       logits,
       replace_val
     )
