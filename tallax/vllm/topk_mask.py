@@ -130,7 +130,7 @@ def find_boundary_idx(ref, k, threshold):
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
-  return (ref_offset + sum((c < k) for c in cumsums))  
+  return (ref_offset + sum((c < k) for c in cumsums))
 
 def alu_minus_gt(lhs, rhs):
    # equiv to -(lhs > rhs).astype(jnp.int32), but avoids masks
