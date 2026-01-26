@@ -20,7 +20,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.vllm.binary_search import binary_search
+from tallax.vllm.binary_search import binary_search, interp_bf16_as_f32
 from tallax.tax.utils import NUM_LANES, get_dtype_info
 
 
@@ -197,10 +197,12 @@ def topk_mask_ref_inputs(
   k = jnp.broadcast_to(k, bound_shape)
   predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
   finfo = jnp.finfo(logits_ref.dtype)
+  is_bf16 = logits_ref.dtype == jnp.bfloat16
   _, threshold, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (finfo.min, finfo.max)),
     num_iter=logits_ref.dtype.itemsize * 8, # 32 for f32, 16 for bf16
+    interp_fn=interp_bf16_as_f32 if is_bf16 else None,
   )
 
   assert logits.shape[1] % NUM_LANES == 0
