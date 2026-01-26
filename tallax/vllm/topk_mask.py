@@ -100,7 +100,7 @@ def _find_boundary_chunk(
   # Mask OOB indices to dtype min to ensure they don't interfere with comparisons
   if num_chunks * chunk_size != arr.shape[1]:
     boundary_slice = jnp.where(
-      (ref_offset + iota1) < ref.shape[1],
+      (ref_offset[:,:1] + iota1) < ref.shape[1],
       boundary_slice,
       get_dtype_info(ref).min
     )
