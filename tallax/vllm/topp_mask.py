@@ -14,7 +14,6 @@ The algorithm:
 
 import jax
 import jax.numpy as jnp
-from jax import lax
 
 from tallax.vllm.high_precision_uint import HighPrecisionUInt
 
@@ -86,6 +85,7 @@ def topp_mask(
   threshold_i32, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
+    num_iter=32,
   )
   # 6. Apply mask to original logits
   mask = unnorm_probs_i32 >= threshold_i32

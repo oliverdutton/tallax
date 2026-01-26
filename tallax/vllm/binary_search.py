@@ -100,7 +100,7 @@ def binary_search(
   predicate_fn: Callable[[jax.Array], jax.Array],
   lower_bound: jax.Array = None,
   upper_bound: jax.Array = None,
-  unroll: bool = False,
+  num_iter: int = None,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
@@ -108,12 +108,13 @@ def binary_search(
   value. Binary search finds the LARGEST threshold where predicate is FALSE.
 
   Args:
-    x: Input array of shape [..., vocab_size]
-    predicate_fn: Function that takes (x, threshold) where threshold has shape
-                  [..., 1] and returns boolean array of shape [..., 1]
+    predicate_fn: Function that takes a threshold and returns boolean array
+    lower_bound: Lower bound for search
+    upper_bound: Upper bound for search
+    num_iter: Number of iterations (required, typically dtype.itemsize * 8)
 
   Returns:
-    Threshold array of shape [...]
+    Tuple of (lower_bound, threshold, next_pivot) from final search state
   """
   # Binary search finds LARGEST value where predicate is FALSE
 
@@ -146,5 +147,5 @@ def binary_search(
   state = (lower_bound, upper_bound, interp(lower_bound, upper_bound))
   # for _ in range(31): # compile faster
   #   state = loop_body(state)
-  return jax.lax.fori_loop(0, 32, lambda i, carry: loop_body(carry), init_val=state, unroll=unroll)
+  return jax.lax.fori_loop(0, num_iter, lambda _, carry: loop_body(carry), init_val=state)
   return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))

@@ -17,7 +17,6 @@ import operator
 import math
 import jax
 import jax.numpy as jnp
-from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -55,8 +54,8 @@ def _find_boundary_chunk(
   """
   arr = ref if active_chunk is None else active_chunk
   # Calculate number of chunks using ceiling division
-  num_chunks = pl.cdiv(arr.shape[1], chunk_size)
-  # Split into chunks with multiples of chunk_size (may be OOB for last chunk)
+  num_chunks = arr.shape[1] // chunk_size
+  # Split into chunks, the remainder chunk is handled naturally
   chunks = [
     arr[:, i * chunk_size : (i + 1) * chunk_size]
     for i in range(num_chunks)
@@ -68,7 +67,7 @@ def _find_boundary_chunk(
     for chunk in chunks
   ]
 
-  # Build cumulative sums across chunks (keep as list, no concatenate for TPU)
+  # Build cumulative sums across chunks
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
@@ -104,7 +103,7 @@ def _find_boundary_chunk(
 def find_boundary_idx(ref, k, threshold):
   """Find the index of the k'th element matching threshold."""
 
-  assert ref.ndim==2
+  assert ref.ndim == 2
   ref_offset, boundary_slice, k = _find_boundary_chunk(
     ref,
     target=threshold,
@@ -125,21 +124,13 @@ def find_boundary_idx(ref, k, threshold):
   # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
   iota1 = jax.lax.broadcasted_iota(jnp.int32, (ref.shape[0], NUM_LANES), 1)
   num_matches = [(
-    (boundary_slice == threshold).astype(jnp.int32) * (iota1 == i) 
+    (boundary_slice == threshold).astype(jnp.int32) * (iota1 == i)
     ).sum(1, keepdims=True) for i in range(NUM_LANES)]
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
   return (ref_offset + sum((c < k) for c in cumsums))
 
-def alu_minus_gt(lhs, rhs):
-   # equiv to -(lhs > rhs).astype(jnp.int32), but avoids masks
-   # Only valid if no NaN and no inf/-inf in values.
-  # When lhs > rhs: rhs - lhs < 0 → sign bit = 1 → >> 31 gives -1 → negation gives 1 ✓
-  # When lhs < rhs: rhs - lhs > 0 → sign bit = 0 → >> 31 gives 0 → negation gives 0 ✓
-  # When lhs == rhs: rhs - lhs == 0 → sign bit = 0 → >> 31 gives 0 → negation gives 0 ✓
-  assert lhs.dtype == jnp.float32
-  return ((rhs - lhs).view(jnp.int32) >> 31)
 
 def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
   """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently.
@@ -178,33 +169,31 @@ def topk_mask_ref_inputs(
   *,
   replace_val: float,
   stable: bool,
-  use_alu: bool,
   num_parallel: int,
-  unroll: bool,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
   Args:
     logits_ref: Input logits reference [batch, vocab_size]
-    output_ref: Output reference [batch, vocab_size]
-    k: Number of top elements to keep (static)
+    k_ref: Number of top elements to keep [batch, 1]
     replace_val: Replacement value for masked elements
     stable: Whether to use stable masking
-    chunk_size: Size of chunks for parallel reduction
+    num_parallel: Number of parallel chunks for reduction
   """
 
   # Step 1: Find k'th largest value
-  logits = logits_ref[...]
+  logits = logits_ref[...].astype(jnp.float32)
   # Avoid broadcast in compare at the end of every search iter by pre-broadcasting to tile
-  k = jnp.broadcast_to(k_ref[...], (k_ref.shape[0], NUM_LANES))
+  k = k_ref[...]
   # next value after the largest value where less than k gt it.
-  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
-
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
+  k = jnp.broadcast_to(k, bound_shape)
+  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
+  num_iter = logits_ref.dtype.itemsize * 8  # 32 for f32, 16 for bf16
   _, threshold, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf)),
-    unroll=unroll,
+    num_iter=num_iter,
   )
 
   if not stable:
@@ -239,16 +228,14 @@ def topk_mask_pallas_kernel(
   *,
   replace_val: float,
   stable: bool,
-  use_alu: bool,
   num_parallel: int,
-  unroll: bool,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu, num_parallel=num_parallel, unroll=unroll)
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, num_parallel=num_parallel)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["replace_val", "stable", "interpret", "use_alu", "num_parallel", "unroll"]
+  static_argnames=["replace_val", "stable", "interpret", "num_parallel"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -256,9 +243,7 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
-  use_alu: bool = False,
-  num_parallel: int = 3,
-  unroll: bool = False,
+  num_parallel: int = 7,
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -268,12 +253,12 @@ def topk_mask_pallas(
     replace_val: Value for masked elements
     stable: Whether to use stable masking
     interpret: Whether to use interpret mode
-    chunk_size: Size of chunks for parallel reduction
+    num_parallel: Number of parallel chunks for reduction
 
   Returns:
     Masked array
   """
-  batch_size, vocab_size = x.shape
+  batch_size, _vocab_size = x.shape
   k = jnp.broadcast_to(k, (batch_size, 1))
   output_shape = jax.ShapeDtypeStruct(x.shape, x.dtype)
   return pl.pallas_call(
@@ -281,9 +266,7 @@ def topk_mask_pallas(
       topk_mask_pallas_kernel,
       replace_val=replace_val,
       stable=stable,
-      use_alu=use_alu,
       num_parallel=num_parallel,
-      unroll=unroll,
     ),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
