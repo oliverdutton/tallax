@@ -54,7 +54,8 @@ def _find_boundary_chunk(
   """
   arr = ref if active_chunk is None else active_chunk
   # Calculate number of chunks using ceiling division
-  num_chunks = pl.cdiv(arr.shape[1], chunk_size)
+  # We don't have to slice out the remainder (or last chunk in general), it naturally gets handled
+  num_chunks = arr.shape[1] // chunk_size
   chunks = [
     arr[:, i * chunk_size : (i + 1) * chunk_size].astype(jnp.float32)
     for i in range(num_chunks)
