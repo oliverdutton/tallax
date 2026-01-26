@@ -226,6 +226,11 @@ def topk_mask_ref_inputs(
     logits.shape[1] // NUM_LANES,
     axis=1,
   )
+  boundary_idx = pltpu.repeat(
+    boundary_idx,
+    logits.shape[1] // NUM_LANES,
+    axis=1
+  )
   mask = (logits > threshold) | (
     (logits == threshold) &
     (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
