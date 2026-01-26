@@ -138,6 +138,7 @@ def find_boundary_idx(ref, k, threshold):
   return (ref_offset + sum((c < k) for c in cumsums))
 
 
+@functools.partial(jax.jit, static_argnames=('compare_fn', 'num_parallel'))
 def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
   """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently.
 
