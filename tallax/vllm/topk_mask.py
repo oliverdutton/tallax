@@ -142,13 +142,20 @@ def alu_minus_gt(lhs, rhs):
   return ((rhs - lhs).view(jnp.int32) >> 31)
 
 def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
-  """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently"""
+  """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently.
+
+  For efficiency, threshold can be pre-broadcast as (b, NUM_LANES) or (b, 1)
+  """
   if num_parallel == 0 or vals.shape[1] < NUM_LANES:
+    assert threshold.shape[1] == 1
     return compare_fn(vals, threshold).sum(1, keepdims=True)
   chunks = [vals[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(vals.shape[1] // NUM_LANES)]
   num_parallel = min(num_parallel, len(chunks)) # guard num_parallel
   if (has_remainder := (vals.shape[1] % NUM_LANES)):
-    remainder_chunk_sum = vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:].sum(1, keepdims=True)
+    remainder_chunk_sum = compare_fn(
+      vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:],
+      threshold[:,:1]
+    ).sum(1, keepdims=True)
 
   partial_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
   for i, chunk in enumerate(chunks[num_parallel:]):
@@ -189,9 +196,9 @@ def topk_mask_ref_inputs(
   logits = logits_ref[...]
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
-  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt) < k
+  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
 
-  bound_shape = (logits.shape[0], 1)
+  bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
   _, threshold = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf))

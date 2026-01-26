@@ -102,11 +102,12 @@ def binary_search(
 
   @jax.jit
   def loop_body(state):
-    l, r = state
-    pivot = interp(l, r)
-
+    l, r, pivot = state
     # Evaluate predicate at midpoint
-    # pivot has shape (batch, 1), broadcasts correctly with x
+
+    # pivot has shape (batch, 1) or (batch, NUM_LANES). Edit predicate_fn to handle
+    # We pre-compute pivots to reduce latency. This doubles the work, but is much faster due to latency removal.
+    next_pivots = (interp(l, pivot), interp(pivot, r))
     predicate_true = predicate_fn(pivot)
 
     # We want the largest value where predicate is FALSE
@@ -115,7 +116,9 @@ def binary_search(
     l = jnp.where(predicate_true, l, pivot)
     r = jnp.where(predicate_true, pivot, r)
 
-    return (l, r)
+    # Computing interp
+    next_pivot = jnp.where(predicate_true, *next_pivots)
+    return (l, r, next_pivot)
 
   def cond(state):
     l, r = state
@@ -124,8 +127,8 @@ def binary_search(
     return jnp.any(pivot != l)
 
   # Run binary search, user decides if they need l or r
-  state = (lower_bound, upper_bound)
-  for _ in range(32): # compile faster
+  state = (lower_bound, upper_bound, interp(lower_bound, upper_bound))
+  for _ in range(4): # compile faster
     state = loop_body(state)
   return state
   return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))
