@@ -194,7 +194,7 @@ def topk_mask_ref_inputs(
 
   # Step 1: Find k'th largest value
   logits = logits_ref[...]
-  k = k_ref[...]
+  k = jnp.broadcast_to(k_ref[...], (k_ref.shape[0], NUM_LANES))
   # next value after the largest value where less than k gt it.
   predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
 
