@@ -54,10 +54,9 @@ def _find_boundary_chunk(
   """
   arr = ref if active_chunk is None else active_chunk
   # Calculate number of chunks using ceiling division
-  num_chunks = arr.shape[1] // chunk_size
-  # Split into chunks, the remainder chunk is handled naturally
+  num_chunks = pl.cdiv(arr.shape[1], chunk_size)
   chunks = [
-    arr[:, i * chunk_size : (i + 1) * chunk_size]
+    arr[:, i * chunk_size : (i + 1) * chunk_size].astype(jnp.float32)
     for i in range(num_chunks)
   ]
   assert chunk_size % NUM_LANES == 0
@@ -92,7 +91,7 @@ def _find_boundary_chunk(
   # This is us guaranteeing when using multiple iterations of find_boundary_chunk that current chunk_size evenly divides all previous chunk_sizes
   # Index into ref (not ref_slice) as dynamic_slice not supported on arrays
   # These dslices may be OOB, which is fine - we mask them out later
-  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)] for i in range(batch_size)]
+  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)].astype(jnp.float32) for i in range(batch_size)]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
@@ -102,7 +101,7 @@ def _find_boundary_chunk(
     boundary_slice = jnp.where(
       (ref_offset[:,:1] + iota1) < ref.shape[1],
       boundary_slice,
-      get_dtype_info(ref).min
+      get_dtype_info(boundary_slice).min
     )
   return ref_offset, boundary_slice, k
 
