@@ -60,6 +60,12 @@ def _find_boundary_chunk(
     arr[:, i * chunk_size : (i + 1) * chunk_size]
     for i in range(num_chunks)
   ]
+  assert chunk_size % NUM_LANES == 0
+  target = pltpu.repeat(
+    target,
+    chunk_size // NUM_LANES,
+    axis=1,
+  )
 
   # Count matches in each chunk, keeping (batch, 1) shape
   num_matches = [
@@ -214,6 +220,11 @@ def topk_mask_ref_inputs(
     logits_ref,
     k=k - reduce_compare_sum(logits, threshold, operator.gt),
     threshold=threshold
+  )
+  threshold = pltpu.repeat(
+    threshold,
+    logits.shape[1] // NUM_LANES,
+    axis=1,
   )
   mask = (logits > threshold) | (
     (logits == threshold) &
