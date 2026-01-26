@@ -199,7 +199,7 @@ def topk_mask_ref_inputs(
   predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
 
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
-  _, threshold = binary_search(
+  _, threshold, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf))
   )
