@@ -202,40 +202,37 @@ def topk_mask_ref_inputs(
     num_iter=num_iter,
   )
 
+  assert logits.shape[1] % NUM_LANES == 0
   if not stable:
     # Simple threshold masking
-    assert logits.shape[1] % NUM_LANES == 0
-    return jnp.where(
-      logits >= pltpu.repeat(
-        threshold,
-        logits.shape[1] // NUM_LANES,
-        axis=1,
-      ),
-      logits,
-      replace_val
+    mask = (logits >= pltpu.repeat(
+      threshold,
+      logits.shape[1] // NUM_LANES,
+      axis=1,
+    ))
+  else:
+    # Stable masking, only k values
+    # Find exact boundary for stable masking
+    boundary_idx = find_boundary_idx(
+      logits_ref,
+      k=k - reduce_compare_sum(logits, threshold, operator.gt),
+      threshold=threshold
     )
-
-  # Step 2: Find exact boundary for stable masking
-  boundary_idx = find_boundary_idx(
-    logits_ref,
-    k=k - reduce_compare_sum(logits, threshold, operator.gt),
-    threshold=threshold
-  )
-  threshold = pltpu.repeat(
-    threshold,
-    logits.shape[1] // NUM_LANES,
-    axis=1,
-  )
-  boundary_idx = pltpu.repeat(
-    boundary_idx,
-    logits.shape[1] // NUM_LANES,
-    axis=1
-  )
-  mask = (logits > threshold) | (
-    (logits == threshold) &
-    (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
-  )
-  return jnp.where(mask, logits, replace_val)
+    threshold = pltpu.repeat(
+      threshold,
+      logits.shape[1] // NUM_LANES,
+      axis=1,
+    )
+    boundary_idx = pltpu.repeat(
+      boundary_idx,
+      logits.shape[1] // NUM_LANES,
+      axis=1
+    )
+    mask = (logits > threshold) | (
+      (logits == threshold) &
+      (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
+    )
+  return jnp.where(mask, logits, replace_val).astype(logits_ref.dtype)
 
 def topk_mask_pallas_kernel(
   logits_ref,
