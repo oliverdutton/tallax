@@ -194,9 +194,10 @@ def topk_mask_ref_inputs(
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
   k = jnp.broadcast_to(k, bound_shape)
   predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
+  finfo = jnp.finfo(jnp.float32)
   _, threshold, _ = binary_search(
     predicate_fn,
-    *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf)),
+    *(jnp.full(bound_shape, v, logits.dtype) for v in (finfo.min, finfo.max)),
     num_iter=logits_ref.dtype.itemsize * 8, # 32 for f32, 16 for bf16
   )
 
