@@ -76,6 +76,22 @@ def interp(l: jax.Array, r: jax.Array) -> jax.Array:
   return pivot
 
 
+# def ceil_log2(n):
+#   """For u32 value n, compute ceil(log2(n))."""
+#   clz = jax.lax.clz(n - 1)
+#   result = 32 - clz
+#   return jnp.where(n == 0, 0, result)
+
+
+# def compute_num_iters(l: jax.Array, r: jax.Array):
+#   assert l.dtype in (jnp.float32, jnp.int32)
+#   floating = l.dtype == jnp.float32
+#   if floating:
+#     l = monotonic_f32_to_u32(l)
+#     r = monotonic_f32_to_u32(r)
+#   return ceil_log2(r - l).max()
+
+
 # Alias for backwards compatibility
 interp_f32 = interp
 
@@ -84,6 +100,7 @@ def binary_search(
   predicate_fn: Callable[[jax.Array], jax.Array],
   lower_bound: jax.Array = None,
   upper_bound: jax.Array = None,
+  unroll: bool = False,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
@@ -103,11 +120,11 @@ def binary_search(
   @jax.jit
   def loop_body(state):
     l, r, pivot = state
-    # Evaluate predicate at midpoint
 
-    # pivot has shape (batch, 1) or (batch, NUM_LANES). Edit predicate_fn to handle
-    # We pre-compute pivots to reduce latency. This doubles the work, but is much faster due to latency removal.
+    # We pre-compute two possible pivots of next iter to reduce latency, then select later.
     next_pivots = (interp(l, pivot), interp(pivot, r))
+
+    # Evaluate predicate at midpoint
     predicate_true = predicate_fn(pivot)
 
     # We want the largest value where predicate is FALSE
@@ -116,19 +133,18 @@ def binary_search(
     l = jnp.where(predicate_true, l, pivot)
     r = jnp.where(predicate_true, pivot, r)
 
-    # Computing interp
+    # Select the pivot from our pre-computed candidates
     next_pivot = jnp.where(predicate_true, *next_pivots)
     return (l, r, next_pivot)
 
   def cond(state):
-    l, r = state
+    l, _, next_pivot = state
     # Continue while l and r are more than 1 ULP apart
-    pivot = interp(l, r)
-    return jnp.any(pivot != l)
+    return jnp.any(next_pivot != l)
 
   # Run binary search, user decides if they need l or r
   state = (lower_bound, upper_bound, interp(lower_bound, upper_bound))
-  for _ in range(4): # compile faster
-    state = loop_body(state)
-  return state
+  # for _ in range(31): # compile faster
+  #   state = loop_body(state)
+  return jax.lax.fori_loop(0, 32, lambda i, carry: loop_body(carry), init_val=state, unroll=unroll)
   return lax.while_loop(cond, loop_body, (lower_bound, upper_bound))

@@ -180,6 +180,7 @@ def topk_mask_ref_inputs(
   stable: bool,
   use_alu: bool,
   num_parallel: int,
+  unroll: bool,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -194,6 +195,7 @@ def topk_mask_ref_inputs(
 
   # Step 1: Find k'th largest value
   logits = logits_ref[...]
+  # Avoid broadcast in compare at the end of every search iter by pre-broadcasting to tile
   k = jnp.broadcast_to(k_ref[...], (k_ref.shape[0], NUM_LANES))
   # next value after the largest value where less than k gt it.
   predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
@@ -201,7 +203,8 @@ def topk_mask_ref_inputs(
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
   _, threshold, _ = binary_search(
     predicate_fn,
-    *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf))
+    *(jnp.full(bound_shape, v, logits.dtype) for v in (-jnp.inf, jnp.inf)),
+    unroll=unroll,
   )
 
   if not stable:
@@ -238,13 +241,14 @@ def topk_mask_pallas_kernel(
   stable: bool,
   use_alu: bool,
   num_parallel: int,
+  unroll: bool,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu, num_parallel=num_parallel)
+  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, use_alu=use_alu, num_parallel=num_parallel, unroll=unroll)
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["replace_val", "stable", "interpret", "use_alu", "num_parallel"]
+  static_argnames=["replace_val", "stable", "interpret", "use_alu", "num_parallel", "unroll"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -254,6 +258,7 @@ def topk_mask_pallas(
   interpret: bool = False,
   use_alu: bool = False,
   num_parallel: int = 3,
+  unroll: bool = False,
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -278,6 +283,7 @@ def topk_mask_pallas(
       stable=stable,
       use_alu=use_alu,
       num_parallel=num_parallel,
+      unroll=unroll,
     ),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
