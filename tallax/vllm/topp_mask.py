@@ -42,7 +42,8 @@ def topp_mask_ref_inputs(
     top_p = top_p_ref
   num_vals = logits.shape[1]
   # Convert top_p to array if scalar
-  top_p = jnp.broadcast_to(top_p, (logits.shape[0], 1))
+  bound_shape = (logits.shape[0], NUM_LANES)
+  top_p = jnp.broadcast_to(top_p, bound_shape)
 
   # 1. Compute unnormalized probabilities: exp(logits - max(logits))
   logits_max = logits.max(axis=1, keepdims=True)
@@ -67,16 +68,14 @@ def topp_mask_ref_inputs(
     unnorm_probs_i32,
     num_parallel=num_parallel,
     apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
-  )
-
-  bound_shape = (logits.shape[0], NUM_LANES)
+  )  
 
   # 4. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
     total_sum_u48.to_f32() * top_p,
     max_val=num_vals * scale)
 
-
+  print(target_sum_u48.parts[0].shape, top_p.shape)
   # 5. Binary search for threshold
   # Uses int32 during parallel reduction, then converts to U48
   def predicate_fn(threshold):

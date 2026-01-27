@@ -73,7 +73,7 @@ def _interp(l: jax.Array, r: jax.Array, underlying_dtype=None) -> jax.Array:
     r = monotonic_f32_to_u32(r)
   assert l.dtype in (jnp.uint32, jnp.int32)
   # Overflow-safe (l+r)//2 using the formula: (l//2) + (r//2) + ((l&1)+(r&1))//2
-  one = jnp.array(1, dtype=l.dtype)
+  one = jnp.full_like(l, 1)
   pivot = (l // 2) + (r // 2) + ((l & one) + (r & one)) // 2
   if floating:
     pivot = monotonic_u32_to_f32(pivot)
