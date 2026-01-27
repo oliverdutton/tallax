@@ -27,26 +27,19 @@ from tallax.vllm.high_precision_uint import U48
 from tallax.vllm.binary_search import binary_search
 
 
-def topp_mask(
-  logits: jax.Array,
-  top_p: jax.Array,
+def topp_mask_ref_inputs(
+  logits_ref,
+  top_p_ref,
+  *,
   scale_bits: int = 24,
   replace_val: float = -1e12,
 ) -> jax.Array:
-  """Platform-portable top-p sampling using high-precision arithmetic.
-
-  All internal values are non-negative (probabilities scaled to [0, scale]).
-  Uses 16-bit parts for safe summation of up to 2^15 values before harmonizing.
-
-  Args:
-    logits: Input logits of shape [batch, vocab_size]
-    top_p: Probability threshold in range (0, 1]. Can be scalar or array of shape [batch]
-    scale: Scale factor for converting f32 probs to i32 (default 2^30, must be < 2^31)
-    replace_val: Value to use for masked elements
-
-  Returns:
-    Masked logits with same shape as input, where values outside top-p are replaced
-  """
+  """Core nucleus sampling logic for both standard and Pallas interfaces."""
+  logits = logits_ref[...]
+  try:
+    top_p = top_p_ref[...]
+  except (TypeError, IndexError):
+    top_p = top_p_ref
   num_vals = logits.shape[1]
   # Convert top_p to array if scalar
   top_p = jnp.broadcast_to(top_p, (logits.shape[0], 1))
@@ -103,3 +96,66 @@ def topp_mask(
   threshold_i32 = jnp.tile(threshold_i32, (1, logits.shape[1] // NUM_LANES))
   mask = unnorm_probs_i32 >= threshold_i32
   return jnp.where(mask, logits, replace_val)
+
+
+def topp_mask(
+  logits: jax.Array,
+  top_p: jax.Array,
+  scale_bits: int = 24,
+  replace_val: float = -1e12,
+) -> jax.Array:
+  """Platform-portable top-p sampling using high-precision arithmetic."""
+  return topp_mask_ref_inputs(
+    logits, top_p, scale_bits=scale_bits, replace_val=replace_val
+  )
+
+
+def topp_mask_pallas_kernel(
+  logits_ref,
+  top_p_ref,
+  output_ref,
+  *,
+  scale_bits: int,
+  replace_val: float,
+):
+  """Pallas kernel writing results to an output reference."""
+  output_ref[...] = topp_mask_ref_inputs(
+    logits_ref, top_p_ref, scale_bits=scale_bits, replace_val=replace_val
+  )
+
+
+@functools.partial(
+  jax.jit, static_argnames=["scale_bits", "replace_val", "interpret"]
+)
+def topp_mask_pallas(
+  logits: jax.Array,
+  top_p: jax.Array,
+  scale_bits: int = 24,
+  replace_val: float = -1e12,
+  interpret: bool = False,
+) -> jax.Array:
+  """Pallas-based interface for nucleus sampling.
+
+  Args:
+    logits: Input array of shape [batch, vocab_size]
+    top_p: Number of top elements
+    scale_bits: Precision for probability scaling
+    replace_val: Value for masked elements
+    interpret: Whether to use interpret mode
+
+  Returns:
+    Masked array
+  """
+  batch_size, _ = logits.shape
+  top_p = jnp.broadcast_to(top_p, (batch_size, 1))
+  output_shape = jax.ShapeDtypeStruct(logits.shape, logits.dtype)
+  return pl.pallas_call(
+    functools.partial(
+      topp_mask_pallas_kernel,
+      scale_bits=scale_bits,
+      replace_val=replace_val,
+    ),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
+    out_shape=output_shape,
+    interpret=interpret,
+  )(logits, top_p)

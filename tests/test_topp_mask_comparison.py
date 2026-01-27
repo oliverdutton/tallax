@@ -28,16 +28,20 @@ def test_topp_masks_match():
         # Test with scalar p
         p_scalar = p_val
 
-        # Apply both topp_mask implementations
+        # Apply all implementations
+        from tallax.vllm.topp_mask import topp_mask_pallas
         int_result = int_topp_mask(logits, p_scalar, replace_val=-1e12)
+        pallas_result = topp_mask_pallas(logits, p_scalar, replace_val=-1e12, interpret=True)
         f32_result = f32_topp_mask(logits, p_scalar, replace_val=-1e12, stable=False)
 
-        # Compare masks (not values, since both replace with same value)
+        # Compare masks
         int_mask = (int_result == -1e12)
+        pallas_mask = (pallas_result == -1e12)
         f32_mask = (f32_result == -1e12)
-        print(jnp.stack([jnp.where(res == -1e12, jnp.inf, res).min(1) for res in (int_result, f32_result)], axis=1))
+        
+        # print(jnp.stack([jnp.where(res == -1e12, jnp.inf, res).min(1) for res in (int_result, pallas_result, f32_result)], axis=1))
 
-        masks_equal = jnp.array_equal(int_mask, f32_mask)
+        masks_equal = jnp.array_equal(int_mask, f32_mask) and jnp.array_equal(pallas_mask, f32_mask)
 
         if not masks_equal:
             print(f"\n{'='*70}")
