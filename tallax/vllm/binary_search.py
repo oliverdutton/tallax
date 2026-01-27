@@ -138,6 +138,7 @@ def binary_search(
     # We want the largest value where predicate is FALSE
     # If predicate is TRUE at pivot, then the answer is < pivot, so update r = pivot
     # If predicate is FALSE at pivot, then the answer might be pivot or > pivot, so update l = pivot
+    print(jax.eval_shape(lambda *args: args, (predicate_true, l, r, pivot))
     l = jnp.where(predicate_true, l, pivot)
     r = jnp.where(predicate_true, pivot, r)
 
