@@ -17,10 +17,10 @@ class U48:
 
   Attributes:
     parts: List of 2 i32 arrays [low_24bits, high_24bits]
-    max_value_bound_per_part: Upper bound on each part (for overflow tracking)
+    max_value_bound_per_part: List of upper bounds for each part (for overflow tracking)
   """
   parts: list[jax.Array]
-  max_value_bound_per_part: int
+  max_value_bound_per_part: list[int]
 
   @classmethod
   def from_i32_array(cls, x: jax.Array, max_val: int) -> 'U48':
@@ -33,12 +33,15 @@ class U48:
     Returns:
       U48 with values split into two 24-bit parts
     """
+    if max_val >= 2**48:
+      raise ValueError(f"max_val must be < 2^48, got {max_val}")
     mask = 0xFFFFFF  # 24 bits
     low = x & mask
     high = (x >> 24) & mask
-    # Bound per part: low is at most mask, high is at most max_val >> 24
-    bound_per_part = max(mask, max_val >> 24) if max_val > mask else mask
-    return cls([low, high], max_value_bound_per_part=bound_per_part)
+    # Track bounds independently: low is at most mask, high is at most max_val >> 24
+    low_bound = mask
+    high_bound = max_val >> 24
+    return cls([low, high], max_value_bound_per_part=[low_bound, high_bound])
 
   @classmethod
   def from_f32(cls, x: jax.Array, max_val: int) -> 'U48':
@@ -51,11 +54,15 @@ class U48:
     Returns:
       U48 with extracted parts
     """
+    if max_val >= 2**48:
+      raise ValueError(f"max_val must be < 2^48, got {max_val}")
     modulo = jnp.float32(2**24)
     low = jnp.fmod(x, modulo).astype(jnp.int32)
     high = jnp.floor(x / modulo).astype(jnp.int32)
-    bound_per_part = max(0xFFFFFF, max_val >> 24) if max_val > 0xFFFFFF else 0xFFFFFF
-    return cls([low, high], max_value_bound_per_part=bound_per_part)
+    # Track bounds independently: low is at most mask, high is at most max_val >> 24
+    low_bound = 0xFFFFFF
+    high_bound = max_val >> 24
+    return cls([low, high], max_value_bound_per_part=[low_bound, high_bound])
 
   def to_f32(self) -> jax.Array:
     """Convert to f32."""
@@ -63,7 +70,7 @@ class U48:
 
   def needs_harmonize(self) -> bool:
     """Check if harmonization is needed to prevent i32 overflow in any part."""
-    return self.max_value_bound_per_part >= 2**31
+    return any(bound >= 2**31 for bound in self.max_value_bound_per_part)
 
   def harmonize(self) -> 'U48':
     """Propagate carries from low to high part, normalizing to 24-bit parts."""
@@ -74,9 +81,21 @@ class U48:
 
     high_with_carry = self.parts[1] + carry
     high_normalized = high_with_carry & mask
-    overflow = high_with_carry >> 24
 
-    return U48([low_normalized, high_normalized, overflow], max_value_bound_per_part=mask)
+    # Only 2 parts allowed (compile-time check on bound)
+    # Maximum possible carry from low part is (max_value_bound_per_part[0] >> 24)
+    # Maximum high_with_carry = max_value_bound_per_part[1] + (max_value_bound_per_part[0] >> 24)
+    max_carry = self.max_value_bound_per_part[0] >> 24
+    max_high_with_carry = self.max_value_bound_per_part[1] + max_carry
+    if max_high_with_carry > mask:
+      raise ValueError(
+        f"Harmonization would require more than 2 parts: "
+        f"max_value_bound_per_part={self.max_value_bound_per_part}, "
+        f"max_carry={max_carry}, max_high_with_carry={max_high_with_carry} > {mask}"
+      )
+    
+    # After harmonization, both parts are bounded by mask
+    return U48([low_normalized, high_normalized], max_value_bound_per_part=[mask, mask])
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> 'U48':
     """Sum along axis 1 for (batch, NUM_LANES) shaped arrays.
@@ -97,9 +116,9 @@ class U48:
 
     # Track new bound per part: each part's bound * NUM_LANES
     num_vals = self.parts[0].shape[1]
-    new_bound_per_part = self.max_value_bound_per_part * num_vals
+    new_bounds = [bound * num_vals for bound in self.max_value_bound_per_part]
 
-    result = U48([low_sum, high_sum], max_value_bound_per_part=new_bound_per_part)
+    result = U48([low_sum, high_sum], max_value_bound_per_part=new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
   def __add__(self, other: 'U48') -> 'U48':
@@ -118,24 +137,20 @@ class U48:
     ]
 
     # Track new bound per part: sum of per-part bounds
-    new_bound_per_part = self_to_add.max_value_bound_per_part + other_to_add.max_value_bound_per_part
-    result = U48(result_parts, max_value_bound_per_part=new_bound_per_part)
+    new_bounds = [
+      self_to_add.max_value_bound_per_part[i] + other_to_add.max_value_bound_per_part[i]
+      for i in range(len(result_parts))
+    ]
+    result = U48(result_parts, max_value_bound_per_part=new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
   def __lt__(self, other: 'U48') -> jax.Array:
     """Compare self < other."""
     assert len(self.parts) == len(other.parts), \
       f"Cannot compare U48 with different number of parts: {len(self.parts)} != {len(other.parts)}"
+    assert len(self.parts) == 2, "Simplified __lt__ only supports 2 parts"
 
-    # Compare from MSB to LSB using parts[0] as template
-    result = jnp.zeros_like(self.parts[0], dtype=bool)
-    still_equal = jnp.ones_like(self.parts[0], dtype=bool)
-
-    for i in range(len(self.parts) - 1, -1, -1):
-      part_gt = self.parts[i] > other.parts[i]
-      part_eq = self.parts[i] == other.parts[i]
-      result |= still_equal & part_gt
-      still_equal &= part_eq
-
-    # self >= other, so invert for <
-    return ~(result | still_equal)
+    # For 2-part comparison: self < other iff 
+    # self[1] < other[1] OR (self[1] == other[1] AND self[0] < other[0])
+    # Using bitwise ops: pi[1] < pj[1] | (pi[1] == pj[1] & pi[0] < pj[0])
+    return (self.parts[1] < other.parts[1]) | ((self.parts[1] == other.parts[1]) & (self.parts[0] < other.parts[0]))
