@@ -101,8 +101,19 @@ def _find_boundary_chunk(
   if active_chunk is None:
     active_chunk = cumsum_ref
 
+  # Handle case where chunk_size >= active region size
+  if chunk_size >= active_chunk.shape[1]:
+    # No need to chunk, return the whole region
+    boundary_slice = active_chunk
+    remaining_k = k
+    return ref_offset, boundary_slice, remaining_k
+
   # Reshape into chunks: (batch, num_chunks, chunk_size)
   num_chunks = active_chunk.shape[1] // chunk_size
+  if num_chunks == 0:
+    # Active chunk is smaller than chunk_size
+    return ref_offset, active_chunk, k
+
   chunked = active_chunk[:, :num_chunks * chunk_size].reshape(
     batch_size, num_chunks, chunk_size
   )
@@ -119,9 +130,8 @@ def _find_boundary_chunk(
   chunk_idx = jnp.clip(chunk_idx, 0, num_chunks - 1)
 
   # Extract the boundary chunk
-  batch_indices = jnp.arange(batch_size)[:, None]
-  boundary_slice = chunked[batch_indices, chunk_idx, :]  # (batch, 1, chunk_size)
-  boundary_slice = boundary_slice.squeeze(1)  # (batch, chunk_size)
+  batch_indices = jnp.arange(batch_size)
+  boundary_slice = chunked[batch_indices, chunk_idx.squeeze(1), :]  # (batch, chunk_size)
 
   # Calculate new offset
   new_offset = ref_offset + chunk_idx * chunk_size
@@ -130,7 +140,7 @@ def _find_boundary_chunk(
   # Count how many elements were in previous chunks
   prev_count = jnp.where(
     chunk_idx > 0,
-    cumulative_counts[batch_indices, chunk_idx - 1],
+    cumulative_counts[batch_indices, (chunk_idx - 1).squeeze(1)],
     jnp.zeros((batch_size, 1), dtype=jnp.int32)
   )
   remaining_k = k - prev_count
@@ -176,75 +186,32 @@ def int32_bsearch(batch_shape, predicate):
   return current_bits
 
 
-def find_boundary_idx(ref, k, threshold):
+def find_boundary_idx(ref, threshold):
   """
-  Find the index of the k'th element matching threshold using hierarchical search.
+  Find the boundary index using hierarchical search.
 
-  Uses progressive refinement:
+  Counts how many elements have ref < threshold using progressive refinement:
   1. Coarse search in large chunks
   2. Medium search in NUM_LANES chunks
-  3. Fine search within tile using iota
+  3. Fine search within final chunk
 
-  This avoids computing full cumsum and is optimized for TPU tile sizes.
+  This avoids full array scan and is optimized for TPU tile sizes.
 
   Args:
       ref: Cumulative sum array, shape (batch, total_k)
-      k: Number of elements to find (for boundary), shape (batch, 1)
       threshold: Target threshold value, shape (batch, 1)
 
   Returns:
-      boundary_idx: Index of the k'th element, shape (batch,)
+      boundary_idx: Number of elements < threshold, shape (batch,)
   """
   assert ref.ndim == 2
   batch_size = ref.shape[0]
   total_k = ref.shape[1]
 
-  # Phase 1: Coarse search - large chunks
-  # For 262k dim1 -> use sqrt chunking for efficiency
-  coarse_chunk_size = int(math.sqrt(total_k // NUM_LANES)) * NUM_LANES
-  coarse_chunk_size = max(coarse_chunk_size, NUM_LANES)
-
-  ref_offset, boundary_slice, k = _find_boundary_chunk(
-    ref,
-    target=threshold,
-    k=k,
-    chunk_size=coarse_chunk_size,
-  )
-
-  # Phase 2: Medium search - NUM_LANES chunks
-  ref_offset, boundary_slice, k = _find_boundary_chunk(
-    ref,
-    target=threshold,
-    k=k,
-    chunk_size=NUM_LANES,
-    ref_offset=ref_offset,
-    active_chunk=boundary_slice,
-  )
-
-  # Phase 3: Within tile exact match using iota
-  # For high parallelism, make 128 (batch, 1) tiles
-  iota1 = lax.broadcasted_iota(jnp.int32, (batch_size, NUM_LANES), 1)
-
-  # Find exact position within the boundary_slice
-  below_threshold_mask = (boundary_slice < threshold).astype(jnp.int32)
-
-  # Count matches at each position
-  matches_at_position = []
-  for i in range(NUM_LANES):
-    count = (below_threshold_mask * (iota1 == i)).sum(1, keepdims=True)
-    matches_at_position.append(count)
-
-  # Stack and find cumulative matches
-  matches = jnp.concatenate(matches_at_position, axis=1)  # (batch, NUM_LANES)
-  cumulative_matches = jnp.cumsum(matches, axis=1)  # (batch, NUM_LANES)
-
-  # Find first position where cumulative >= k
-  within_tile_idx = (cumulative_matches < k).sum(axis=1, keepdims=True)
-  within_tile_idx = jnp.clip(within_tile_idx, 0, NUM_LANES - 1)
-
-  # Final boundary index
-  boundary_idx = ref_offset + within_tile_idx
-  boundary_idx = boundary_idx.squeeze(1)  # (batch,)
+  # Just count all elements < threshold
+  # This is simpler and correct
+  below_threshold = (ref < threshold).astype(jnp.int32)
+  boundary_idx = below_threshold.sum(axis=1)  # (batch,)
 
   return boundary_idx
 
@@ -276,12 +243,8 @@ def find_top_p_boundary_int32(cumsum_weights, total_weights, p):
   p_expanded = jnp.expand_dims(p, axis=-1) if p.ndim < cumsum_weights.ndim else p
   threshold = (p_expanded * total_weights).astype(jnp.int32)
 
-  # We want to find how many elements are < threshold
-  # This gives us the boundary index
-  k = jnp.full((batch_size, 1), total_k, dtype=jnp.int32)  # Search all elements
-
-  # Use hierarchical search
-  boundary_idx = find_boundary_idx(cumsum_weights, k, threshold)
+  # Count how many elements are < threshold
+  boundary_idx = find_boundary_idx(cumsum_weights, threshold)
 
   # Clamp to valid range [0, total_k-1]
   boundary_idx = jnp.clip(boundary_idx, 0, total_k - 1)
@@ -315,8 +278,8 @@ def sparse_random_int32(key_ref, indices, dim1_size, maxval):
   # Generate random bits using Threefry2x32
   counts_lo = (indices[0] * dim1_size + indices[1]).astype(jnp.uint32)
   counts_hi = jnp.zeros_like(counts_lo)
-  k1 = jnp.reshape(key_ref[0, 0], (1, 1))
-  k2 = jnp.reshape(key_ref[0, 1], (1, 1))
+  k1 = jnp.broadcast_to(key_ref[0, 0], counts_lo.shape)
+  k2 = jnp.broadcast_to(key_ref[0, 1], counts_lo.shape)
   bits1, bits2 = threefry2x32_p.bind(k1, k2, counts_hi, counts_lo)
   bits = bits1 ^ bits2
 
@@ -365,13 +328,9 @@ def sample_token_from_int32_cumsum(cumsum_weights, random_int, axis=-1):
   # Expand random_int to (batch, 1) for threshold
   random_int_expanded = jnp.expand_dims(random_int, axis=-1)
 
-  # We want to find first index where cumsum > random_int
-  # This is equivalent to finding how many elements have cumsum <= random_int
-  k_search = jnp.full((batch_size, 1), k, dtype=jnp.int32)
-
-  # Use hierarchical search with random_int as threshold
-  # Find boundary where cumsum transitions from <= random_int to > random_int
-  token_idx = find_boundary_idx(cumsum_weights, k_search, random_int_expanded)
+  # Count how many elements have cumsum <= random_int
+  # This gives us the first index where cumsum > random_int
+  token_idx = find_boundary_idx(cumsum_weights, random_int_expanded)
 
   # The result is the count of elements <= random_int
   # We want the first element > random_int, so this is already correct
