@@ -5,45 +5,10 @@ for efficient searching in float32 space.
 """
 
 from collections.abc import Callable
+import functools
 import jax
 import jax.numpy as jnp
 from jax import lax
-
-
-def monotonic_bf16_as_f32_to_u32(x: jax.Array) -> jax.Array:
-  """Convert bf16-representable float32 to uint32 with monotonic ordering in bf16 space.
-
-  Extracts the 16-bit bf16 bit pattern from a float32 value (upper 16 bits),
-  then applies the monotonic transform in 16-bit space. Returns a uint32 in
-  [0, 0xFFFF] that preserves bf16 ordering.
-
-  Args:
-    x: float32 array containing bf16-representable values
-
-  Returns:
-    uint32 array in [0, 0xFFFF] with monotonic ordering
-  """
-  bf16_bits = lax.bitcast_convert_type(x, jnp.uint32) >> 16
-  sign_bit = jnp.uint32(1 << 15)
-  is_negative = (bf16_bits & sign_bit) != 0
-  return jnp.where(is_negative, ~bf16_bits & jnp.uint32(0xFFFF), bf16_bits ^ sign_bit)
-
-
-def monotonic_u32_to_bf16_as_f32(x: jax.Array) -> jax.Array:
-  """Convert monotonic uint32 (in bf16 space) back to bf16-representable float32.
-
-  Inverse of monotonic_bf16_as_f32_to_u32.
-
-  Args:
-    x: uint32 array from monotonic_bf16_as_f32_to_u32
-
-  Returns:
-    float32 array containing bf16-representable values
-  """
-  sign_bit = jnp.uint32(1 << 15)
-  was_negative = (x & sign_bit) == 0
-  bf16_bits = jnp.where(was_negative, ~x & jnp.uint32(0xFFFF), x ^ sign_bit)
-  return lax.bitcast_convert_type(bf16_bits << 16, jnp.float32)
 
 
 def monotonic_f32_to_u32(x: jax.Array) -> jax.Array:
@@ -86,7 +51,7 @@ def monotonic_u32_to_f32(x: jax.Array) -> jax.Array:
   return lax.bitcast_convert_type(x_bits, jnp.float32)
 
 
-def interp(l: jax.Array, r: jax.Array) -> jax.Array:
+def interp(l: jax.Array, r: jax.Array, underlying_dtype=None) -> jax.Array:
   """Interpolate between two float32 values in the monotonic u32 space.
 
   Computes the midpoint in uint32 space (avoiding overflow) and converts back.
@@ -94,6 +59,10 @@ def interp(l: jax.Array, r: jax.Array) -> jax.Array:
   Args:
     l: Left boundary (float32 or int32)
     r: Right boundary (float32 or int32)
+    underlying_dtype: If the values represent a lower-precision dtype (e.g.
+      bfloat16) cast to float32, pass the original dtype here. The midpoint
+      will be snapped to that dtype's representable grid by zeroing the
+      unused lower mantissa bits in f32.
 
   Returns:
     Midpoint value (float32 or int32)
@@ -109,28 +78,11 @@ def interp(l: jax.Array, r: jax.Array) -> jax.Array:
   pivot = (l // 2) + (r // 2) + ((l & one) + (r & one)) // 2
   if floating:
     pivot = monotonic_u32_to_f32(pivot)
+    if underlying_dtype == jnp.bfloat16:
+      # bf16 occupies the upper 16 bits of f32; zero the lower 16 to snap to bf16 grid
+      pivot_bits = lax.bitcast_convert_type(pivot, jnp.uint32)
+      pivot = lax.bitcast_convert_type(pivot_bits & jnp.uint32(0xFFFF0000), jnp.float32)
   return pivot
-
-
-def interp_bf16_as_f32(l: jax.Array, r: jax.Array) -> jax.Array:
-  """Interpolate between two bf16-representable float32 values in bf16 monotonic space.
-
-  Like interp(), but operates in the 16-bit bf16 space so the result is always
-  bf16-representable. This allows binary search to converge in exactly 16
-  iterations for bf16 inputs, since there are only 2^16 distinct bf16 values.
-
-  Args:
-    l: Left boundary (float32, bf16-representable)
-    r: Right boundary (float32, bf16-representable)
-
-  Returns:
-    Midpoint value (float32, bf16-representable)
-  """
-  l = monotonic_bf16_as_f32_to_u32(l)
-  r = monotonic_bf16_as_f32_to_u32(r)
-  one = jnp.uint32(1)
-  pivot = (l // 2) + (r // 2) + ((l & one) + (r & one)) // 2
-  return monotonic_u32_to_bf16_as_f32(pivot)
 
 
 # def ceil_log2(n):
@@ -158,7 +110,7 @@ def binary_search(
   lower_bound: jax.Array = None,
   upper_bound: jax.Array = None,
   num_iter: int | None = None,
-  interp_fn: Callable[[jax.Array, jax.Array], jax.Array] | None = None,
+  underlying_dtype=None,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
@@ -170,14 +122,14 @@ def binary_search(
     lower_bound: Lower bound for search
     upper_bound: Upper bound for search
     num_iter: Number of iterations (required, typically dtype.itemsize * 8)
-    interp_fn: Interpolation function for computing midpoints. Defaults to
-      interp (f32/u32 space). Use interp_bf16_as_f32 for bf16 inputs.
+    underlying_dtype: If searching over values from a lower-precision dtype
+      (e.g. bfloat16) cast to float32, pass the original dtype so midpoints
+      are snapped to that dtype's representable grid.
 
   Returns:
     Tuple of (lower_bound, threshold, next_pivot) from final search state
   """
-  if interp_fn is None:
-    interp_fn = interp
+  _interp = functools.partial(interp, underlying_dtype=underlying_dtype)
   # Binary search finds LARGEST value where predicate is FALSE
 
   @jax.jit
@@ -185,7 +137,7 @@ def binary_search(
     l, r, pivot = state
 
     # We pre-compute two possible pivots of next iter to reduce latency, then select later.
-    next_pivots = (interp_fn(l, pivot), interp_fn(pivot, r))
+    next_pivots = (_interp(l, pivot), _interp(pivot, r))
 
     # Evaluate predicate at midpoint
     predicate_true = predicate_fn(pivot)
@@ -206,7 +158,7 @@ def binary_search(
     return jnp.any(next_pivot != l)
 
   # Run binary search, user decides if they need l or r
-  state = (lower_bound, upper_bound, interp_fn(lower_bound, upper_bound))
+  state = (lower_bound, upper_bound, _interp(lower_bound, upper_bound))
   if num_iter is not None:
     return jax.lax.fori_loop(0, num_iter, lambda _, carry: loop_body(carry), init_val=state)
   else:
