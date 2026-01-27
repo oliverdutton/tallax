@@ -110,9 +110,15 @@ def topp_mask(
   # Each partial_sum accumulates ~safe_reduce_size values
   partial_sum_max = scale * safe_reduce_size
 
-  # 3. Convert to U48 and sum
-  unnorm_probs_u48 = U48.from_i32_array(unnorm_probs_i32, max_val=scale)
-  total_sum_u48 = unnorm_probs_u48.sum(axis=1, keepdims=True)
+  # 3. Convert to U48 and sum safely using reduce_compare_sum
+  # This avoids int32 overflow during the initial summation of the full vocabulary.
+  total_sum_u48 = reduce_compare_sum(
+    unnorm_probs_i32,
+    jnp.zeros((logits.shape[0], 1), dtype=jnp.int32),
+    lambda x, _: x,
+    num_parallel=pl.cdiv(num_vals, safe_reduce_size),
+    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
+  )
 
   bound_shape = (logits.shape[0], NUM_LANES)
 

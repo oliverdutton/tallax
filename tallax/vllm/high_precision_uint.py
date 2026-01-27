@@ -105,37 +105,19 @@ class U48:
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> 'U48':
     """Sum along axis 1 for (batch, NUM_LANES) shaped arrays.
-
-    Uses block-based summation to avoid int32 overflow before crystallization.
+    
+    Note: The caller must ensure that the summation over this axis does not 
+    overflow signed int32 before harmonization can be applied.
     """
     assert axis == 1
     assert len(self.parts) == 2
 
-    parts = self.parts
-    num_vals = parts[0].shape[axis]
-
-    # If axis is large, split into blocks of 64 to avoid int32 overflow in low part
-    if num_vals > 64:
-      block_size = 64
-      new_shape = list(parts[0].shape)
-      new_shape[axis] = -1
-      new_shape.insert(axis + 1, block_size)
-      
-      # Reshape each part
-      low_blocks = parts[0].reshape(new_shape).sum(axis=axis + 1)
-      high_blocks = parts[1].reshape(new_shape).sum(axis=axis + 1)
-      
-      # Crystallize each block (harmonize)
-      block_bounds = [b * block_size for b in self.max_value_bound_per_part]
-      crystallized_blocks = U48([low_blocks, high_blocks], max_value_bound_per_part=block_bounds).harmonize()
-      
-      # Recursively sum the crystallized blocks
-      return crystallized_blocks.sum(axis=axis, keepdims=keepdims)
-
-    # Base case: sum directly
-    low_sum = parts[0].sum(axis=axis, keepdims=keepdims)
-    high_sum = parts[1].sum(axis=axis, keepdims=keepdims)
+    low_sum = self.parts[0].sum(axis=axis, keepdims=keepdims)
+    high_sum = self.parts[1].sum(axis=axis, keepdims=keepdims)
+    
+    num_vals = self.parts[0].shape[axis]
     new_bounds = [bound * num_vals for bound in self.max_value_bound_per_part]
+    
     result = U48([low_sum, high_sum], max_value_bound_per_part=new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
