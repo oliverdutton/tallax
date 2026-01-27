@@ -70,7 +70,12 @@ class U48:
     return self.parts[0].astype(jnp.float32) + self.parts[1].astype(jnp.float32) * jnp.float32(2**24)
 
   def needs_harmonize(self) -> bool:
-    """Check if harmonization is needed to prevent i32 overflow in any part."""
+    """Check if harmonization is needed for correctness (e.g. comparison) or overflow prevention."""
+    # Must harmonize if any part (except the last) has bits above 24
+    for i in range(len(self.parts) - 1):
+      if self.max_value_bound_per_part[i] >= 2**24:
+        return True
+    # Or if any part is approaching int32 limit
     return any(bound >= 2**31 for bound in self.max_value_bound_per_part)
 
   def harmonize(self) -> 'U48':
@@ -95,30 +100,42 @@ class U48:
         f"max_carry={max_carry}, max_high_with_carry={max_high_with_carry} > {mask}"
       )
     
-    # After harmonization, both parts are bounded by mask
-    return U48([low_normalized, high_normalized], max_value_bound_per_part=[mask, mask])
+    # After harmonization, low part is bounded by mask, high part by max possible value
+    return U48([low_normalized, high_normalized], max_value_bound_per_part=[mask, int(max_high_with_carry)])
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> 'U48':
     """Sum along axis 1 for (batch, NUM_LANES) shaped arrays.
 
-    Args:
-      axis: Must be 1
-      keepdims: Whether to keep dimension
-
-    Returns:
-      U48 with summed values
+    Uses block-based summation to avoid int32 overflow before crystallization.
     """
     assert axis == 1
     assert len(self.parts) == 2
 
-    # Sum each part
-    low_sum = self.parts[0].sum(axis=1, keepdims=keepdims)
-    high_sum = self.parts[1].sum(axis=1, keepdims=keepdims)
+    parts = self.parts
+    num_vals = parts[0].shape[axis]
 
-    # Track new bound per part: each part's bound * NUM_LANES
-    num_vals = self.parts[0].shape[1]
+    # If axis is large, split into blocks of 64 to avoid int32 overflow in low part
+    if num_vals > 64:
+      block_size = 64
+      new_shape = list(parts[0].shape)
+      new_shape[axis] = -1
+      new_shape.insert(axis + 1, block_size)
+      
+      # Reshape each part
+      low_blocks = parts[0].reshape(new_shape).sum(axis=axis + 1)
+      high_blocks = parts[1].reshape(new_shape).sum(axis=axis + 1)
+      
+      # Crystallize each block (harmonize)
+      block_bounds = [b * block_size for b in self.max_value_bound_per_part]
+      crystallized_blocks = U48([low_blocks, high_blocks], max_value_bound_per_part=block_bounds).harmonize()
+      
+      # Recursively sum the crystallized blocks
+      return crystallized_blocks.sum(axis=axis, keepdims=keepdims)
+
+    # Base case: sum directly
+    low_sum = parts[0].sum(axis=axis, keepdims=keepdims)
+    high_sum = parts[1].sum(axis=axis, keepdims=keepdims)
     new_bounds = [bound * num_vals for bound in self.max_value_bound_per_part]
-
     result = U48([low_sum, high_sum], max_value_bound_per_part=new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
@@ -146,15 +163,18 @@ class U48:
     return result.harmonize() if result.needs_harmonize() else result
 
   def __lt__(self, other: 'U48') -> jax.Array:
-    """Compare self < other."""
-    assert len(self.parts) == len(other.parts), \
-      f"Cannot compare U48 with different number of parts: {len(self.parts)} != {len(other.parts)}"
-    assert len(self.parts) == 2, "Simplified __lt__ only supports 2 parts"
+    """Compare self < other. Harmonizes both operands first for correctness."""
+    s1 = self.harmonize() if self.needs_harmonize() else self
+    s2 = other.harmonize() if other.needs_harmonize() else other
+    
+    assert len(s1.parts) == len(s2.parts), \
+      f"Cannot compare U48 with different number of parts: {len(s1.parts)} != {len(s2.parts)}"
+    assert len(s1.parts) == 2, "Simplified __lt__ only supports 2 parts"
 
     # For 2-part comparison: self < other iff 
     # self[1] < other[1] OR (self[1] == other[1] AND self[0] < other[0])
     # Using bitwise ops: pi[1] < pj[1] | (pi[1] == pj[1] & pi[0] < pj[0])
-    return (self.parts[1] < other.parts[1]) | ((self.parts[1] == other.parts[1]) & (self.parts[0] < other.parts[0]))
+    return (s1.parts[1] < s2.parts[1]) | ((s1.parts[1] == s2.parts[1]) & (s1.parts[0] < s2.parts[0]))
 
 
 # Register U48 as a JAX PyTree for proper tracing in JIT-compiled functions

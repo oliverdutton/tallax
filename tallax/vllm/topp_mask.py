@@ -106,6 +106,9 @@ def topp_mask(
   unnorm_probs_i32 = (unnorm_probs_f32 * scale).astype(jnp.int32)
 
   safe_reduce_size = 2 ** (31 - scale_bits)
+  # Calculate bounds for partial sums after parallel reduction
+  # Each partial_sum accumulates ~safe_reduce_size values
+  partial_sum_max = scale * safe_reduce_size
 
   # 3. Convert to U48 and sum
   unnorm_probs_u48 = U48.from_i32_array(unnorm_probs_i32, max_val=scale)
@@ -118,9 +121,6 @@ def topp_mask(
     total_sum_u48.to_f32() * top_p,
     max_val=num_vals * scale)
 
-  # Calculate bounds for partial sums after parallel reduction
-  # Each partial_sum accumulates ~safe_reduce_size values
-  partial_sum_max = scale * safe_reduce_size
 
   # 5. Binary search for threshold
   # Uses int32 during parallel reduction, then converts to U48
