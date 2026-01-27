@@ -88,10 +88,12 @@ def topp_mask_ref_inputs(
     ) < target_sum_u48
 
   bound_shape = (logits.shape[0], NUM_LANES)
+  print(f'{scale_bits=}')
   threshold_i32, _, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
     num_iter=scale_bits,
+    unroll=True,
   )
   # 6. Apply mask to original logits
   # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)

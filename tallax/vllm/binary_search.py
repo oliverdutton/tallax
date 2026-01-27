@@ -96,6 +96,7 @@ def binary_search(
   upper_bound: jax.Array = None,
   num_iter: int | None = None,
   underlying_dtype=None,
+  unroll: bool = False,
 ) -> jax.Array:
   """Find threshold using binary search with custom predicate.
 
@@ -145,6 +146,6 @@ def binary_search(
   # Run binary search, user decides if they need l or r
   state = (lower_bound, upper_bound, interp(lower_bound, upper_bound))
   if num_iter is not None:
-    return jax.lax.fori_loop(0, num_iter, lambda _, carry: loop_body(carry), init_val=state)
+    return jax.lax.fori_loop(0, num_iter, lambda _, carry: loop_body(carry), init_val=state, unroll=unroll)
   else:
     return lax.while_loop(cond, loop_body, state)
