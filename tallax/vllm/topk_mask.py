@@ -13,7 +13,6 @@ The approach:
 """
 
 import functools
-import operator
 import math
 import jax
 import jax.numpy as jnp
@@ -21,7 +20,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.vllm.binary_search import binary_search
-from tallax.tax.utils import NUM_LANES, get_dtype_info
+from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce_sum
 
 
 def _find_boundary_chunk(
@@ -138,38 +137,6 @@ def find_boundary_idx(ref, k, threshold):
   return (ref_offset + sum((c < k) for c in cumsums))
 
 
-@functools.partial(jax.jit, static_argnames=('compare_fn', 'num_parallel'))
-def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7):
-  """Computes (vals > threshold).sum(axis=1, keepdims=True) and other comparisons efficiently.
-
-  For efficiency, threshold can be pre-broadcast as (b, NUM_LANES) or (b, 1)
-  """
-  if num_parallel == 0 or vals.shape[1] < NUM_LANES:
-    assert threshold.shape[1] == 1
-    return compare_fn(vals, threshold).sum(1, keepdims=True)
-  chunks = [vals[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(vals.shape[1] // NUM_LANES)]
-  num_parallel = min(num_parallel, len(chunks)) # guard num_parallel
-  if (has_remainder := (vals.shape[1] % NUM_LANES)):
-    remainder_chunk_sum = compare_fn(
-      vals[:, (vals.shape[1] // NUM_LANES) * NUM_LANES:],
-      threshold[:,:1]
-    ).sum(1, keepdims=True)
-
-  partial_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
-  for i, chunk in enumerate(chunks[num_parallel:]):
-    partial_sums[i % num_parallel] += compare_fn(chunk, threshold)
-  while len(partial_sums) > 1:
-    # Reduce sum pairs
-    n = len(partial_sums)
-    for i in range(n // 2):
-      partial_sums[i] += partial_sums[i + pl.cdiv(n, 2)]
-    partial_sums = partial_sums[:pl.cdiv(n, 2)]
-  full_sum = partial_sums[0].sum(1, keepdims=True)
-  if has_remainder:
-    full_sum += remainder_chunk_sum
-  return full_sum
-
-
 def topk_mask_ref_inputs(
   logits_ref,
   k_ref,
@@ -195,7 +162,7 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
   k = jnp.broadcast_to(k, bound_shape)
-  predicate_fn = lambda pivot: reduce_compare_sum(logits, pivot, operator.gt, num_parallel=num_parallel) < k
+  predicate_fn = lambda pivot: map_reduce_sum(lambda chunk: chunk > pivot, logits, num_parallel=num_parallel) < k
   finfo = jnp.finfo(logits_ref.dtype)
   _, threshold, _ = binary_search(
     predicate_fn,
@@ -217,7 +184,7 @@ def topk_mask_ref_inputs(
     # Find exact boundary for stable masking
     boundary_idx = find_boundary_idx(
       logits_ref,
-      k=k - reduce_compare_sum(logits, threshold, operator.gt),
+      k=k - map_reduce_sum(lambda chunk: chunk > threshold, logits, num_parallel=num_parallel),
       threshold=threshold
     )
     threshold = pltpu.repeat(

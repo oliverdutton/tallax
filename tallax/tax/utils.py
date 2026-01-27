@@ -507,3 +507,51 @@ def maybe_static_jit(
     return fs[key](*args, **kwargs)
 
   return jit_f
+@functools.partial(jax.jit, static_argnames=('map_fn', 'num_parallel', 'apply_post_partial_sums_fn'))
+def map_reduce_sum(map_fn, vals, num_parallel: int = 7, apply_post_partial_sums_fn=None):
+  """Computes map_fn(vals).sum(axis=1, keepdims=True) efficiently.
+
+  The input vals is chunked along axis 1 using NUM_LANES.
+  The map_fn is expected to already close over any required parameters (like thresholds).
+
+  Works with int32 arrays. After parallel reduction, optionally converts to
+  custom types (like U48) via apply_post_partial_sums_fn for the tree 
+  reduction phase.
+  """
+  vals_shape_1 = vals.shape[1]
+
+  # Fast path for small inputs
+  if num_parallel == 0 or vals_shape_1 < NUM_LANES:
+    return map_fn(vals).sum(1, keepdims=True)
+
+  num_chunks = vals_shape_1 // NUM_LANES
+  chunks = [vals[:, i * NUM_LANES : (i + 1) * NUM_LANES] for i in range(num_chunks)]
+  num_parallel = min(num_parallel, len(chunks))
+
+  # Compute partial sums
+  partial_sums = [
+    map_fn(chunk).astype(jnp.int32) for chunk in chunks[:num_parallel]
+  ]
+  for i, chunk in enumerate(chunks[num_parallel:]):
+    partial_sums[i % num_parallel] += map_fn(chunk).astype(jnp.int32)
+
+  if apply_post_partial_sums_fn is not None:
+    partial_sums = list(map(apply_post_partial_sums_fn, partial_sums))
+
+  # Tree reduction
+  while len(partial_sums) > 1:
+    n = len(partial_sums)
+    for i in range(n // 2):
+      partial_sums[i] = partial_sums[i] + partial_sums[i + (n + 1) // 2]
+    partial_sums = partial_sums[: (n + 1) // 2]
+
+  full_sum = partial_sums[0].sum(1, keepdims=True)
+
+  has_remainder = vals_shape_1 % NUM_LANES
+  if has_remainder:
+    remainder_vals = vals[:, num_chunks * NUM_LANES :]
+    full_sum = (
+      full_sum + map_fn(remainder_vals).sum(1, keepdims=True)
+    )
+
+  return full_sum

@@ -21,56 +21,10 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.utils import NUM_LANES
+from tallax.tax.utils import NUM_LANES, map_reduce_sum
 from tallax.vllm.high_precision_uint import U48
 
 from tallax.vllm.binary_search import binary_search
-
-
-@functools.partial(jax.jit, static_argnames=('compare_fn', 'num_parallel', 'apply_post_partial_sums_fn'))
-def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7, apply_post_partial_sums_fn=None):
-  """Computes (vals > threshold).sum(axis=1, keepdims=True) efficiently.
-
-  Works with int32 arrays. After parallel reduction, optionally converts to U48
-  via apply_post_partial_sums_fn for the tree reduction phase.
-  """
-  vals_shape_1 = vals.shape[1]
-
-  # Fast path for small inputs
-  if num_parallel == 0 or vals_shape_1 < NUM_LANES:
-    assert threshold.shape[1] == 1
-    return compare_fn(vals, threshold).sum(1, keepdims=True)
-
-  # Chunk and compute partial sums
-  num_chunks = vals_shape_1 // NUM_LANES
-  chunks = [vals[:, i*NUM_LANES:(i+1)*NUM_LANES] for i in range(num_chunks)]
-  num_parallel = min(num_parallel, len(chunks))
-
-  partial_sums = [compare_fn(chunk, threshold).astype(jnp.int32) for chunk in chunks[:num_parallel]]
-  for i, chunk in enumerate(chunks[num_parallel:]):
-    partial_sums[i % num_parallel] += compare_fn(chunk, threshold)
-
-  # Convert to HighPrecisionUInt if requested (for tree reduction with bound tracking)
-  if apply_post_partial_sums_fn is not None:
-    partial_sums = list(map(apply_post_partial_sums_fn, partial_sums))
-
-  # Tree reduction (works with both int32 and HighPrecisionUInt via duck typing)
-  while len(partial_sums) > 1:
-    n = len(partial_sums)
-    for i in range(n // 2):
-      partial_sums[i] = partial_sums[i] + partial_sums[i + pl.cdiv(n, 2)]
-    partial_sums = partial_sums[:pl.cdiv(n, 2)]
-
-  # Sum final dimension
-  full_sum = partial_sums[0].sum(1, keepdims=True)
-
-  # Handle remainder chunk
-  has_remainder = vals_shape_1 % NUM_LANES
-  if has_remainder:
-    remainder_chunk_sum = compare_fn(vals[:, num_chunks * NUM_LANES:], threshold[:,:1]).sum(1, keepdims=True)
-    full_sum = full_sum + remainder_chunk_sum
-
-  return full_sum
 
 
 def topp_mask(
@@ -110,12 +64,11 @@ def topp_mask(
   # Each partial_sum accumulates ~safe_reduce_size values
   partial_sum_max = scale * safe_reduce_size
 
-  # 3. Convert to U48 and sum safely using reduce_compare_sum
+  # 3. Convert to U48 and sum safely using map_reduce_sum
   # This avoids int32 overflow during the initial summation of the full vocabulary.
-  total_sum_u48 = reduce_compare_sum(
+  total_sum_u48 = map_reduce_sum(
+    lambda x: x,
     unnorm_probs_i32,
-    jnp.zeros((logits.shape[0], 1), dtype=jnp.int32),
-    lambda x, _: x,
     num_parallel=pl.cdiv(num_vals, safe_reduce_size),
     apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
   )
@@ -132,11 +85,9 @@ def topp_mask(
   # Uses int32 during parallel reduction, then converts to U48
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
-    compare_fn = lambda lhs, rhs: jnp.where(lhs >= rhs, lhs, 0)
-    return reduce_compare_sum(
+    return map_reduce_sum(
+      lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
       unnorm_probs_i32,
-      threshold,
-      compare_fn,
       num_parallel=pl.cdiv(num_vals, safe_reduce_size),
       apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
     ) < target_sum_u48
