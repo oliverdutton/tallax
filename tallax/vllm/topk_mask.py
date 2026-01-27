@@ -143,7 +143,6 @@ def topk_mask_ref_inputs(
   *,
   replace_val: float,
   stable: bool,
-  num_parallel: int,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -152,7 +151,6 @@ def topk_mask_ref_inputs(
     k_ref: Number of top elements to keep [batch, 1]
     replace_val: Replacement value for masked elements
     stable: Whether to use stable masking
-    num_parallel: Number of parallel chunks for reduction
   """
 
   # Step 1: Find k'th largest value
@@ -160,14 +158,13 @@ def topk_mask_ref_inputs(
   # Avoid broadcast in compare at the end of every search iter by pre-broadcasting to tile
   k = k_ref[...]
   # next value after the largest value where less than k gt it.
-  bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
+  bound_shape = (logits.shape[0], NUM_LANES)
   k = jnp.broadcast_to(k, bound_shape)
   predicate_fn = (
     lambda pivot: map_reduce(
       logits,
       lambda chunk: (chunk > pivot).astype(jnp.int32),
       reduce_fn="sum",
-      num_parallel=num_parallel,
     )
     < k
   )
@@ -197,7 +194,6 @@ def topk_mask_ref_inputs(
         logits,
         lambda chunk: (chunk > threshold).astype(jnp.int32),
         reduce_fn="sum",
-        num_parallel=num_parallel,
       ),
       threshold=threshold
     )
@@ -224,14 +220,15 @@ def topk_mask_pallas_kernel(
   *,
   replace_val: float,
   stable: bool,
-  num_parallel: int,
 ):
-  output_ref[...] = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable, num_parallel=num_parallel)
+  output_ref[...] = topk_mask_ref_inputs(
+    logits_ref, k_ref, replace_val=replace_val, stable=stable
+  )
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["replace_val", "stable", "interpret", "num_parallel"]
+  static_argnames=["replace_val", "stable", "interpret"]
 )
 def topk_mask_pallas(
   x: jax.Array,
@@ -239,7 +236,6 @@ def topk_mask_pallas(
   replace_val: float = -1e12,
   stable: bool = True,
   interpret: bool = False,
-  num_parallel: int = 7,
 ) -> jax.Array:
   """Pallas-based topk mask with parallel chunk-based reduction.
 
@@ -249,7 +245,6 @@ def topk_mask_pallas(
     replace_val: Value for masked elements
     stable: Whether to use stable masking
     interpret: Whether to use interpret mode
-    num_parallel: Number of parallel chunks for reduction
 
   Returns:
     Masked array
@@ -262,7 +257,6 @@ def topk_mask_pallas(
       topk_mask_pallas_kernel,
       replace_val=replace_val,
       stable=stable,
-      num_parallel=num_parallel,
     ),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
