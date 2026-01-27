@@ -20,7 +20,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.vllm.binary_search import binary_search
-from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce_sum
+from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce
 
 
 def _find_boundary_chunk(
@@ -162,7 +162,15 @@ def topk_mask_ref_inputs(
   # next value after the largest value where less than k gt it.
   bound_shape = (logits.shape[0], NUM_LANES if num_parallel != 0 else 1)
   k = jnp.broadcast_to(k, bound_shape)
-  predicate_fn = lambda pivot: map_reduce_sum(lambda chunk: chunk > pivot, logits, num_parallel=num_parallel) < k
+  predicate_fn = (
+    lambda pivot: map_reduce(
+      lambda chunk: (chunk > pivot).astype(jnp.int32),
+      logits,
+      reduce_fn="sum",
+      num_parallel=num_parallel,
+    )
+    < k
+  )
   finfo = jnp.finfo(logits_ref.dtype)
   _, threshold, _ = binary_search(
     predicate_fn,
@@ -184,7 +192,13 @@ def topk_mask_ref_inputs(
     # Find exact boundary for stable masking
     boundary_idx = find_boundary_idx(
       logits_ref,
-      k=k - map_reduce_sum(lambda chunk: chunk > threshold, logits, num_parallel=num_parallel),
+      k=k
+      - map_reduce(
+        lambda chunk: (chunk > threshold).astype(jnp.int32),
+        logits,
+        reduce_fn="sum",
+        num_parallel=num_parallel,
+      ),
       threshold=threshold
     )
     threshold = pltpu.repeat(

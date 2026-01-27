@@ -21,7 +21,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.utils import NUM_LANES, map_reduce_sum
+from tallax.tax.utils import NUM_LANES, map_reduce
 from tallax.vllm.high_precision_uint import U48
 
 from tallax.vllm.binary_search import binary_search
@@ -65,12 +65,15 @@ def topp_mask_ref_inputs(
   actual_partial_sum_max = scale * chunks_per_parallel
 
   # 2. Convert to U48 and sum safely using map_reduce_sum
-  total_sum_u48 = map_reduce_sum(
+  total_sum_u48 = map_reduce(
     lambda x: x,
     unnorm_probs_i32,
+    reduce_fn="sum",
     num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
-  )  
+    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+      x, max_val=actual_partial_sum_max
+    ),
+  )
 
   # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
@@ -81,12 +84,18 @@ def topp_mask_ref_inputs(
   # Uses int32 during parallel reduction, then converts to U48
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
-    return map_reduce_sum(
-      lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
-      unnorm_probs_i32,
-      num_parallel=num_parallel,
-      apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
-    ) < target_sum_u48
+    return (
+      map_reduce(
+        lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
+        unnorm_probs_i32,
+        reduce_fn="sum",
+        num_parallel=num_parallel,
+        apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+          x, max_val=actual_partial_sum_max
+        ),
+      )
+      < target_sum_u48
+    )
 
   bound_shape = (logits.shape[0], NUM_LANES)
   threshold_i32, _, _ = binary_search(
