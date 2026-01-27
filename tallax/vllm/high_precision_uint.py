@@ -114,7 +114,8 @@ class U48:
 
     low_sum = self.parts[0].sum(axis=axis, keepdims=keepdims)
     high_sum = self.parts[1].sum(axis=axis, keepdims=keepdims)
-    
+    low_sum, high_sum = (jnp.broadcast_to(x, self.parts[0].shape) for x in (low_sum, high_sum))
+
     num_vals = self.parts[0].shape[axis]
     new_bounds = [bound * num_vals for bound in self.max_value_bound_per_part]
     
