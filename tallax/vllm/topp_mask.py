@@ -53,17 +53,20 @@ def topp_mask_ref_inputs(
   unnorm_probs_i32 = (unnorm_probs_f32 * scale).astype(jnp.int32)
 
   safe_reduce_size = 2 ** (31 - scale_bits)
-  # Calculate bounds for partial sums after parallel reduction
-  # Each partial_sum accumulates ~safe_reduce_size values
-  partial_sum_max = scale * safe_reduce_size
+  assert num_vals % NUM_LANES == 0
+  num_chunks = num_vals // NUM_LANES
+  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
+  # Calculate how many vocab chunks are summed into each lane of a parallel block.
+  # Values in x will be at most (chunks_per_parallel * scale).
+  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
+  actual_partial_sum_max = scale * chunks_per_parallel
 
   # 3. Convert to U48 and sum safely using map_reduce_sum
-  # This avoids int32 overflow during the initial summation of the full vocabulary.
   total_sum_u48 = map_reduce_sum(
     lambda x: x,
     unnorm_probs_i32,
-    num_parallel=pl.cdiv(num_vals, safe_reduce_size),
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
+    num_parallel=num_parallel,
+    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
   )
 
   bound_shape = (logits.shape[0], NUM_LANES)
@@ -81,8 +84,8 @@ def topp_mask_ref_inputs(
     return map_reduce_sum(
       lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
       unnorm_probs_i32,
-      num_parallel=pl.cdiv(num_vals, safe_reduce_size),
-      apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
+      num_parallel=num_parallel,
+      apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
     ) < target_sum_u48
 
   bound_shape = (logits.shape[0], NUM_LANES)

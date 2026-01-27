@@ -86,18 +86,18 @@ class U48:
     carry = low_with_carry >> 24
 
     high_with_carry = self.parts[1] + carry
-    high_normalized = high_with_carry & mask
+    # For a 2-part number, the high part doesn't need to be masked to 24 bits.
+    # It can grow up to the int32 limit safely.
+    high_normalized = high_with_carry
 
     # Only 2 parts allowed (compile-time check on bound)
-    # Maximum possible carry from low part is (max_value_bound_per_part[0] >> 24)
-    # Maximum high_with_carry = max_value_bound_per_part[1] + (max_value_bound_per_part[0] >> 24)
     max_carry = self.max_value_bound_per_part[0] >> 24
     max_high_with_carry = self.max_value_bound_per_part[1] + max_carry
-    if max_high_with_carry > mask:
+    if max_high_with_carry >= 2**31:
       raise ValueError(
         f"Harmonization would require more than 2 parts: "
         f"max_value_bound_per_part={self.max_value_bound_per_part}, "
-        f"max_carry={max_carry}, max_high_with_carry={max_high_with_carry} > {mask}"
+        f"max_carry={max_carry}, max_high_with_carry={max_high_with_carry} >= 2^31"
       )
     
     # After harmonization, low part is bounded by mask, high part by max possible value
