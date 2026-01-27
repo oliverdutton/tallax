@@ -536,7 +536,7 @@ def map_reduce(
   - 'min' -> (jnp.minimum, lambda x: x.min(1, keepdims=True))
   """
   if reduce_fn == "sum":
-    binary_reduce, unary_reduce = jnp.add, lambda x: x.sum(1, keepdims=True)
+    binary_reduce, unary_reduce = (lambda x, y: x + y), (lambda x: x.sum(1, keepdims=True))
   elif reduce_fn == "max":
     binary_reduce, unary_reduce = jnp.maximum, lambda x: x.max(1, keepdims=True)
   elif reduce_fn == "min":
