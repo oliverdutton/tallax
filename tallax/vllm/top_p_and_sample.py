@@ -16,6 +16,13 @@ from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.cumsum import cumsum_arrays
 from tallax.tax.gather import take_along_axis_arrays
 from tallax.tax.utils import NUM_SUBLANES, NUM_LANES
+from tallax.tax.int32_sampling import (
+  logits_to_int32_weights,
+  int32_cumsum,
+  find_top_p_boundary_int32,
+  sparse_random_int32,
+  sample_token_from_int32_cumsum,
+)
 
 _SAMPLING_EPS = 1e-5
 
@@ -68,6 +75,54 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
     topk_logits, broadcast_to(threshold_idx, shape), axis=0
   )
   topp_logits = jnp.where(topk_logits >= thresholds, topk_logits, replace_val)
+
+  return topp_logits
+
+
+def top_p_mask_int32(*, topk_logits, p, replace_val, axis):
+  """
+  Apply top-p filtering mask using int32 arithmetic for numerical stability.
+
+  This version converts logits to int32 weights to avoid overflow issues
+  in cumulative sum computation, particularly useful for long sequences.
+
+  Args:
+      topk_logits: Sorted logits (descending order), shape (k, batch)
+      p: Top-p threshold(s), shape (batch,)
+      replace_val: Value to replace filtered logits with
+      axis: Axis along which to apply filtering (must be 0)
+
+  Returns:
+      Masked logits with values outside top-p set to replace_val
+  """
+  if axis != 0:
+    raise NotImplementedError("top_p_mask_int32 only supports axis=0")
+
+  shape = topk_logits.shape
+
+  # Transpose to (batch, k) for int32 conversion
+  topk_logits_transposed = topk_logits.T
+
+  # Convert logits to int32 weights
+  int32_weights = logits_to_int32_weights(topk_logits_transposed)
+
+  # Compute cumulative sum in int32
+  cumsum_weights = int32_cumsum(int32_weights, axis=-1)
+
+  # Get total sum per batch
+  total_weights = cumsum_weights[:, -1:]
+
+  # Find top-p boundary
+  boundary_idx, boundary_sum = find_top_p_boundary_int32(
+    cumsum_weights, total_weights, p
+  )
+
+  # Create mask: include tokens up to and including boundary_idx
+  token_positions = jnp.arange(shape[0])  # Shape (k,)
+  valid_mask = token_positions[:, None] <= boundary_idx[None, :]  # Shape (k, batch)
+
+  # Apply mask to logits
+  topp_logits = jnp.where(valid_mask, topk_logits, replace_val)
 
   return topp_logits
 
