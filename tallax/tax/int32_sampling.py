@@ -100,11 +100,14 @@ def int32_bsearch(batch_shape, predicate):
 
 def find_top_p_boundary_int32(cumsum_weights, total_weights, p):
   """
-  Find the boundary index for top-p filtering using binary search on int32 cumsum.
+  Find the boundary index for top-p filtering using two-pass comparison.
 
-  Uses binary search to find the boundary index where cumulative sum reaches
-  p * total_weights, providing better latency hiding on TPU compared to
-  linear scan.
+  Two-pass approach:
+  1. Compute threshold = p * total_weights
+  2. Vectorized comparison: cumsum < threshold, count to get boundary
+
+  This is more efficient than binary search because it exploits vectorization
+  and avoids repeated array indexing inside the search loop.
 
   Args:
       cumsum_weights: Cumulative sum of weights, shape (..., k)
@@ -115,28 +118,16 @@ def find_top_p_boundary_int32(cumsum_weights, total_weights, p):
       boundary_idx: Index of last token to include in top-p set, shape (...,)
       boundary_sum: Cumulative sum at boundary, shape (...,)
   """
-  batch_shape = cumsum_weights.shape[:-1]
   k = cumsum_weights.shape[-1]
 
-  # Compute threshold as int32
+  # Pass 1: Compute threshold as int32
   p_expanded = jnp.expand_dims(p, axis=-1) if p.ndim < cumsum_weights.ndim else p
   threshold = (p_expanded * total_weights).astype(jnp.int32)
-  threshold = threshold.squeeze(-1)  # Remove last dim to match batch_shape
 
-  # Binary search predicate: Does cumsum[idx] >= threshold?
-  # We want to find the largest idx where cumsum[idx] < threshold
-  # which is the last token to include in top-p
-  def predicate(idx):
-    # Clamp idx to valid range [0, k-1]
-    idx = jnp.clip(idx, 0, k - 1)
-    # Get cumsum value at this index for each batch element
-    batch_indices = jnp.arange(cumsum_weights.shape[0])
-    cumsum_at_idx = cumsum_weights[batch_indices, idx]
-    # Predicate is True when we've exceeded the threshold
-    return cumsum_at_idx >= threshold
-
-  # Binary search to find boundary index
-  boundary_idx = int32_bsearch(batch_shape, predicate)
+  # Pass 2: Find first index where cumsum >= threshold
+  # Count how many cumsum values are below threshold
+  below_threshold = cumsum_weights < threshold
+  boundary_idx = below_threshold.sum(axis=-1)
 
   # Clamp to valid range [0, k-1]
   boundary_idx = jnp.clip(boundary_idx, 0, k - 1)
@@ -191,12 +182,17 @@ def sparse_random_int32(key_ref, indices, dim1_size, maxval):
 
 def sample_token_from_int32_cumsum(cumsum_weights, random_int, axis=-1):
   """
-  Sample a token using binary search on int32 cumulative sum.
+  Sample a token using two-pass comparison on int32 cumulative sum.
 
   Given cumsum and a random int in [0, total_sum), find the token index
   such that cumsum[idx-1] <= random_int < cumsum[idx].
 
-  Uses binary search for efficient token selection with latency hiding on TPU.
+  Two-pass approach:
+  1. Already have random_int (the threshold)
+  2. Vectorized comparison: cumsum > random_int, count to get token_idx
+
+  This is more efficient than binary search because it uses vectorization
+  and avoids repeated array indexing.
 
   Args:
       cumsum_weights: Cumulative sum of weights, shape (..., k)
@@ -209,30 +205,18 @@ def sample_token_from_int32_cumsum(cumsum_weights, random_int, axis=-1):
   if axis != -1:
     raise NotImplementedError("Only axis=-1 supported")
 
-  batch_shape = cumsum_weights.shape[:-1]
   k = cumsum_weights.shape[-1]
 
-  # Binary search predicate: Does cumsum[idx] > random_int?
-  # We want to find the smallest idx where cumsum[idx] > random_int
-  # Which is equivalent to finding the largest idx where cumsum[idx] <= random_int
-  # and then adding 1, but we'll use the predicate directly
-  def predicate(idx):
-    # Clamp idx to valid range [0, k-1]
-    idx = jnp.clip(idx, 0, k - 1)
-    # Get cumsum value at this index for each batch element
-    batch_indices = jnp.arange(cumsum_weights.shape[0])
-    cumsum_at_idx = cumsum_weights[batch_indices, idx]
-    # Predicate is True when cumsum exceeds random_int
-    return cumsum_at_idx > random_int
+  # Pass 1: random_int is our threshold (already computed)
+  # Pass 2: Find first index where cumsum > random_int
+  # Expand random_int to match cumsum shape for broadcasting
+  random_int_expanded = jnp.expand_dims(random_int, axis=-1)
 
-  # Binary search to find token index
-  # This finds the largest index where predicate is False (cumsum <= random_int)
-  token_idx = int32_bsearch(batch_shape, predicate)
+  # Vectorized comparison: which cumsum values exceed random_int?
+  exceeds = cumsum_weights > random_int_expanded
 
-  # The result is the largest idx where cumsum[idx] <= random_int
-  # But we want the first idx where cumsum[idx] > random_int
-  # So we need to add 1 and clamp
-  token_idx = token_idx + 1
+  # Count positions where cumsum <= random_int to find first exceeding position
+  token_idx = (~exceeds).sum(axis=-1)
 
   # Clamp to valid range [0, k-1]
   token_idx = jnp.clip(token_idx, 0, k - 1)
