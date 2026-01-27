@@ -10,7 +10,7 @@ description = "High-performance sorting and top-k operations for JAX on TPUs."
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    "jax==0.8.0",
+    "jax",
     "pandas",
     "numpy",
     "scipy"

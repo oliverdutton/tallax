@@ -19,6 +19,7 @@ import functools
 import jax
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
+from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES
 from tallax.vllm.high_precision_uint import U48
@@ -26,7 +27,7 @@ from tallax.vllm.high_precision_uint import U48
 from tallax.vllm.binary_search import binary_search
 
 
-@functools.partial(jax.jit, static_argnames=('compare_fn', 'num_parallel'))
+@functools.partial(jax.jit, static_argnames=('compare_fn', 'num_parallel', 'apply_post_partial_sums_fn'))
 def reduce_compare_sum(vals, threshold, compare_fn, num_parallel: int=7, apply_post_partial_sums_fn=None):
   """Computes (vals > threshold).sum(axis=1, keepdims=True) efficiently.
 
@@ -102,24 +103,20 @@ def topp_mask(
 
   # 2. Convert f32 probabilities to i32 range [0, scale]
   scale = 2**scale_bits - 1
-  unnorm_probs_i32 = jnp.clip(
-    (unnorm_probs_f32 * scale).astype(jnp.int32),
-    0, scale
-  )
+  unnorm_probs_i32 = (unnorm_probs_f32 * scale).astype(jnp.int32)
 
   safe_reduce_size = 2 ** (31 - scale_bits)
 
   # 3. Convert to U48 and sum
   unnorm_probs_u48 = U48.from_i32_array(unnorm_probs_i32, max_val=scale)
-  total_sum_u48 = unnorm_probs_u48.sum(axis=1)
+  total_sum_u48 = unnorm_probs_u48.sum(axis=1, keepdims=True)
 
-  # Calculate bounds for target sum: max value = vocab_size * scale
-  max_total_sum = num_vals * scale
+  bound_shape = (logits.shape[0], NUM_LANES)
 
   # 4. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
     total_sum_u48.to_f32() * top_p,
-    max_val=max_total_sum)
+    max_val=num_vals * scale)
 
   # Calculate bounds for partial sums after parallel reduction
   # Each partial_sum accumulates ~safe_reduce_size values
@@ -138,12 +135,14 @@ def topp_mask(
       apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=partial_sum_max),
     ) < target_sum_u48
 
-  bound_shape = (logits.shape[0], 1)
-  threshold_i32, _ = binary_search(
+  bound_shape = (logits.shape[0], NUM_LANES)
+  threshold_i32, _, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
-    num_iter=32,
+    num_iter=scale_bits,
   )
   # 6. Apply mask to original logits
+  # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)
+  threshold_i32 = jnp.tile(threshold_i32, (1, logits.shape[1] // NUM_LANES))
   mask = unnorm_probs_i32 >= threshold_i32
   return jnp.where(mask, logits, replace_val)

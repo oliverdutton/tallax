@@ -7,6 +7,7 @@ Tracks maximum value bounds to minimize harmonization.
 from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
+from jax import tree_util
 
 
 @dataclass
@@ -154,3 +155,20 @@ class U48:
     # self[1] < other[1] OR (self[1] == other[1] AND self[0] < other[0])
     # Using bitwise ops: pi[1] < pj[1] | (pi[1] == pj[1] & pi[0] < pj[0])
     return (self.parts[1] < other.parts[1]) | ((self.parts[1] == other.parts[1]) & (self.parts[0] < other.parts[0]))
+
+
+# Register U48 as a JAX PyTree for proper tracing in JIT-compiled functions
+def _u48_tree_flatten(u48):
+  """Flatten U48 into (children, aux_data) for JAX PyTree."""
+  # children: dynamic values that JAX needs to trace (the array parts)
+  # aux_data: static metadata (the integer bounds)
+  return (u48.parts, u48.max_value_bound_per_part)
+
+
+def _u48_tree_unflatten(aux_data, children):
+  """Reconstruct U48 from flattened representation."""
+  return U48(parts=children, max_value_bound_per_part=aux_data)
+
+
+# Register the PyTree
+tree_util.register_pytree_node(U48, _u48_tree_flatten, _u48_tree_unflatten)

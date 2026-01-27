@@ -35,6 +35,7 @@ def test_topp_masks_match():
         # Compare masks (not values, since both replace with same value)
         int_mask = (int_result == -1e12)
         f32_mask = (f32_result == -1e12)
+        print(jnp.stack([jnp.where(res == -1e12, jnp.inf, res).min(1) for res in (int_result, f32_result)], axis=1))
 
         masks_equal = jnp.array_equal(int_mask, f32_mask)
 
