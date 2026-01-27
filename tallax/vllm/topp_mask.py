@@ -95,7 +95,7 @@ def topp_mask_ref_inputs(
   )
   # 6. Apply mask to original logits
   # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)
-  threshold_i32 = jnp.repeat(threshold_i32, logits.shape[1] // NUM_LANES, axis=1)
+  threshold_i32 = pltpu.repeat(threshold_i32, logits.shape[1] // NUM_LANES, axis=1)
   mask = unnorm_probs_i32 >= threshold_i32
   return jnp.where(mask, logits, replace_val)
 
