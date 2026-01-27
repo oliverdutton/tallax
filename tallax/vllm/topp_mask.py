@@ -50,7 +50,11 @@ def topp_mask_ref_inputs(
   top_p = jnp.broadcast_to(top_p, bound_shape)
 
   # 1. Compute unnormalized probabilities: exp(logits - max(logits)) and scale [0.,1.] to [0, 2^scale - 1]
-  logits_max = logits.max(axis=1, keepdims=True)
+  logits_max = map_reduce(
+    lambda x: x,
+    logits,
+    reduce_fn="max",
+  ) #logits.max(axis=1, keepdims=True)
 
   scale = 2**scale_bits - 1
   unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
