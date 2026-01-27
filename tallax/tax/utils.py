@@ -518,8 +518,8 @@ def maybe_static_jit(
   ),
 )
 def map_reduce(
-  map_fn,
   vals,
+  map_fn=lambda x: x,
   reduce_fn="sum",
   num_parallel: int = 7,
   apply_post_partial_sums_fn=None,

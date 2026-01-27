@@ -51,10 +51,8 @@ def topp_mask_ref_inputs(
 
   # 1. Compute unnormalized probabilities: exp(logits - max(logits)) and scale [0.,1.] to [0, 2^scale - 1]
   logits_max = map_reduce(
-    lambda x: x,
-    logits,
-    reduce_fn="max",
-  ) #logits.max(axis=1, keepdims=True)
+    logits, reduce_fn="max"
+  )  # logits.max(axis=1, keepdims=True)
 
   scale = 2**scale_bits - 1
   unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
@@ -70,7 +68,6 @@ def topp_mask_ref_inputs(
 
   # 2. Convert to U48 and sum safely using map_reduce_sum
   total_sum_u48 = map_reduce(
-    lambda x: x,
     unnorm_probs_i32,
     reduce_fn="sum",
     num_parallel=num_parallel,
@@ -90,8 +87,8 @@ def topp_mask_ref_inputs(
     """Check if cumulative sum of values >= threshold is less than target."""
     return (
       map_reduce(
-        lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
         unnorm_probs_i32,
+        lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
         reduce_fn="sum",
         num_parallel=num_parallel,
         apply_post_partial_sums_fn=lambda x: U48.from_i32_array(

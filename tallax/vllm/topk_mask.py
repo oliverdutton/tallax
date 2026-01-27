@@ -164,8 +164,8 @@ def topk_mask_ref_inputs(
   k = jnp.broadcast_to(k, bound_shape)
   predicate_fn = (
     lambda pivot: map_reduce(
-      lambda chunk: (chunk > pivot).astype(jnp.int32),
       logits,
+      lambda chunk: (chunk > pivot).astype(jnp.int32),
       reduce_fn="sum",
       num_parallel=num_parallel,
     )
@@ -194,8 +194,8 @@ def topk_mask_ref_inputs(
       logits_ref,
       k=k
       - map_reduce(
-        lambda chunk: (chunk > threshold).astype(jnp.int32),
         logits,
+        lambda chunk: (chunk > threshold).astype(jnp.int32),
         reduce_fn="sum",
         num_parallel=num_parallel,
       ),
