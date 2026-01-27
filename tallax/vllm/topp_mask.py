@@ -27,6 +27,10 @@ from tallax.vllm.high_precision_uint import U48
 from tallax.vllm.binary_search import binary_search
 
 
+def map_chunks(x, fn):
+  assert x.shape[1] % NUM_LANES == 0
+  return jnp.concatenate([fn(c) for c in jnp.split(x, x.shape[1]//NUM_LANES, 1)], axis=1)
+
 def topp_mask_ref_inputs(
   logits_ref,
   top_p_ref,
@@ -45,13 +49,11 @@ def topp_mask_ref_inputs(
   bound_shape = (logits.shape[0], NUM_LANES)
   top_p = jnp.broadcast_to(top_p, bound_shape)
 
-  # 1. Compute unnormalized probabilities: exp(logits - max(logits))
+  # 1. Compute unnormalized probabilities: exp(logits - max(logits)) and scale [0.,1.] to [0, 2^scale - 1]
   logits_max = logits.max(axis=1, keepdims=True)
-  unnorm_probs_f32 = jnp.exp(logits - logits_max)
 
-  # 2. Convert f32 probabilities to i32 range [0, scale]
   scale = 2**scale_bits - 1
-  unnorm_probs_i32 = (unnorm_probs_f32 * scale).astype(jnp.int32)
+  unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
 
   safe_reduce_size = 2 ** (31 - scale_bits)
   assert num_vals % NUM_LANES == 0
@@ -62,7 +64,7 @@ def topp_mask_ref_inputs(
   chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
   actual_partial_sum_max = scale * chunks_per_parallel
 
-  # 3. Convert to U48 and sum safely using map_reduce_sum
+  # 2. Convert to U48 and sum safely using map_reduce_sum
   total_sum_u48 = map_reduce_sum(
     lambda x: x,
     unnorm_probs_i32,
@@ -70,13 +72,12 @@ def topp_mask_ref_inputs(
     apply_post_partial_sums_fn=lambda x: U48.from_i32_array(x, max_val=actual_partial_sum_max),
   )  
 
-  # 4. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
+  # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
     total_sum_u48.to_f32() * top_p,
     max_val=num_vals * scale)
 
-  print(target_sum_u48.parts[0].shape, top_p.shape)
-  # 5. Binary search for threshold
+  # 4. Binary search for threshold
   # Uses int32 during parallel reduction, then converts to U48
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
@@ -93,7 +94,7 @@ def topp_mask_ref_inputs(
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
     num_iter=scale_bits,
   )
-  # 6. Apply mask to original logits
+  # 5. Apply mask to original logits
   # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)
   threshold_i32 = pltpu.repeat(threshold_i32, logits.shape[1] // NUM_LANES, axis=1)
   mask = unnorm_probs_i32 >= threshold_i32
