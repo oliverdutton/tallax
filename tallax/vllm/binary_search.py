@@ -82,7 +82,7 @@ def _interp(l: jax.Array, r: jax.Array, underlying_dtype=None) -> jax.Array:
     # lower 16 mantissa bits zeroed, so f32-space midpoints land between
     # bf16 grid points. Casting through bf16 rounds to the nearest
     # representable value, ensuring the search converges correctly.
-    pivot = pivot.astype(underlying_dtype).astype(l.dtype)
+    pivot = pivot.astype(underlying_dtype).astype(pivot.dtype)
   return pivot
 
 
