@@ -68,16 +68,22 @@ def _interp(l: jax.Array, r: jax.Array, underlying_dtype=None) -> jax.Array:
   """
   assert l.dtype in (jnp.float32, jnp.int32)
   floating = l.dtype == jnp.float32
+  i32 = l.dtype == jnp.int32
   if floating:
     l = monotonic_f32_to_u32(l)
     r = monotonic_f32_to_u32(r)
-  assert l.dtype in (jnp.uint32, jnp.int32)
+  elif i32:
+    l, r = (x.view(jnp.uint32) for x in (l, r))
+  assert l.dtype == jnp.uint32
+    
   # Overflow-safe (l+r)//2 using the formula: (l//2) + (r//2) + ((l&1)+(r&1))//2
-  one = jnp.int32(1)
+  one = jnp.array(1, dtype=l.dtype)
   print(l.dtype, r.dtype, one.dtype, (l&one).dtype)
   pivot = (l // 2) + (r // 2) + ((l & one) + (r & one)) // 2
   if floating:
     pivot = monotonic_u32_to_f32(pivot)
+  if i32:
+    pivot = pivot.view(jnp.int32)
   if underlying_dtype is not None:
     # Snap to bf16-representable value. bf16 values cast to f32 have their
     # lower 16 mantissa bits zeroed, so f32-space midpoints land between
