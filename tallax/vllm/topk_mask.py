@@ -55,7 +55,7 @@ def _find_boundary_chunk(
   # Calculate number of chunks using ceiling division
   num_chunks = arr.shape[1] // chunk_size
   chunks = [
-    arr[:, i * chunk_size : (i + 1) * chunk_size].astype(jnp.float32)
+    arr[:, i * chunk_size : (i + 1) * chunk_size].astype(to_32bit_dtype(arr.dtype))
     for i in range(num_chunks)
   ]
   assert chunk_size % NUM_LANES == 0
@@ -81,20 +81,23 @@ def _find_boundary_chunk(
 
   # Update offset by multiples of chunk_size
   ref_offset += boundary_idx * chunk_size
-  # Assure compiler offset is a multiple of chunk_size
-  # This is us guaranteeing when using multiple iterations of find_boundary_chunk that current chunk_size evenly divides all previous chunk_sizes
-  # Index into ref (not ref_slice) as dynamic_slice not supported on arrays
-  # These dslices may be OOB, which is fine - we mask them out later
-  boundary_slices = [
-    ref[
-      :,
-      pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size),
-    ].astype(to_32bit_dtype(ref.dtype))
-    for i in range(batch_size)
-  ]
-  boundary_slice = boundary_slices[0]
+  # Reconstruct boundary_slice using dynamic_slice
+  # We want ref[i, ref_offset[i]:ref_offset[i]+chunk_size]
+  # We do this for all batch items using vmap or a loop with where
+  # Since we are in Pallas or JIT, we can use a simpler approach if we can't vmap dynamic_slice on axis 1
+  # For now, let's use a more robust version:
+  iota0 = jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), 0)
+  
+  # Initialize with first slice
+  start_idx = pltpu.multiple_of(ref_offset[0, 0], chunk_size)
+  boundary_slice = jax.lax.dynamic_slice(ref, (0, start_idx), (1, chunk_size))
+  
   for i in range(1, batch_size):
-    boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
+    start_idx = pltpu.multiple_of(ref_offset[i, 0], chunk_size)
+    curr_slice = jax.lax.dynamic_slice(ref, (i, start_idx), (1, chunk_size))
+    boundary_slice = jnp.concatenate([boundary_slice, curr_slice], axis=0)
+
+  boundary_slice = boundary_slice.astype(to_32bit_dtype(ref.dtype))
 
   # Mask OOB indices to dtype min to ensure they don't interfere with comparisons
   if num_chunks * chunk_size != arr.shape[1]:
