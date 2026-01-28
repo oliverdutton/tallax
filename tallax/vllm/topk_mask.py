@@ -20,55 +20,49 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.vllm.binary_search import binary_search
-from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce
+from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce, to_32bit_dtype
 
 
 def _find_boundary_chunk(
   ref,
+  map_fn,
   target,
-  k,
   chunk_size: int,
   active_chunk: jax.Array | None = None,
   ref_offset: jax.Array | int = 0,
 ):
-  """Find which chunk contains the k'th element matching target.
+  """Find which chunk contains the target boundary according to map_fn.
 
   Parallel approach: splits vocabulary into chunks, counts matches in each chunk,
   builds cumulative sums, and iterates to find which chunk contains
-  the k'th matching element.
+  the target count.
 
   Args:
     ref: Reference array of shape [batch, vocab_size]
-    target: Target value to match (shape [batch, 1])
-    k: Target count (shape [batch, 1])
+    map_fn: Unary function mapping chunks to binary counters
+    target: Target count (shape [batch, 1])
     chunk_size: Size of each chunk
     active_chunk: Optional subset of ref to search in
     ref_offset: Offset into ref for indexing
 
   Returns:
-    Tuple of (ref_offset, boundary_slice, k) where:
+    Tuple of (ref_offset, boundary_slice, target) where:
       - ref_offset: Updated offset to boundary chunk start
       - boundary_slice: Extracted boundary chunk [batch, chunk_size]
-      - k: Updated k count after subtracting earlier chunks
+      - target: Updated target count after subtracting earlier chunks
   """
   arr = ref if active_chunk is None else active_chunk
   # Calculate number of chunks using ceiling division
-  # We don't have to slice out the remainder (or last chunk in general), it naturally gets handled
   num_chunks = arr.shape[1] // chunk_size
   chunks = [
     arr[:, i * chunk_size : (i + 1) * chunk_size].astype(jnp.float32)
     for i in range(num_chunks)
   ]
   assert chunk_size % NUM_LANES == 0
-  target = pltpu.repeat(
-    target,
-    chunk_size // NUM_LANES,
-    axis=1,
-  )
 
   # Count matches in each chunk, keeping (batch, 1) shape
   num_matches = [
-    (chunk == target).sum(axis=1, keepdims=True).astype(jnp.int32)
+    map_fn(chunk).sum(axis=1, keepdims=True).astype(jnp.int32)
     for chunk in chunks
   ]
 
@@ -79,11 +73,14 @@ def _find_boundary_chunk(
 
   boundary_idx = sum((c < k) for c in cumsums)
   # Subtract counts from all chunks BEFORE the boundary chunk
-  k -= sum((i == (boundary_idx - 1)) * c for i, c in enumerate(cumsums))
+  target -= sum((i == (boundary_idx - 1)) * c for i, c in enumerate(cumsums))
 
   # We'll do batch_size separate dslices into arr
   batch_size = ref.shape[0]
-  iota0, iota1 = (jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), dim) for dim in (0, 1))
+  iota0, iota1 = (
+    jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), dim)
+    for dim in (0, 1)
+  )
 
   # Update offset by multiples of chunk_size
   ref_offset += boundary_idx * chunk_size
@@ -91,7 +88,13 @@ def _find_boundary_chunk(
   # This is us guaranteeing when using multiple iterations of find_boundary_chunk that current chunk_size evenly divides all previous chunk_sizes
   # Index into ref (not ref_slice) as dynamic_slice not supported on arrays
   # These dslices may be OOB, which is fine - we mask them out later
-  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)].astype(jnp.float32) for i in range(batch_size)]
+  boundary_slices = [
+    ref[
+      :,
+      pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size),
+    ].astype(to_32bit_dtype(ref.dtype))
+    for i in range(batch_size)
+  ]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
@@ -99,42 +102,43 @@ def _find_boundary_chunk(
   # Mask OOB indices to dtype min to ensure they don't interfere with comparisons
   if num_chunks * chunk_size != arr.shape[1]:
     boundary_slice = jnp.where(
-      (ref_offset[:,:1] + iota1) < ref.shape[1],
+      (ref_offset[:, :1] + iota1) < ref.shape[1],
       boundary_slice,
-      get_dtype_info(boundary_slice).min
+      get_dtype_info(boundary_slice).min,
     )
-  return ref_offset, boundary_slice, k
+  return ref_offset, boundary_slice, target
 
-def find_boundary_idx(ref, k, threshold):
-  """Find the index of the k'th element matching threshold."""
+def find_boundary_idx(ref, map_fn, target):
+  """Find the lowest idx when the map_fn(ref[...]).cumsum(1) >= target."""
 
   assert ref.ndim == 2
-  ref_offset, boundary_slice, k = _find_boundary_chunk(
+  ref_offset, boundary_slice, target = _find_boundary_chunk(
     ref,
-    target=threshold,
-    k=k,
+    map_fn=map_fn,
+    target=target,
     # for 262k dim1 -> 2k tiles -> slow, so we do (45, 45) instead of 2048
     chunk_size=int(math.sqrt(ref.shape[1] // NUM_LANES)) * NUM_LANES,
   )
-  ref_offset, boundary_slice, k = _find_boundary_chunk(
+  ref_offset, boundary_slice, target = _find_boundary_chunk(
     ref,
-    target=threshold,
-    k=k,
+    map_fn=map_fn,
+    target=target,
     # for 262k -> 2k tiles, so we do (45, 45) instead of 2048
     chunk_size=NUM_LANES,
     ref_offset=ref_offset,
-    active_chunk=boundary_slice
+    active_chunk=boundary_slice,
   )
   # Within tile cumsum check
   # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
   iota1 = jax.lax.broadcasted_iota(jnp.int32, (ref.shape[0], NUM_LANES), 1)
-  num_matches = [(
-    (boundary_slice == threshold).astype(jnp.int32) * (iota1 == i)
-    ).sum(1, keepdims=True) for i in range(NUM_LANES)]
+  num_matches = [
+    (map_fn(boundary_slice) * (iota1 == i)).sum(1, keepdims=True)
+    for i in range(NUM_LANES)
+  ]
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
-  return (ref_offset + sum((c < k) for c in cumsums))
+  return (ref_offset + sum((c < target) for c in cumsums))
 
 
 def topk_mask_ref_inputs(
@@ -189,13 +193,13 @@ def topk_mask_ref_inputs(
     # Find exact boundary for stable masking
     boundary_idx = find_boundary_idx(
       logits_ref,
-      k=k
+      map_fn=lambda chunk: (chunk == threshold).astype(jnp.int32),
+      target=k
       - map_reduce(
         logits,
         lambda chunk: (chunk > threshold).astype(jnp.int32),
         reduce_fn="sum",
       ),
-      threshold=threshold
     )
     threshold = pltpu.repeat(
       threshold,
