@@ -266,8 +266,8 @@ def _merge_unconverged_bins_topk(
   ]
 
   assert num_bins % NUM_LANES == 0
+  local_perm = packing_perm % NUM_LANES
   for offset in range(0, num_bins, NUM_LANES):
-    local_perm = (packing_perm - offset) % NUM_LANES
     in_range_mask = (packing_perm >= offset) & (
       packing_perm < (offset + NUM_LANES)
     )
