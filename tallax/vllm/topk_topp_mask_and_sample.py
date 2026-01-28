@@ -9,7 +9,7 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
 from tallax.vllm.topk_mask import topk_mask_ref_inputs
-from tallax.vllm.topp_mask import topp_mask
+from tallax.vllm.topp_mask import topp_mask, topp_sample_ref_inputs
 from tallax.tax.sparse_random import sparse_random_categorical
 
 _SAMPLING_EPS = 1e-5
@@ -48,25 +48,36 @@ def topk_topp_mask_and_sample_kernel(
   # Reshape to (block_token, 1) to match output ref
   greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
 
+  # Top-k masking
   logits = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
-  logits = topp_mask(
-    logits, p_ref[...], replace_val=replace_val
-  )
   logits = logits / temperature_ref[...].astype(logits.dtype)
 
-  # Random key splitting is based on idx in ravelled array
-  # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-  batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
-  next_tokens = sparse_random_categorical(
+  # Top-p masking
+  logits_ref[...] = logits
+  next_tokens = topp_sample_ref_inputs(
+    logits_ref,
     rng_key_ref,
-    logits,
-    (batch_idx, token_idx),
-    dim1_size=logits.shape[1],
-    axis=1,  # Sample along vocab axis
-    dtype=jnp.float32,
-  )[1]  # Take sampled token indices
-  # Reshape to (block_token, 1) to match output ref
-  next_tokens = jnp.expand_dims(next_tokens, axis=-1)
+    p_ref
+  )
+  # logits = topp_mask(
+  #   logits, p_ref[...], replace_val=replace_val
+  # )
+  # # logits = logits / temperature_ref[...].astype(logits.dtype)
+
+  # # Random key splitting is based on idx in ravelled array
+  # # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
+  # batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
+  # next_tokens = sparse_random_categorical(
+  #   rng_key_ref,
+  #   logits,
+  #   (batch_idx, token_idx),
+  #   dim1_size=logits.shape[1],
+  #   axis=1,  # Sample along vocab axis
+  #   dtype=jnp.float32,
+  # )[1]  # Take sampled token indices
+  # # Reshape to (block_token, 1) to match output ref
+  if next_tokens.ndim == 1:
+    next_tokens = jnp.expand_dims(next_tokens, axis=-1)
 
   sampled_tokens_ref[...] = jnp.where(temperature_ref[...] < _SAMPLING_EPS, greedy_sampled, next_tokens)
 
