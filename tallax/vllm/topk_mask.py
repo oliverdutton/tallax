@@ -61,17 +61,14 @@ def _find_boundary_chunk(
   assert chunk_size % NUM_LANES == 0
 
   # Count matches in each chunk, keeping (batch, 1) shape
-  num_matches = [
-    map_fn(chunk).sum(axis=1, keepdims=True).astype(jnp.int32)
-    for chunk in chunks
-  ]
+  num_matches = [map_fn(chunk).sum(axis=1, keepdims=True) for chunk in chunks]
 
   # Build cumulative sums across chunks
   cumsums = [num_matches[0]]
   for i in range(1, len(num_matches)):
     cumsums.append(cumsums[i - 1] + num_matches[i])
 
-  boundary_idx = sum((c < k) for c in cumsums)
+  boundary_idx = sum((c < target) for c in cumsums)
   # Subtract counts from all chunks BEFORE the boundary chunk
   target -= sum((i == (boundary_idx - 1)) * c for i, c in enumerate(cumsums))
 

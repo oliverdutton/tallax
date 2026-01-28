@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jax import tree_util
 
 
-@dataclass
+@dataclass(init=False)
 class U48:
   """Unsigned 48-bit integer with two 24-bit parts and dynamic bound tracking.
 
@@ -18,10 +18,23 @@ class U48:
 
   Attributes:
     parts: List of 2 i32 arrays [low_24bits, high_24bits]
-    max_value_bound_per_part: List of upper bounds for each part (for overflow tracking)
+    max_value_bound_per_part: List of upper bounds for each part
   """
+
   parts: list[jax.Array]
   max_value_bound_per_part: list[int]
+
+  def __init__(self, x_or_parts, max_val_or_bounds):
+    if isinstance(x_or_parts, (list, tuple)):
+      self.parts = list(x_or_parts)
+      self.max_value_bound_per_part = list(max_val_or_bounds)
+    else:
+      # Initialization from x (array) and max_val (int)
+      if max_val_or_bounds >= 2**48:
+        raise ValueError(f"max_val must be < 2^48, got {max_val_or_bounds}")
+      mask = 0xFFFFFF
+      self.parts = [x_or_parts & mask, (x_or_parts >> 24) & mask]
+      self.max_value_bound_per_part = [mask, int(max_val_or_bounds >> 24)]
 
   @classmethod
   def from_i32_array(cls, x: jax.Array, max_val: int) -> 'U48':
@@ -143,6 +156,42 @@ class U48:
     ]
     result = U48(result_parts, max_value_bound_per_part=new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
+
+  def __radd__(self, other):
+    if other == 0:
+      return self
+    return self + other
+
+  def __sub__(self, other: 'U48') -> 'U48':
+    """Subtract two U48. Assumes self >= other."""
+    s1 = self.harmonize() if self.needs_harmonize() else self
+    s2 = other.harmonize() if other.needs_harmonize() else other
+
+    low = s1.parts[0] - s2.parts[0]
+    high = s1.parts[1] - s2.parts[1]
+
+    # Borrow from high if low < 0
+    borrow = (low < 0).astype(jnp.int32)
+    low = low + (borrow << 24)
+    high = high - borrow
+
+    return U48(
+      [low, high],
+      max_value_bound_per_part=s1.max_value_bound_per_part,
+    )
+
+  def __mul__(self, other: jax.Array) -> 'U48':
+    """Multiply by a mask or scalar (array)."""
+    # Assuming 'other' is small (e.g. 0 or 1 mask) so we don't overflow part bounds
+    # If other is an array of 0s and 1s, the bounds are unchanged (conservative).
+    result_parts = [p * other for p in self.parts]
+    return U48(
+      result_parts,
+      max_value_bound_per_part=self.max_value_bound_per_part,
+    )
+
+  def __rmul__(self, other: jax.Array) -> 'U48':
+    return self.__mul__(other)
 
   def __lt__(self, other: 'U48') -> jax.Array:
     """Compare self < other. Harmonizes both operands first for correctness."""

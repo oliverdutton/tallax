@@ -23,13 +23,17 @@ from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES, map_reduce
 from tallax.vllm.high_precision_uint import U48
-
 from tallax.vllm.binary_search import binary_search
+from tallax.vllm.topk_mask import find_boundary_idx
 
 
 def map_chunks(x, fn):
   assert x.shape[1] % NUM_LANES == 0
-  return jnp.concatenate([fn(c) for c in jnp.split(x, x.shape[1]//NUM_LANES, 1)], axis=1)
+  return jnp.concatenate(
+    [fn(c) for c in jnp.split(x, x.shape[1] // NUM_LANES, 1)], axis=1
+  )
+
+
 
 def topp_mask_ref_inputs(
   logits_ref,
@@ -37,6 +41,7 @@ def topp_mask_ref_inputs(
   *,
   scale_bits: int = 24,
   replace_val: float = -1e12,
+  return_unnorm_i32_probs: bool = False,
 ) -> jax.Array:
   """Core nucleus sampling logic for both standard and Pallas interfaces."""
   logits = logits_ref[...]
@@ -108,7 +113,64 @@ def topp_mask_ref_inputs(
   # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)
   threshold_i32 = pltpu.repeat(threshold_i32, logits.shape[1] // NUM_LANES, axis=1)
   mask = unnorm_probs_i32 >= threshold_i32
+  if return_unnorm_i32_probs:
+    return jnp.where(mask, unnorm_probs_i32, 0)
   return jnp.where(mask, logits, replace_val)
+
+
+def topp_sample_ref_inputs(
+  logits_ref,
+  rng_key_ref,
+  top_p_ref,
+  *,
+  scale_bits: int = 24,
+) -> jax.Array:
+  """Categorical sampling after top-p masking using high-precision logic."""
+  # 1. Get masked unnormalized probs (batch, vocab_size)
+  masked_probs_i32 = topp_mask_ref_inputs(
+    logits_ref,
+    top_p_ref,
+    scale_bits=scale_bits,
+    return_unnorm_i32_probs=True,
+  )
+
+  # 2. Sum them to get total sum
+  num_vals = logits_ref.shape[1]
+  scale = 2**scale_bits - 1
+  max_total_sum = num_vals * scale
+
+  safe_reduce_size = 2 ** (31 - scale_bits)
+  num_chunks = num_vals // NUM_LANES
+  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
+  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
+  actual_partial_sum_max = scale * chunks_per_parallel
+
+  total_sum_u48 = map_reduce(
+    masked_probs_i32,
+    reduce_fn="sum",
+    num_parallel=num_parallel,
+    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+      x, max_val=actual_partial_sum_max
+    ),
+  )
+
+  # 3. Generate random target in [0, total_sum)
+  # Using uniform(0, 1) and scaling by total_sum
+  target_f32 = (
+    jax.random.uniform(rng_key_ref, (logits_ref.shape[0], 1))
+    * total_sum_u48.to_f32()
+  )
+  target_u48 = U48.from_f32(target_f32, max_val=max_total_sum)
+
+  # 4. Use find_boundary_idx to sample the token
+  # map_fn returns the probs themselves as U48
+  sampled_tokens = find_boundary_idx(
+    masked_probs_i32,
+    map_fn=lambda x: U48(x, max_val=scale),
+    target=target_u48,
+  )
+
+  return sampled_tokens
 
 
 def topp_mask(
@@ -116,10 +178,15 @@ def topp_mask(
   top_p: jax.Array,
   scale_bits: int = 24,
   replace_val: float = -1e12,
+  return_unnorm_i32_probs: bool = False,
 ) -> jax.Array:
   """Platform-portable top-p sampling using high-precision arithmetic."""
   return topp_mask_ref_inputs(
-    logits, top_p, scale_bits=scale_bits, replace_val=replace_val
+    logits,
+    top_p,
+    scale_bits=scale_bits,
+    replace_val=replace_val,
+    return_unnorm_i32_probs=return_unnorm_i32_probs,
   )
 
 
@@ -172,3 +239,15 @@ def topp_mask_pallas(
     out_shape=output_shape,
     interpret=interpret,
   )(logits, top_p)
+
+
+def topp_sample(
+  logits: jax.Array,
+  rng_key: jax.Array,
+  top_p: jax.Array,
+  scale_bits: int = 24,
+) -> jax.Array:
+  """Nucleus sampling using high-precision integer arithmetic."""
+  return topp_sample_ref_inputs(
+    logits, rng_key, top_p, scale_bits=scale_bits
+  )
