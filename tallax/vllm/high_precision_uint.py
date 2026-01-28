@@ -55,7 +55,7 @@ class U48:
     # Track bounds independently: low is at most mask, high is at most max_val >> 24
     low_bound = mask
     high_bound = max_val >> 24
-    return cls([low, high], max_value_bound_per_part=[low_bound, high_bound])
+    return cls([low, high], [low_bound, high_bound])
 
   @classmethod
   def from_f32(cls, x: jax.Array, max_val: int) -> 'U48':
@@ -76,7 +76,7 @@ class U48:
     # Track bounds independently: low is at most mask, high is at most max_val >> 24
     low_bound = 0xFFFFFF
     high_bound = max_val >> 24
-    return cls([low, high], max_value_bound_per_part=[low_bound, high_bound])
+    return cls([low, high], [low_bound, high_bound])
 
   def to_f32(self) -> jax.Array:
     """Convert to f32."""
@@ -218,7 +218,7 @@ def _u48_tree_flatten(u48):
 
 def _u48_tree_unflatten(aux_data, children):
   """Reconstruct U48 from flattened representation."""
-  return U48(parts=children, max_value_bound_per_part=aux_data)
+  return U48(children, aux_data)
 
 
 # Register the PyTree
