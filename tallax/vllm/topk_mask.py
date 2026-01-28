@@ -193,7 +193,7 @@ def topk_mask_ref_inputs(
     # Find exact boundary for stable masking
     boundary_idx = find_boundary_idx(
       logits_ref,
-      map_fn=lambda chunk: (chunk == threshold).astype(jnp.int32),
+      map_fn=lambda chunk: (chunk == pltpu.repeat(threshold, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
       target=k
       - map_reduce(
         logits,
