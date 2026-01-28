@@ -783,6 +783,130 @@ class TestRandomIntGeneration:
       assert counts[i] < expected_count * 1.5, f"Value {i} overrepresented"
 
 
+class TestSamplingWorkflow:
+  """End-to-end tests for sampling workflow with u128 random generation."""
+
+  def test_sampling_workflow_basic(self):
+    """Test complete sampling workflow: probs -> total -> random -> sample."""
+    NUM_BITS = 24
+    scale = 2**24 - 1
+    vocab_size = 128
+    max_total = vocab_size * scale
+
+    key = jax.random.PRNGKey(42)
+    probs_i32 = jax.random.randint(key, (1, vocab_size), 0, scale, dtype=jnp.int32)
+
+    # Compute total sum with chunks
+    chunk_size = 16
+    actual_chunk_max = scale * chunk_size
+    total_sum_hpu = None
+
+    for i in range(0, vocab_size, chunk_size):
+      chunk = probs_i32[0:1, i:min(i+chunk_size, vocab_size)]
+      chunk_sum_i32 = chunk.sum(axis=1, keepdims=True)
+      chunk_hpu = HighPrecisionUInt.from_i32_array(
+        chunk_sum_i32, max_val=actual_chunk_max, num_bits_per_part=NUM_BITS
+      )
+      if total_sum_hpu is None:
+        total_sum_hpu = chunk_hpu
+      else:
+        total_sum_hpu = total_sum_hpu + chunk_hpu
+
+    # Get u32 pair for modulo
+    total_high, total_low = total_sum_hpu.to_u32_pair()
+    total_high_val = int(total_high.flatten()[0])
+    total_low_val = int(total_low.flatten()[0])
+    total_64 = (total_high_val << 32) | total_low_val
+
+    # Generate random target using u128 % u64
+    key2 = jax.random.PRNGKey(789)
+    target_high, target_low = random_int_in_range(
+      key2,
+      jnp.uint32(total_high_val),
+      jnp.uint32(total_low_val),
+      shape=()
+    )
+    target_64 = (int(target_high) << 32) | int(target_low)
+
+    # Target should be less than total
+    assert target_64 < total_64
+
+    # Convert target to HPU
+    total_bits = NUM_BITS * len(total_sum_hpu.parts)
+    target_hpu = HighPrecisionUInt.from_i32_array(
+      jnp.array([[target_64]], dtype=jnp.int32),
+      max_val=max_total,
+      num_bits_per_part=NUM_BITS,
+      total_bits=total_bits
+    )
+    target_f32 = float(target_hpu.to_f32()[0, 0])
+
+    # Find boundary via cumsum
+    cumsum_hpu = HighPrecisionUInt.from_i32_array(
+      jnp.array([[0]], dtype=jnp.int32),
+      max_val=1,
+      num_bits_per_part=NUM_BITS,
+      total_bits=total_bits
+    )
+
+    sampled_idx = -1
+    for idx in range(vocab_size):
+      val = probs_i32[0:1, idx:idx+1]
+      val_hpu = HighPrecisionUInt.from_i32_array(
+        val, max_val=scale, num_bits_per_part=NUM_BITS, total_bits=total_bits
+      )
+      cumsum_hpu = cumsum_hpu + val_hpu
+
+      is_less = cumsum_hpu < target_hpu
+      if not bool(is_less[0, 0]):
+        sampled_idx = idx
+        break
+
+    # Verify sampled index is correct
+    assert sampled_idx >= 0
+    cumsum_at_idx = float(cumsum_hpu.to_f32()[0, 0])
+    assert cumsum_at_idx >= target_f32
+
+    if sampled_idx > 0:
+      cumsum_before = float(jnp.sum(probs_i32[0, :sampled_idx]))
+      assert cumsum_before < target_f32
+
+  def test_sampling_multiple_seeds(self):
+    """Test that different seeds produce different samples."""
+    NUM_BITS = 24
+    scale = 2**20 - 1
+    vocab_size = 64
+
+    key = jax.random.PRNGKey(0)
+    probs_i32 = jax.random.randint(key, (1, vocab_size), 1, scale, dtype=jnp.int32)
+
+    # Compute total
+    total_sum = int(probs_i32.sum())
+    total_hpu = HighPrecisionUInt.from_i32_array(
+      jnp.array([[total_sum]], dtype=jnp.int32),
+      max_val=vocab_size * scale,
+      num_bits_per_part=NUM_BITS
+    )
+    total_high, total_low = total_hpu.to_u32_pair()
+
+    # Generate multiple random targets
+    samples = []
+    for seed in range(10):
+      key_sample = jax.random.PRNGKey(seed * 1000)
+      target_high, target_low = random_int_in_range(
+        key_sample,
+        total_high.flatten()[0],
+        total_low.flatten()[0],
+        shape=()
+      )
+      target_val = (int(target_high) << 32) | int(target_low)
+      samples.append(target_val)
+
+    # Check that we get different values (not all the same)
+    unique_samples = len(set(samples))
+    assert unique_samples > 1, "Expected different random values for different seeds"
+
+
 def run_all_tests():
   """Run all tests and report results."""
   import sys
@@ -806,6 +930,7 @@ def run_all_tests():
     TestU32Conversion,
     TestModuloU128U64,
     TestRandomIntGeneration,
+    TestSamplingWorkflow,
   ]
 
   total_tests = 0
