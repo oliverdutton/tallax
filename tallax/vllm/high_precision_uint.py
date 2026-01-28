@@ -114,7 +114,7 @@ class U48:
       )
     
     # After harmonization, low part is bounded by mask, high part by max possible value
-    return U48([low_normalized, high_normalized], max_value_bound_per_part=[mask, int(max_high_with_carry)])
+    return U48([low_normalized, high_normalized], [mask, int(max_high_with_carry)])
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> 'U48':
     """Sum along axis 1 for (batch, NUM_LANES) shaped arrays.
@@ -131,7 +131,7 @@ class U48:
     num_vals = self.parts[0].shape[axis]
     new_bounds = [bound * num_vals for bound in self.max_value_bound_per_part]
     
-    result = U48([low_sum, high_sum], max_value_bound_per_part=new_bounds)
+    result = U48([low_sum, high_sum], new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
   def __add__(self, other: 'U48') -> 'U48':
@@ -154,7 +154,7 @@ class U48:
       self_to_add.max_value_bound_per_part[i] + other_to_add.max_value_bound_per_part[i]
       for i in range(len(result_parts))
     ]
-    result = U48(result_parts, max_value_bound_per_part=new_bounds)
+    result = U48(result_parts, new_bounds)
     return result.harmonize() if result.needs_harmonize() else result
 
   def __radd__(self, other):
@@ -177,7 +177,7 @@ class U48:
 
     return U48(
       [low, high],
-      max_value_bound_per_part=s1.max_value_bound_per_part,
+      s1.max_value_bound_per_part,
     )
 
   def __mul__(self, other: jax.Array) -> 'U48':
@@ -187,7 +187,7 @@ class U48:
     result_parts = [p * other for p in self.parts]
     return U48(
       result_parts,
-      max_value_bound_per_part=self.max_value_bound_per_part,
+      self.max_value_bound_per_part,
     )
 
   def __rmul__(self, other: jax.Array) -> 'U48':
