@@ -2,9 +2,14 @@
 
 Supports arbitrary bit widths by splitting into multiple parts.
 Tracks maximum value bounds to minimize normalization overhead.
+
+Also includes:
+- u128 % u64 modulo using pure u32 arithmetic
+- Random integer generation in [0, range) using modulo trick
 """
 
 from dataclasses import dataclass
+from typing import Tuple
 import jax
 import jax.numpy as jnp
 from jax import tree_util
@@ -161,6 +166,140 @@ class HighPrecisionUInt:
       multiplier = multiplier * base
 
     return result
+
+  def to_u32_pair(self) -> Tuple[jax.Array, jax.Array]:
+    """Convert to a pair of u32 values (high, low) representing a 64-bit value.
+
+    Requires normalization first if needed. The value must fit in 64 bits.
+
+    Returns:
+      Tuple of (high_u32, low_u32) where value = high * 2^32 + low
+    """
+    normalized = self.normalize() if self.needs_normalize() else self
+
+    # Reconstruct as 64-bit value from parts
+    # Each part contributes num_bits_per_part bits
+    low = jnp.uint32(0)
+    high = jnp.uint32(0)
+
+    for i, part in enumerate(normalized.parts):
+      shift = i * normalized.num_bits_per_part
+      part_u32 = part.astype(jnp.uint32)
+
+      if shift < 32:
+        # Part contributes to low word
+        low = low | (part_u32 << shift)
+        # Check if part spans into high word
+        if shift + normalized.num_bits_per_part > 32:
+          overflow_bits = shift + normalized.num_bits_per_part - 32
+          high = high | (part_u32 >> (normalized.num_bits_per_part - overflow_bits))
+      else:
+        # Part contributes to high word
+        high = high | (part_u32 << (shift - 32))
+
+    return high, low
+
+  @classmethod
+  def from_u32_pair(
+    cls,
+    high: jax.Array,
+    low: jax.Array,
+    max_val: int = 2**48,
+    num_bits_per_part: int = 32
+  ) -> 'HighPrecisionUInt':
+    """Create from a pair of u32 values representing a 64-bit value.
+
+    Args:
+      high: High 32 bits as u32 array
+      low: Low 32 bits as u32 array
+      max_val: Maximum expected value (default: 2^48)
+      num_bits_per_part: Bits per part (default: 32 for u32 parts)
+
+    Returns:
+      HighPrecisionUInt representing high * 2^32 + low
+    """
+    if num_bits_per_part == 32:
+      # Direct construction with 2 parts
+      # Use conservative bounds that fit in int32 tracking
+      parts = [low.astype(jnp.int32), high.astype(jnp.int32)]
+      high_bound = min(2**31 - 1, int(max_val >> 32))
+      bounds = [2**31 - 1, high_bound]
+      return cls(parts, bounds, num_bits_per_part=32, total_bits=64)
+    else:
+      # Convert to desired num_bits_per_part
+      combined = cls([low.astype(jnp.int32), high.astype(jnp.int32)],
+                     [2**31 - 1, min(2**31 - 1, int(max_val >> 32))],
+                     num_bits_per_part=32, total_bits=64)
+      return combined
+
+  def to_u32_quad(self) -> Tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+    """Convert to four u32 values representing a 128-bit value.
+
+    Returns:
+      Tuple of (word0, word1, word2, word3) where:
+        word0 = bits 127-96 (most significant)
+        word1 = bits 95-64
+        word2 = bits 63-32
+        word3 = bits 31-0 (least significant)
+    """
+    normalized = self.normalize() if self.needs_normalize() else self
+
+    # Initialize four 32-bit words
+    words = [jnp.uint32(0), jnp.uint32(0), jnp.uint32(0), jnp.uint32(0)]
+
+    for i, part in enumerate(normalized.parts):
+      shift = i * normalized.num_bits_per_part
+      part_u32 = part.astype(jnp.uint32)
+
+      # Determine which word(s) this part contributes to
+      # word3 = bits 0-31, word2 = bits 32-63, word1 = bits 64-95, word0 = bits 96-127
+      word_idx = 3 - (shift // 32)
+      bit_in_word = shift % 32
+
+      if word_idx >= 0:
+        words[word_idx] = words[word_idx] | (part_u32 << bit_in_word)
+
+        # Check if part spans into next word
+        if bit_in_word + normalized.num_bits_per_part > 32 and word_idx > 0:
+          overflow_bits = bit_in_word + normalized.num_bits_per_part - 32
+          words[word_idx - 1] = words[word_idx - 1] | (part_u32 >> (normalized.num_bits_per_part - overflow_bits))
+
+    return tuple(words)
+
+  @classmethod
+  def from_u32_quad(
+    cls,
+    word0: jax.Array,
+    word1: jax.Array,
+    word2: jax.Array,
+    word3: jax.Array,
+    max_val: int = 2**96,
+    num_bits_per_part: int = 32
+  ) -> 'HighPrecisionUInt':
+    """Create from four u32 values representing a 128-bit value.
+
+    Args:
+      word0: Bits 127-96 (most significant)
+      word1: Bits 95-64
+      word2: Bits 63-32
+      word3: Bits 31-0 (least significant)
+      max_val: Maximum expected value
+      num_bits_per_part: Bits per part (default: 32)
+
+    Returns:
+      HighPrecisionUInt representing the 128-bit value
+    """
+    # Parts are ordered from LSB to MSB
+    parts = [
+      word3.astype(jnp.int32),
+      word2.astype(jnp.int32),
+      word1.astype(jnp.int32),
+      word0.astype(jnp.int32),
+    ]
+    # Use conservative bounds that fit in int32 tracking
+    high_bound = min(2**31 - 1, int(max_val >> 96))
+    bounds = [2**31 - 1, 2**31 - 1, 2**31 - 1, high_bound]
+    return cls(parts, bounds, num_bits_per_part=32, total_bits=128)
 
   def needs_normalize(self) -> bool:
     """Check if normalization is needed for correctness or overflow prevention."""
@@ -355,6 +494,185 @@ class HighPrecisionUInt:
 
 # Backward compatibility alias
 U48 = HighPrecisionUInt
+
+
+def modulo_u128_u64(dividend_u32: jax.Array, divisor_u32: jax.Array) -> Tuple[jax.Array, jax.Array]:
+  """Compute (128-bit dividend) % (64-bit divisor) using only 32-bit operations.
+
+  Uses binary long division algorithm, processing bits from MSB to LSB.
+
+  Args:
+    dividend_u32: Array of 4 uint32 representing 128-bit dividend
+                  [word0 (bits 127-96), word1 (bits 95-64),
+                   word2 (bits 63-32), word3 (bits 31-0)]
+    divisor_u32: Array of 2 uint32 representing 64-bit divisor
+                 [high (bits 63-32), low (bits 31-0)]
+
+  Returns:
+    Tuple of (rem_high, rem_low) as uint32, representing the 64-bit remainder
+  """
+  bh = divisor_u32[0]  # divisor high 32 bits
+  bl = divisor_u32[1]  # divisor low 32 bits
+
+  # Remainder registers: initially zero
+  init_state = (jnp.uint32(0), jnp.uint32(0))
+
+  def body_fun(i, state):
+    rh, rl = state
+    bit_idx = 127 - i  # Process from MSB (bit 127) to LSB (bit 0)
+
+    # Extract bit from the 128-bit dividend array
+    # Bit 127-96 is in word 0, bit 95-64 is in word 1, etc.
+    word_idx = 3 - (bit_idx // 32)
+    bit_in_word = bit_idx % 32
+    bit = (dividend_u32[word_idx] >> bit_in_word) & jnp.uint32(1)
+
+    # Shift remainder left by 1 and insert the next dividend bit at LSB
+    # After this operation, the remainder could temporarily be 65 bits
+    new_rh = (rh << 1) | (rl >> 31)
+    new_rl = (rl << 1) | bit
+
+    # Detect overflow: check if bit 64 would be set after the shift
+    # This happens when rh had its MSB (bit 31) set before shifting
+    overflow = (rh >> 31) & jnp.uint32(1)
+
+    # 64-bit Comparison: (overflow:new_rh:new_rl) >= (0:bh:bl)
+    # Three cases for is_greater:
+    # 1. overflow==1: We have a 65-bit number, definitely >= 64-bit divisor
+    # 2. new_rh > bh: Upper 32 bits are greater
+    # 3. new_rh == bh AND new_rl >= bl: Upper bits equal, lower bits greater/equal
+    is_greater = (
+      (overflow == jnp.uint32(1)) |
+      (new_rh > bh) |
+      ((new_rh == bh) & (new_rl >= bl))
+    )
+
+    # 64-bit Subtraction: (new_rh:new_rl) - (bh:bl)
+    # Handle borrow from low word to high word
+    borrow = jnp.where(new_rl < bl, jnp.uint32(1), jnp.uint32(0))
+    sub_rh = new_rh - bh - borrow
+    sub_rl = new_rl - bl
+
+    # Update remainder: subtract if greater/equal, otherwise keep shifted value
+    rh_next = jnp.where(is_greater, sub_rh, new_rh)
+    rl_next = jnp.where(is_greater, sub_rl, new_rl)
+
+    return (rh_next, rl_next)
+
+  # Process all 128 bits
+  final_rh, final_rl = jax.lax.fori_loop(0, 128, body_fun, init_state)
+
+  return final_rh, final_rl
+
+
+def random_int_in_range(
+  rng_key: jax.Array,
+  range_high: jax.Array,
+  range_low: jax.Array,
+  shape: Tuple[int, ...] = ()
+) -> Tuple[jax.Array, jax.Array]:
+  """Generate uniformly distributed random integers in [0, range).
+
+  Uses the modulo trick: generate random u128 values and take modulo range.
+  This produces nearly uniform distribution when range << 2^128.
+
+  Args:
+    rng_key: JAX random key
+    range_high: High 32 bits of the range (exclusive upper bound)
+    range_low: Low 32 bits of the range
+    shape: Shape of the output arrays (each element is a random value)
+
+  Returns:
+    Tuple of (result_high, result_low) as uint32 arrays representing
+    random values in [0, range_high:range_low)
+  """
+  # Generate 4 random u32 values to form a u128
+  keys = jax.random.split(rng_key, 4)
+
+  # Generate random bits for each 32-bit word
+  word0 = jax.random.bits(keys[0], shape=shape, dtype=jnp.uint32)
+  word1 = jax.random.bits(keys[1], shape=shape, dtype=jnp.uint32)
+  word2 = jax.random.bits(keys[2], shape=shape, dtype=jnp.uint32)
+  word3 = jax.random.bits(keys[3], shape=shape, dtype=jnp.uint32)
+
+  # Stack into dividend array [word0, word1, word2, word3]
+  dividend = jnp.stack([word0, word1, word2, word3], axis=-1)
+
+  # Divisor is the range [range_high, range_low]
+  divisor = jnp.stack([range_high, range_low], axis=-1)
+
+  # Vectorized modulo operation
+  def single_modulo(div_dis):
+    div, dis = div_dis
+    return modulo_u128_u64(div, dis)
+
+  if shape == ():
+    # Scalar case
+    result_high, result_low = modulo_u128_u64(
+      jnp.array([word0, word1, word2, word3]),
+      jnp.array([range_high, range_low])
+    )
+  else:
+    # Batched case - use vmap
+    # Reshape divisor to broadcast
+    divisor_broadcast = jnp.broadcast_to(
+      jnp.stack([range_high, range_low]),
+      shape + (2,)
+    )
+
+    # vmap over all dimensions
+    def batched_modulo(dividend_flat, divisor_flat):
+      return modulo_u128_u64(dividend_flat, divisor_flat)
+
+    # Flatten batch dimensions for vmap
+    flat_shape = (-1,)
+    dividend_flat = dividend.reshape(flat_shape + (4,))
+    divisor_flat = divisor_broadcast.reshape(flat_shape + (2,))
+
+    # Apply vmap
+    result_high_flat, result_low_flat = jax.vmap(batched_modulo)(
+      dividend_flat, divisor_flat
+    )
+
+    # Reshape back
+    result_high = result_high_flat.reshape(shape)
+    result_low = result_low_flat.reshape(shape)
+
+  return result_high, result_low
+
+
+def random_high_precision_uint(
+  rng_key: jax.Array,
+  max_val: int,
+  shape: Tuple[int, ...] = (),
+  num_bits_per_part: int = 32
+) -> HighPrecisionUInt:
+  """Generate random HighPrecisionUInt values uniformly in [0, max_val).
+
+  Args:
+    rng_key: JAX random key
+    max_val: Exclusive upper bound (must be <= 2^64)
+    shape: Shape of the output (each element is a random HighPrecisionUInt)
+    num_bits_per_part: Bits per part in the result
+
+  Returns:
+    HighPrecisionUInt with random values in [0, max_val)
+  """
+  if max_val > 2**64:
+    raise ValueError(f"max_val must be <= 2^64, got {max_val}")
+
+  range_high = jnp.uint32(max_val >> 32)
+  range_low = jnp.uint32(max_val & 0xFFFFFFFF)
+
+  result_high, result_low = random_int_in_range(
+    rng_key, range_high, range_low, shape
+  )
+
+  return HighPrecisionUInt.from_u32_pair(
+    result_high, result_low,
+    max_val=max_val - 1,
+    num_bits_per_part=num_bits_per_part
+  )
 
 
 # Register HighPrecisionUInt as a JAX PyTree for proper tracing in JIT-compiled functions

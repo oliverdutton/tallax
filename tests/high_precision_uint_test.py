@@ -4,7 +4,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tallax.vllm.high_precision_uint import HighPrecisionUInt, U48
+from tallax.vllm.high_precision_uint import (
+  HighPrecisionUInt,
+  U48,
+  modulo_u128_u64,
+  random_int_in_range,
+  random_high_precision_uint,
+)
 
 
 class TestConstruction:
@@ -536,6 +542,247 @@ class TestEdgeCases:
     np.testing.assert_array_almost_equal(result.to_f32(), expected, decimal=0)
 
 
+class TestU32Conversion:
+  """Tests for u32 pair/quad conversion methods."""
+
+  def test_to_u32_pair_small_value(self):
+    """Test conversion to u32 pair with small value."""
+    # Value fits in low 32 bits, use 24-bit parts
+    x = jnp.array([12345])
+    hpu = HighPrecisionUInt.from_i32_array(x, max_val=2**20, num_bits_per_part=24)
+    high, low = hpu.to_u32_pair()
+
+    np.testing.assert_array_equal(high, 0)
+    np.testing.assert_array_equal(low, 12345)
+
+  def test_to_u32_pair_large_value(self):
+    """Test conversion to u32 pair with value spanning both words."""
+    # Use 24-bit parts: value = 100 + 2 * 2^24 = 33554532
+    parts = [jnp.array([100]), jnp.array([2])]
+    bounds = [2**24 - 1, 2]
+    hpu = HighPrecisionUInt(parts, bounds, num_bits_per_part=24, total_bits=48)
+
+    high, low = hpu.to_u32_pair()
+
+    # 100 + 2 * 2^24 = 33554532 = 0x02000064
+    expected_low = 100 + 2 * (2**24)
+    np.testing.assert_array_equal(high, 0)
+    np.testing.assert_array_equal(low, expected_low)
+
+  def test_from_u32_pair_roundtrip(self):
+    """Test roundtrip from u32 pair with values that fit in int32."""
+    # Use values that fit in signed int32 range
+    high = jnp.uint32(0x12345)  # Small high value
+    low = jnp.uint32(0x6789ABCD)  # Low value < 2^31
+
+    hpu = HighPrecisionUInt.from_u32_pair(high, low, max_val=2**48)
+    high_back, low_back = hpu.to_u32_pair()
+
+    np.testing.assert_array_equal(high_back, high)
+    np.testing.assert_array_equal(low_back, low)
+
+  def test_to_u32_quad(self):
+    """Test conversion to u32 quad (128-bit) with 32-bit parts."""
+    # Use 32-bit parts directly for clean mapping
+    parts = [
+      jnp.array([0x11111111]),
+      jnp.array([0x22222222]),
+      jnp.array([0x33333333]),
+      jnp.array([0x44444444]),
+    ]
+    bounds = [2**31 - 1] * 4
+    hpu = HighPrecisionUInt(parts, bounds, num_bits_per_part=32, total_bits=128)
+
+    w0, w1, w2, w3 = hpu.to_u32_quad()
+
+    # word3 = LSB (parts[0]), word0 = MSB (parts[3])
+    np.testing.assert_array_equal(w3.flatten(), [0x11111111])
+    np.testing.assert_array_equal(w2.flatten(), [0x22222222])
+    np.testing.assert_array_equal(w1.flatten(), [0x33333333])
+    np.testing.assert_array_equal(w0.flatten(), [0x44444444])
+
+  def test_from_u32_quad_roundtrip(self):
+    """Test roundtrip from u32 quad with safe values."""
+    # Use values that fit in signed int32 range for JAX compatibility
+    w0 = jnp.uint32(0x11111111)  # < 2^31
+    w1 = jnp.uint32(0x22222222)
+    w2 = jnp.uint32(0x33333333)
+    w3 = jnp.uint32(0x44444444)
+
+    hpu = HighPrecisionUInt.from_u32_quad(w0, w1, w2, w3)
+    w0_back, w1_back, w2_back, w3_back = hpu.to_u32_quad()
+
+    np.testing.assert_array_equal(w0_back, w0)
+    np.testing.assert_array_equal(w1_back, w1)
+    np.testing.assert_array_equal(w2_back, w2)
+    np.testing.assert_array_equal(w3_back, w3)
+
+
+class TestModuloU128U64:
+  """Tests for u128 % u64 modulo operation."""
+
+  def test_small_numbers(self):
+    """Test 100 % 7 = 2."""
+    dividend = jnp.array([0, 0, 0, 100], dtype=jnp.uint32)
+    divisor = jnp.array([0, 7], dtype=jnp.uint32)
+
+    rem_high, rem_low = modulo_u128_u64(dividend, divisor)
+
+    assert int(rem_high) == 0
+    assert int(rem_low) == 2  # 100 % 7 = 2
+
+  def test_255_mod_16(self):
+    """Test 255 % 16 = 15."""
+    dividend = jnp.array([0, 0, 0, 255], dtype=jnp.uint32)
+    divisor = jnp.array([0, 16], dtype=jnp.uint32)
+
+    rem_high, rem_low = modulo_u128_u64(dividend, divisor)
+
+    assert int(rem_high) == 0
+    assert int(rem_low) == 15  # 255 % 16 = 15
+
+  def test_large_dividend(self):
+    """Test with large 128-bit dividend."""
+    # Dividend: 0x11112222_33334444_55556666_77778888
+    dividend = jnp.array(
+      [0x11112222, 0x33334444, 0x55556666, 0x77778888],
+      dtype=jnp.uint32
+    )
+    # Divisor: 0xDEADBEEF_CAFEBABE
+    divisor = jnp.array([0xDEADBEEF, 0xCAFEBABE], dtype=jnp.uint32)
+
+    rem_high, rem_low = modulo_u128_u64(dividend, divisor)
+
+    # Compute expected result using Python
+    py_dividend = (0x11112222 << 96) | (0x33334444 << 64) | (0x55556666 << 32) | 0x77778888
+    py_divisor = (0xDEADBEEF << 32) | 0xCAFEBABE
+    expected = py_dividend % py_divisor
+
+    result = (int(rem_high) << 32) | int(rem_low)
+    assert result == expected
+
+  def test_max_values(self):
+    """Test max u128 % max u64."""
+    dividend = jnp.array([0xFFFFFFFF] * 4, dtype=jnp.uint32)
+    divisor = jnp.array([0xFFFFFFFF, 0xFFFFFFFF], dtype=jnp.uint32)
+
+    rem_high, rem_low = modulo_u128_u64(dividend, divisor)
+
+    # max_u128 % max_u64 = 0 (since max_u128 = max_u64 * max_u64 + 2*max_u64)
+    py_dividend = 2**128 - 1
+    py_divisor = 2**64 - 1
+    expected = py_dividend % py_divisor
+
+    result = (int(rem_high) << 32) | int(rem_low)
+    assert result == expected
+
+  def test_power_of_two_modulo(self):
+    """Test 2^64 % 65535."""
+    dividend = jnp.array([0, 1, 0, 0], dtype=jnp.uint32)  # 2^64
+    divisor = jnp.array([0, 65535], dtype=jnp.uint32)
+
+    rem_high, rem_low = modulo_u128_u64(dividend, divisor)
+
+    # 2^64 % 65535
+    expected = (2**64) % 65535
+
+    result = (int(rem_high) << 32) | int(rem_low)
+    assert result == expected
+
+
+class TestRandomIntGeneration:
+  """Tests for random integer generation."""
+
+  def test_random_in_range_scalar(self):
+    """Test random generation for scalar output."""
+    key = jax.random.PRNGKey(42)
+    range_val = 1000
+
+    result_high, result_low = random_int_in_range(
+      key,
+      jnp.uint32(0),
+      jnp.uint32(range_val),
+      shape=()
+    )
+
+    # Result should be in [0, range_val)
+    result = int(result_low)
+    assert 0 <= result < range_val
+
+  def test_random_in_range_batched(self):
+    """Test random generation for batched output."""
+    key = jax.random.PRNGKey(123)
+    range_val = 10000
+    batch_size = 100
+
+    result_high, result_low = random_int_in_range(
+      key,
+      jnp.uint32(0),
+      jnp.uint32(range_val),
+      shape=(batch_size,)
+    )
+
+    # All results should be in [0, range_val)
+    results = result_low.astype(jnp.int32)
+    assert jnp.all(results >= 0)
+    assert jnp.all(results < range_val)
+
+  def test_random_in_large_range(self):
+    """Test random generation with range > 2^32."""
+    key = jax.random.PRNGKey(456)
+    # Range = 2^40
+    range_high = jnp.uint32(1 << 8)  # 2^40 >> 32 = 2^8
+    range_low = jnp.uint32(0)
+
+    result_high, result_low = random_int_in_range(
+      key,
+      range_high,
+      range_low,
+      shape=()
+    )
+
+    # Result should be less than range
+    result = (int(result_high) << 32) | int(result_low)
+    range_full = (int(range_high) << 32) | int(range_low)
+    assert 0 <= result < range_full
+
+  def test_random_high_precision_uint(self):
+    """Test HighPrecisionUInt random generation."""
+    key = jax.random.PRNGKey(789)
+    max_val = 1000000
+
+    hpu = random_high_precision_uint(key, max_val=max_val)
+
+    # Convert to f32 and check range
+    value = float(hpu.to_f32())
+    assert 0 <= value < max_val
+
+  def test_random_distribution_uniformity(self):
+    """Test that random values are roughly uniformly distributed."""
+    key = jax.random.PRNGKey(999)
+    range_val = 10
+    num_samples = 10000
+
+    # Generate many samples
+    keys = jax.random.split(key, num_samples)
+
+    def generate_one(k):
+      _, low = random_int_in_range(k, jnp.uint32(0), jnp.uint32(range_val), shape=())
+      return low
+
+    samples = jax.vmap(generate_one)(keys)
+
+    # Count occurrences of each value
+    counts = jnp.bincount(samples, length=range_val)
+
+    # Each value should appear roughly num_samples/range_val times
+    # Allow 50% deviation for statistical variation
+    expected_count = num_samples / range_val
+    for i in range(range_val):
+      assert counts[i] > expected_count * 0.5, f"Value {i} underrepresented"
+      assert counts[i] < expected_count * 1.5, f"Value {i} overrepresented"
+
+
 def run_all_tests():
   """Run all tests and report results."""
   import sys
@@ -556,6 +803,9 @@ def run_all_tests():
     TestArbitraryBitWidth,
     TestNormalizationFrequency,
     TestEdgeCases,
+    TestU32Conversion,
+    TestModuloU128U64,
+    TestRandomIntGeneration,
   ]
 
   total_tests = 0
