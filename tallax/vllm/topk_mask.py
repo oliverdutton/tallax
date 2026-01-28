@@ -83,22 +83,12 @@ def _find_boundary_chunk(
   ref_offset += boundary_idx * chunk_size
   # Reconstruct boundary_slice using dynamic_slice
   # We want ref[i, ref_offset[i]:ref_offset[i]+chunk_size]
-  # We do this for all batch items using vmap or a loop with where
-  # Since we are in Pallas or JIT, we can use a simpler approach if we can't vmap dynamic_slice on axis 1
-  # For now, let's use a more robust version:
-  iota0 = jax.lax.broadcasted_iota(jnp.int32, (batch_size, chunk_size), 0)
-  
+  # We do this for all batch items using vmap or a loop with where  
   # Initialize with first slice
-  start_idx = pltpu.multiple_of(ref_offset[0, 0], chunk_size)
-  boundary_slice = jax.lax.dynamic_slice(ref, (0, start_idx), (1, chunk_size))
-  
+  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)].astype(to_32bit_dtype(ref.dtype)) for i in range(batch_size)]
+  boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
-    start_idx = pltpu.multiple_of(ref_offset[i, 0], chunk_size)
-    curr_slice = jax.lax.dynamic_slice(ref, (i, start_idx), (1, chunk_size))
-    boundary_slice = jnp.concatenate([boundary_slice, curr_slice], axis=0)
-
-  boundary_slice = boundary_slice.astype(to_32bit_dtype(ref.dtype))
-
+    boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
   # Mask OOB indices to dtype min to ensure they don't interfere with comparisons
   if num_chunks * chunk_size != arr.shape[1]:
     boundary_slice = jnp.where(
