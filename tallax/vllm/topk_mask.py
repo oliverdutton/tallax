@@ -147,6 +147,7 @@ def topk_mask_ref_inputs(
   *,
   replace_val: float,
   stable: bool,
+  underlying_dtype = None,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -176,8 +177,8 @@ def topk_mask_ref_inputs(
   _, threshold, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (finfo.min, finfo.max)),
-    num_iter=logits_ref.dtype.itemsize * 8, # 32 for f32, 16 for bf16
-    underlying_dtype=logits_ref.dtype,
+    num_iter=(underlying_dtype.itemsize * 8) if underlying_dtype is not None else 32, # 32 for f32, 16 for bf16
+    underlying_dtype=None,
   )
 
   assert logits.shape[1] % NUM_LANES == 0

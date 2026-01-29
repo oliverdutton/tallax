@@ -12,7 +12,7 @@ from tallax.vllm.high_precision_uint import U48, random_u48
 from tallax.vllm.topp_mask import topp_mask, sum_in_u48
 from tallax.vllm.topk_mask import topk_mask_ref_inputs, find_boundary_idx
 from tallax.tax.sparse_random import sparse_random_categorical
-from tallax.tax.utils import NUM_LANES
+from tallax.tax.utils import NUM_LANES, map_reduce
 
 _SAMPLING_EPS = 1e-5
 
@@ -29,6 +29,7 @@ def topk_topp_mask_and_sample_kernel(
   stable: bool,
   replace_val: float,
   sample_in_i32: bool,
+  underlying_logits_dtype = None,
 ):
   """Pallas kernel for topk/topp masking and sampling.
 
@@ -43,16 +44,53 @@ def topk_topp_mask_and_sample_kernel(
     stable: Whether to use stable masking
     replace_val: Replacement value for masked elements
   """
+  if logits_ref.dtype != jnp.float32:
+    # We need a ref, as it's the only way to do dynamic_slices in mosaic
+    # If it's not a ref (doesn't have memory space attr), we'll turn it into one.
+    # We don't do this unconditionally as it incurs a copy
+    def scoped_body(scoped_ref):
+      scoped_ref[...] = logits_ref[...].astype(jnp.float32)
+      return topk_topp_mask_and_sample_kernel(
+        scoped_ref, rng_key_ref,  k_ref,
+        p_ref,
+        temperature_ref,
+        dim0_offset_ref,
+        sampled_tokens_ref,
+        stable=stable,
+        replace_val=replace_val,
+        sample_in_i32=sample_in_i32,
+        underlying_logits_dtype=logits_ref.dtype,
+      )
+    return pl.run_scoped(scoped_body, pltpu.VMEM(logits_ref.shape, jnp.float32))
+
+  # logits = logits_ref[...]
+  batch_size = logits_ref.shape[0]
+  logits_max = map_reduce(
+    logits_ref,
+    reduce_fn="max",
+  )
+  logits_max = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
+  greedy_sampled = find_boundary_idx(
+    logits_ref,
+    map_fn=lambda chunk: (chunk == pltpu.repeat(logits_max, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
+    # stable -> first matching index
+    target=jnp.broadcast_to(jnp.float32(1), logits_max.shape),
+  )
+
   # Create token indices for greedy sampling and RNG seeding
-  token_idx = lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1)
-  greedy_sampled = max_arrays(
-    [logits_ref[...], token_idx], num_keys=1+int(stable), axis=1
-  )[1]
+  # token_idx = lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1)
+  # greedy_sampled = max_arrays(
+  #   [logits_ref[...], token_idx], num_keys=1+int(stable), axis=1
+  # )[1]
   # Reshape to (block_token, 1) to match output ref
   greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
 
   # Top-k masking
-  logits = topk_mask_ref_inputs(logits_ref, k_ref, replace_val=replace_val, stable=stable)
+  logits = topk_mask_ref_inputs(
+    logits_ref, k_ref, 
+    replace_val=replace_val,
+    stable=stable,
+    underlying_dtype=underlying_logits_dtype)
   logits = logits / temperature_ref[...].astype(logits.dtype)
 
   # Top-p masking
