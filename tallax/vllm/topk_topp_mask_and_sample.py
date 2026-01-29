@@ -8,9 +8,11 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
-from tallax.vllm.topk_mask import topk_mask_ref_inputs
-from tallax.vllm.topp_mask import topp_mask, topp_sample_ref_inputs
+from tallax.vllm.high_precision_uint import U48, random_u48
+from tallax.vllm.topp_mask import topp_mask, sum_in_u48
+from tallax.vllm.topk_mask import topk_mask_ref_inputs, find_boundary_idx
 from tallax.tax.sparse_random import sparse_random_categorical
+from tallax.tax.utils import NUM_LANES
 
 _SAMPLING_EPS = 1e-5
 
@@ -26,6 +28,7 @@ def topk_topp_mask_and_sample_kernel(
   *,
   stable: bool,
   replace_val: float,
+  sample_in_i32: bool,
 ):
   """Pallas kernel for topk/topp masking and sampling.
 
@@ -53,28 +56,34 @@ def topk_topp_mask_and_sample_kernel(
   logits = logits / temperature_ref[...].astype(logits.dtype)
 
   # Top-p masking
-  logits_ref[...] = logits
-  next_tokens = topp_sample_ref_inputs(
-    logits_ref,
-    rng_key_ref,
-    p_ref
+  logits = topp_mask(
+    logits, p_ref[...], replace_val=replace_val,
+    return_unnorm_i32_probs=sample_in_i32
   )
-  # logits = topp_mask(
-  #   logits, p_ref[...], replace_val=replace_val
-  # )
-  # # logits = logits / temperature_ref[...].astype(logits.dtype)
-
-  # # Random key splitting is based on idx in ravelled array
-  # # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-  # batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
-  # next_tokens = sparse_random_categorical(
-  #   rng_key_ref,
-  #   logits,
-  #   (batch_idx, token_idx),
-  #   dim1_size=logits.shape[1],
-  #   axis=1,  # Sample along vocab axis
-  #   dtype=jnp.float32,
-  # )[1]  # Take sampled token indices
+  if not sample_in_i32:
+    # Random key splitting is based on idx in ravelled array
+    # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
+    batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
+    next_tokens = sparse_random_categorical(
+      rng_key_ref,
+      logits,
+      (batch_idx, token_idx),
+      dim1_size=logits.shape[1],
+      axis=1,  # Sample along vocab axis
+      dtype=jnp.float32,
+    )[1]  # Take sampled token indices
+  else:
+    unnorm_probs_i32 = logits # alias
+    # High-precision integer sampling
+    total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits=24)
+    # Split rng_key_ref (4, 2) into list of 4 keys for random_u48
+    keys = [rng_key_ref[i][...] for i in range(4)]
+    target_u48 = random_u48(keys, total_sum_u48, shape=(logits.shape[0], 1))
+    next_tokens = find_boundary_idx(
+      unnorm_probs_i32,
+      map_fn=lambda x: U48(x, max_val=2**24-1),
+      target=target_u48
+    )
   # # Reshape to (block_token, 1) to match output ref
   if next_tokens.ndim == 1:
     next_tokens = jnp.expand_dims(next_tokens, axis=-1)
@@ -84,7 +93,7 @@ def topk_topp_mask_and_sample_kernel(
 
 @functools.partial(
   jax.jit,
-  static_argnames=["stable", "replace_val", "block_token", "interpret"],
+  static_argnames=["stable", "replace_val", "block_token", "interpret", "sample_in_i32"],
 )
 def topk_topp_mask_and_sample(
   logits: jax.Array,
@@ -98,6 +107,7 @@ def topk_topp_mask_and_sample(
   replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
+  sample_in_i32: bool = False,
 ) -> jax.Array:
   """Top-k, top-p masking and sampling using Pallas.
 
@@ -138,14 +148,18 @@ def topk_topp_mask_and_sample(
   temperature = jnp.reshape(temperature, (batch_size, 1))
   dim0_offset_arr = jnp.array([dim0_offset], dtype=jnp.int32)
 
-  # Prepare RNG key - always ensure it's (1, 2) shape
-  if rng_key.ndim == 0:
-    rng_key = jax.random.key_data(rng_key)
-  if rng_key.ndim == 1:
-    rng_key = jnp.reshape(rng_key, (1, 2))
-  elif rng_key.shape != (1, 2):
-    # If it's already 2D, ensure it's (1, 2)
-    rng_key = jnp.reshape(rng_key, (1, 2))
+  # Prepare RNG key
+  if not sample_in_i32:
+    if rng_key.ndim == 0:
+      rng_key = jax.random.key_data(rng_key)
+    if rng_key.ndim == 1:
+      rng_key = jnp.reshape(rng_key, (1, 2))
+    elif rng_key.shape != (1, 2):
+      # If it's already 2D, ensure it's (1, 2)
+      rng_key = jnp.reshape(rng_key, (1, 2))
+  else:
+    # For U48 sampling, we need 4 keys
+    rng_key = jnp.stack(jax.random.split(rng_key, 4))
 
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
@@ -165,12 +179,13 @@ def topk_topp_mask_and_sample(
       topk_topp_mask_and_sample_kernel,
       stable=stable,
       replace_val=replace_val,
+      sample_in_i32=sample_in_i32,
     ),
     out_shape=output_shape,
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      pl.BlockSpec(memory_space=pltpu.SMEM),  # rng_key
+      pl.BlockSpec(memory_space=pltpu.VMEM if sample_in_i32 else pltpu.SMEM),  # rng_key
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature

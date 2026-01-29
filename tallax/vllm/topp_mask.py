@@ -23,7 +23,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES, map_reduce
-from tallax.vllm.high_precision_uint import U48
+from tallax.vllm.high_precision_uint import U48, random_u48
 from tallax.vllm.binary_search import binary_search
 from tallax.vllm.topk_mask import find_boundary_idx
 
@@ -32,6 +32,27 @@ def map_chunks(x, fn):
   assert x.shape[1] % NUM_LANES == 0
   return jnp.concatenate(
     [fn(c) for c in jnp.split(x, x.shape[1] // NUM_LANES, 1)], axis=1
+  )
+
+
+def sum_in_u48(vals: jax.Array, scale_bits: int, map_fn=None) -> U48:
+  """Sum values in U48 with precision scaling."""
+  num_vals = vals.shape[1]
+  scale = 2**scale_bits - 1
+  safe_reduce_size = 2 ** (31 - scale_bits)
+  num_chunks = num_vals // NUM_LANES
+  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
+  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
+  actual_partial_sum_max = scale * chunks_per_parallel
+
+  return map_reduce(
+    vals,
+    map_fn=map_fn,
+    reduce_fn="sum",
+    num_parallel=num_parallel,
+    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+      x, max_val=actual_partial_sum_max
+    ),
   )
 
 
@@ -63,24 +84,8 @@ def topp_mask_ref_inputs(
   scale = 2**scale_bits - 1
   unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
 
-  safe_reduce_size = 2 ** (31 - scale_bits)
-  assert num_vals % NUM_LANES == 0
-  num_chunks = num_vals // NUM_LANES
-  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
-  # Calculate how many vocab chunks are summed into each lane of a parallel block.
-  # Values in x will be at most (chunks_per_parallel * scale).
-  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
-  actual_partial_sum_max = scale * chunks_per_parallel
-
   # 2. Convert to U48 and sum safely using map_reduce_sum
-  total_sum_u48 = map_reduce(
-    unnorm_probs_i32,
-    reduce_fn="sum",
-    num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
-      x, max_val=actual_partial_sum_max
-    ),
-  )
+  total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits)
 
   # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
@@ -92,15 +97,8 @@ def topp_mask_ref_inputs(
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
     return (
-      map_reduce(
-        unnorm_probs_i32,
-        lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
-        reduce_fn="sum",
-        num_parallel=num_parallel,
-        apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
-          x, max_val=actual_partial_sum_max
-        ),
-      )
+      sum_in_u48(unnorm_probs_i32, scale_bits,
+                 map_fn=lambda chunk: jnp.where(chunk >= threshold, chunk, 0))
       < target_sum_u48
     )
 
@@ -140,28 +138,12 @@ def topp_sample_ref_inputs(
   scale = 2**scale_bits - 1
   max_total_sum = num_vals * scale
 
-  safe_reduce_size = 2 ** (31 - scale_bits)
-  num_chunks = num_vals // NUM_LANES
-  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
-  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
-  actual_partial_sum_max = scale * chunks_per_parallel
-
-  total_sum_u48 = map_reduce(
-    masked_probs_i32,
-    reduce_fn="sum",
-    num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
-      x, max_val=actual_partial_sum_max
-    ),
-  )
+  total_sum_u48 = sum_in_u48(masked_probs_i32, scale_bits)
 
   # 3. Generate random target in [0, total_sum)
-  # Using uniform(0, 1) and scaling by total_sum
-  target_f32 = (
-    jax.random.uniform(rng_key_ref, (logits_ref.shape[0], 1))
-    * total_sum_u48.to_f32()
-  )
-  target_u48 = U48.from_f32(target_f32, max_val=max_total_sum)
+  # Using specialized U48 random generation
+  rng_keys = list(jax.random.split(rng_key_ref, 4))
+  target_u48 = random_u48(rng_keys, total_sum_u48, shape=(logits_ref.shape[0], 1))
 
   # 4. Use find_boundary_idx to sample the token
   # map_fn returns the probs themselves as U48
