@@ -133,7 +133,7 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
   iota1 = jax.lax.broadcasted_iota(jnp.int32, (ref.shape[0], NUM_LANES), 1)
   mapped_slice = map_fn(boundary_slice)
   cumsums = [
-    jnp.where(iota1 <= i, mapped_slice, 0).sum(1, keepdims=True)
+    (mapped_slice * (iota1 <= i)).sum(1, keepdims=True)
     for i in range(NUM_LANES)
   ]
   return (ref_offset + sum((c < target) for c in cumsums))
