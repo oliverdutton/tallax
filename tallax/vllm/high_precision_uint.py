@@ -94,12 +94,16 @@ class U48:
     return high, low
 
   @classmethod
-  def from_u32_pair(cls, high: jax.Array, low: jax.Array, max_val: int = 2**48, **kwargs) -> 'U48':
+  def from_u32_pair(cls, high_or_pair: Union[jax.Array, Tuple[jax.Array, jax.Array], List[jax.Array]], low: Optional[jax.Array] = None, **kwargs) -> 'U48':
     """Create from a pair of u32 values."""
+    if low is None:
+      high, low = high_or_pair
+    else:
+      high = high_or_pair
     mask24 = (1 << 24) - 1
     p0 = (low & mask24).astype(jnp.int32)
     p1 = ((low >> 24) | (high << 8)).astype(jnp.int32)
-    return cls([p0, p1], [mask24, int(max_val >> 24)])
+    return cls([p0, p1], [mask24, mask24])
 
   def needs_normalize(self) -> bool:
     """Check if carry propagation is needed."""
@@ -167,13 +171,10 @@ class U48:
     less_low = s1.parts[0] < s2.parts[0]
     return less_high | (equal_high & less_low)
 
-  # Compatibility methods
-  def harmonize(self): return self.normalize()
-  def needs_harmonize(self): return self.needs_normalize()
 
 
-# Alias for backward compatibility
-HighPrecisionUInt = U48
+
+
 
 
 def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array]) -> Tuple[jax.Array, jax.Array]:
@@ -181,7 +182,7 @@ def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array])
   bh = divisor_u32[0]
   bl = divisor_u32[1]
 
-  init_state = (jnp.uint32(0), jnp.uint32(0))
+  init_state = (jnp.zeros_like(dividend_u32[0]),) * 2
 
   def body_fun(i, state):
     rh, rl = state
@@ -213,22 +214,22 @@ def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array])
 
 
 def random_u48(
-  rng_keys: jax.Array,
+  rng_keys: list[jax.Array],
   max_val: U48,
   shape: Tuple[int, ...] = (),
 ) -> U48:
   """Generate random U48 values uniformly in [0, max_val)."""
   max_val_u64_in_u32s = max_val.to_u32_pair()
   random_u128_in_u32s = [jax.random.bits(key, shape=shape, dtype=jnp.uint32) for key in rng_keys]
-  sampled_u64_in_u32s = jax.vmap(modulo_u128_u64)(random_u128_in_u32s, max_val_u64_in_u32s)
+  sampled_u64_in_u32s = modulo_u128_u64(random_u128_in_u32s, max_val_u64_in_u32s)
   return U48.from_u32_pair(sampled_u64_in_u32s)
 
-random_high_precision_uint = random_u48
+
 
 
 # Register PyTree
-def _u48_tree_flatten(hpu: U48):
-  return (hpu.parts, (hpu.max_value_bound_per_part,))
+def _u48_tree_flatten(val: U48):
+  return (val.parts, (val.max_value_bound_per_part,))
 
 def _u48_tree_unflatten(aux_data, children):
   return U48(children, aux_data[0])

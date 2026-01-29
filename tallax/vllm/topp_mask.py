@@ -73,7 +73,7 @@ def topp_mask_ref_inputs(
   actual_partial_sum_max = scale * chunks_per_parallel
 
   # 2. Convert to U48 and sum safely using map_reduce_sum
-  total_sum_hpu = map_reduce(
+  total_sum_u48 = map_reduce(
     unnorm_probs_i32,
     reduce_fn="sum",
     num_parallel=num_parallel,
@@ -83,8 +83,8 @@ def topp_mask_ref_inputs(
   )
 
   # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
-  target_sum_hpu = U48.from_f32(
-    total_sum_hpu.to_f32() * top_p,
+  target_sum_u48 = U48.from_f32(
+    total_sum_u48.to_f32() * top_p,
     max_val=num_vals * scale)
 
   # 4. Binary search for threshold
@@ -101,7 +101,7 @@ def topp_mask_ref_inputs(
           x, max_val=actual_partial_sum_max
         ),
       )
-      < target_sum_hpu
+      < target_sum_u48
     )
 
   bound_shape = (logits.shape[0], NUM_LANES)
@@ -146,7 +146,7 @@ def topp_sample_ref_inputs(
   chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
   actual_partial_sum_max = scale * chunks_per_parallel
 
-  total_sum_hpu = map_reduce(
+  total_sum_u48 = map_reduce(
     masked_probs_i32,
     reduce_fn="sum",
     num_parallel=num_parallel,
@@ -159,16 +159,16 @@ def topp_sample_ref_inputs(
   # Using uniform(0, 1) and scaling by total_sum
   target_f32 = (
     jax.random.uniform(rng_key_ref, (logits_ref.shape[0], 1))
-    * total_sum_hpu.to_f32()
+    * total_sum_u48.to_f32()
   )
-  target_hpu = U48.from_f32(target_f32, max_val=max_total_sum)
+  target_u48 = U48.from_f32(target_f32, max_val=max_total_sum)
 
   # 4. Use find_boundary_idx to sample the token
   # map_fn returns the probs themselves as U48
   sampled_tokens = find_boundary_idx(
     masked_probs_i32,
     map_fn=lambda x: U48(x, max_val=scale),
-    target=target_hpu,
+    target=target_u48,
   )
 
   return sampled_tokens
