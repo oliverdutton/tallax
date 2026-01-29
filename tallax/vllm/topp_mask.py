@@ -35,7 +35,7 @@ def map_chunks(x, fn):
   )
 
 
-def sum_in_u48(vals: jax.Array, scale_bits: int, map_fn=None) -> U48:
+def sum_in_u48(vals: jax.Array, scale_bits: int, map_fn=lambda x: x) -> U48:
   """Sum values in U48 with precision scaling."""
   num_vals = vals.shape[1]
   scale = 2**scale_bits - 1
