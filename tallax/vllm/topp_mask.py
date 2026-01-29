@@ -64,6 +64,7 @@ def topp_mask_ref_inputs(
   scale_bits: int = 24,
   replace_val: float = -1e12,
   return_unnorm_i32_probs: bool = False,
+  logits_max: jax.Array = None,
 ) -> jax.Array:
   """Core nucleus sampling logic for both standard and Pallas interfaces."""
   logits = logits_ref[...]
@@ -76,10 +77,11 @@ def topp_mask_ref_inputs(
   bound_shape = (logits.shape[0], NUM_LANES)
   top_p = jnp.broadcast_to(top_p, bound_shape)
 
-  # 1. Compute unnormalized probabilities: exp(logits - max(logits)) and scale [0.,1.] to [0, 2^scale - 1]
-  logits_max = map_reduce(
-    logits, reduce_fn="max"
-  )  # logits.max(axis=1, keepdims=True)
+  if logits_max is None:
+    # 1. Compute unnormalized probabilities: exp(logits - max(logits)) and scale [0.,1.] to [0, 2^scale - 1]
+    logits_max = map_reduce(
+      logits, reduce_fn="max"
+    )  # logits.max(axis=1, keepdims=True)
 
   scale = 2**scale_bits - 1
   unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
@@ -123,6 +125,7 @@ def topp_sample_ref_inputs(
   top_p_ref,
   *,
   scale_bits: int = 24,
+  logits_max: jax.Array = None,
 ) -> jax.Array:
   """Categorical sampling after top-p masking using high-precision logic."""
   # 1. Get masked unnormalized probs (batch, vocab_size)
@@ -131,6 +134,7 @@ def topp_sample_ref_inputs(
     top_p_ref,
     scale_bits=scale_bits,
     return_unnorm_i32_probs=True,
+    logits_max=logits_max,
   )
 
   # 2. Sum them to get total sum
@@ -162,6 +166,7 @@ def topp_mask(
   scale_bits: int = 24,
   replace_val: float = -1e12,
   return_unnorm_i32_probs: bool = False,
+  logits_max: jax.Array = None,
 ) -> jax.Array:
   """Platform-portable top-p sampling using high-precision arithmetic."""
   return topp_mask_ref_inputs(
@@ -170,6 +175,7 @@ def topp_mask(
     scale_bits=scale_bits,
     replace_val=replace_val,
     return_unnorm_i32_probs=return_unnorm_i32_probs,
+    logits_max=logits_max,
   )
 
 
@@ -229,8 +235,9 @@ def topp_sample(
   rng_key: jax.Array,
   top_p: jax.Array,
   scale_bits: int = 24,
+  logits_max: jax.Array = None,
 ) -> jax.Array:
   """Nucleus sampling using high-precision integer arithmetic."""
   return topp_sample_ref_inputs(
-    logits, rng_key, top_p, scale_bits=scale_bits
+    logits, rng_key, top_p, scale_bits=scale_bits, logits_max=logits_max
   )

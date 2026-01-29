@@ -69,12 +69,12 @@ def topk_topp_mask_and_sample_kernel(
     logits_ref,
     reduce_fn="max",
   )
-  logits_max = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
+  logits_max_lanes = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
   greedy_sampled = find_boundary_idx(
     logits_ref,
-    map_fn=lambda chunk: (chunk == pltpu.repeat(logits_max, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
+    map_fn=lambda chunk: (chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
     # stable -> first matching index
-    target=jnp.broadcast_to(jnp.float32(1), logits_max.shape),
+    target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
   )
 
   # Create token indices for greedy sampling and RNG seeding
@@ -96,7 +96,8 @@ def topk_topp_mask_and_sample_kernel(
   # Top-p masking
   logits = topp_mask(
     logits, p_ref[...], replace_val=replace_val,
-    return_unnorm_i32_probs=sample_in_i32
+    return_unnorm_i32_probs=sample_in_i32,
+    logits_max=logits_max
   )
   if not sample_in_i32:
     # Random key splitting is based on idx in ravelled array
