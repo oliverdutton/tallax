@@ -91,7 +91,8 @@ def topk_topp_mask_and_sample_kernel(
     replace_val=replace_val,
     stable=stable,
     underlying_dtype=underlying_logits_dtype)
-  logits = logits / temperature_ref[...].astype(logits.dtype)
+  logits /= temperature_ref[...].astype(logits.dtype)
+  logits_max /= temperature_ref[...].astype(logits.dtype)
 
   # Top-p masking
   logits = topp_mask(
