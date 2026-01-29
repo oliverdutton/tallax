@@ -84,7 +84,7 @@ class U48:
     base = float(1 << 24)
     return self.parts[0].astype(jnp.float32) + self.parts[1].astype(jnp.float32) * base
 
-  def to_u32_pair(self) -> Tuple[jax.Array, jax.Array]:
+  def to_u64_in_u32s(self) -> Tuple[jax.Array, jax.Array]:
     """Convert to a pair of u32 values (high, low) representing a 64-bit value."""
     normalized = self.normalize() if self.needs_normalize() else self
     # low 32 bits: bits 0-23 from parts[0], bits 24-31 from bits 0-7 of parts[1]
@@ -94,12 +94,9 @@ class U48:
     return high, low
 
   @classmethod
-  def from_u32_pair(cls, high_or_pair: Union[jax.Array, Tuple[jax.Array, jax.Array], List[jax.Array]], low: Optional[jax.Array] = None, **kwargs) -> 'U48':
-    """Create from a pair of u32 values."""
-    if low is None:
-      high, low = high_or_pair
-    else:
-      high = high_or_pair
+  def from_u64_in_u32s(cls, u: Union[Tuple[jax.Array, jax.Array], List[jax.Array]], **kwargs) -> 'U48':
+    """Create from a pair of u32 values [high, low]."""
+    high, low = u
     mask24 = (1 << 24) - 1
     p0 = (low & mask24).astype(jnp.int32)
     p1 = ((low >> 24) | (high << 8)).astype(jnp.int32)
@@ -219,10 +216,10 @@ def random_u48(
   shape: Tuple[int, ...] = (),
 ) -> U48:
   """Generate random U48 values uniformly in [0, max_val)."""
-  max_val_u64_in_u32s = max_val.to_u32_pair()
+  max_val_u64_in_u32s = max_val.to_u64_in_u32s()
   random_u128_in_u32s = [jax.random.bits(key, shape=shape, dtype=jnp.uint32) for key in rng_keys]
   sampled_u64_in_u32s = modulo_u128_u64(random_u128_in_u32s, max_val_u64_in_u32s)
-  return U48.from_u32_pair(sampled_u64_in_u32s)
+  return U48.from_u64_in_u32s(sampled_u64_in_u32s)
 
 
 
