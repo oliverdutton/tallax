@@ -75,7 +75,7 @@ def topk_topp_mask_and_sample_kernel(
     map_fn=lambda chunk: (chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
     # stable -> first matching index
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
-  )
+  )[:, :1]
 
   # Create token indices for greedy sampling and RNG seeding
   # token_idx = lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1)
@@ -83,7 +83,7 @@ def topk_topp_mask_and_sample_kernel(
   #   [logits_ref[...], token_idx], num_keys=1+int(stable), axis=1
   # )[1]
   # Reshape to (block_token, 1) to match output ref
-  greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
+  # greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
 
   # Top-k masking
   logits = topk_mask_ref_inputs(
