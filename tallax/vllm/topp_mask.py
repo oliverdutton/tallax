@@ -8,11 +8,12 @@ This module implements a top-p (nucleus sampling) implementation that is:
 The algorithm:
 1. Convert logits to unnormalized probabilities: exp(logits - max(logits))
 2. Scale f32 probabilities to i32 range [0, 2^24]
-3. Sum using U48 (48-bit with 24-bit parts) and automatic harmonization
+3. Sum using HighPrecisionUInt (24-bit parts) and automatic normalization
 4. Binary search for threshold where cumulative sum >= top_p * total_sum
 
-Key optimization: Uses U48 with 24-bit parts and tracks max_value_bound to minimize harmonization.
-Only harmonizes when max_value_bound >= 2^31 to prevent i32 overflow.
+Key optimization: Uses HighPrecisionUInt with 24-bit parts and tracks max_value_bound
+to minimize normalization. Only normalizes when max_value_bound >= 2^31 to prevent
+i32 overflow.
 """
 
 import functools
@@ -22,7 +23,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES, map_reduce
-from tallax.vllm.high_precision_uint import U48
+from tallax.vllm.high_precision_uint import HighPrecisionUInt
 from tallax.vllm.binary_search import binary_search
 from tallax.vllm.topk_mask import find_boundary_idx
 
@@ -71,23 +72,23 @@ def topp_mask_ref_inputs(
   chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
   actual_partial_sum_max = scale * chunks_per_parallel
 
-  # 2. Convert to U48 and sum safely using map_reduce_sum
-  total_sum_u48 = map_reduce(
+  # 2. Convert to HighPrecisionUInt and sum safely using map_reduce_sum
+  total_sum_hpu = map_reduce(
     unnorm_probs_i32,
     reduce_fn="sum",
     num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+    apply_post_partial_sums_fn=lambda x: HighPrecisionUInt.from_i32_array(
       x, max_val=actual_partial_sum_max
     ),
   )
 
   # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
-  target_sum_u48 = U48.from_f32(
-    total_sum_u48.to_f32() * top_p,
+  target_sum_hpu = HighPrecisionUInt.from_f32(
+    total_sum_hpu.to_f32() * top_p,
     max_val=num_vals * scale)
 
   # 4. Binary search for threshold
-  # Uses int32 during parallel reduction, then converts to U48
+  # Uses int32 during parallel reduction, then converts to HighPrecisionUInt
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
     return (
@@ -96,11 +97,11 @@ def topp_mask_ref_inputs(
         lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
         reduce_fn="sum",
         num_parallel=num_parallel,
-        apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+        apply_post_partial_sums_fn=lambda x: HighPrecisionUInt.from_i32_array(
           x, max_val=actual_partial_sum_max
         ),
       )
-      < target_sum_u48
+      < target_sum_hpu
     )
 
   bound_shape = (logits.shape[0], NUM_LANES)
@@ -145,11 +146,11 @@ def topp_sample_ref_inputs(
   chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
   actual_partial_sum_max = scale * chunks_per_parallel
 
-  total_sum_u48 = map_reduce(
+  total_sum_hpu = map_reduce(
     masked_probs_i32,
     reduce_fn="sum",
     num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
+    apply_post_partial_sums_fn=lambda x: HighPrecisionUInt.from_i32_array(
       x, max_val=actual_partial_sum_max
     ),
   )
@@ -158,16 +159,16 @@ def topp_sample_ref_inputs(
   # Using uniform(0, 1) and scaling by total_sum
   target_f32 = (
     jax.random.uniform(rng_key_ref, (logits_ref.shape[0], 1))
-    * total_sum_u48.to_f32()
+    * total_sum_hpu.to_f32()
   )
-  target_u48 = U48.from_f32(target_f32, max_val=max_total_sum)
+  target_hpu = HighPrecisionUInt.from_f32(target_f32, max_val=max_total_sum)
 
   # 4. Use find_boundary_idx to sample the token
-  # map_fn returns the probs themselves as U48
+  # map_fn returns the probs themselves as HighPrecisionUInt
   sampled_tokens = find_boundary_idx(
     masked_probs_i32,
-    map_fn=lambda x: U48(x, max_val=scale),
-    target=target_u48,
+    map_fn=lambda x: HighPrecisionUInt(x, max_val=scale),
+    target=target_hpu,
   )
 
   return sampled_tokens
