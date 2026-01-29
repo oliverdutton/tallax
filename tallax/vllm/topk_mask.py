@@ -100,7 +100,7 @@ def _find_boundary_chunk(
 
 def find_boundary_idx(ref_or_arr, map_fn, target):
   """Find the lowest idx when the map_fn(ref[...]).cumsum(1) >= target."""
-  if not hasattr(ref_or_arr, 'memory_space') and ref_or_arr.memory_space != pltpu.VMEM:
+  if not hasattr(ref_or_arr, 'memory_space') or ref_or_arr.memory_space != pltpu.VMEM:
     # We need a ref, as it's the only way to do dynamic_slices in mosaic
     # If it's not a ref (doesn't have memory space attr), we'll turn it into one.
     # We don't do this unconditionally as it incurs a copy
