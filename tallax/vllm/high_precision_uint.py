@@ -206,8 +206,12 @@ def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array])
     rl_next = jnp.where(is_greater, sub_rl, new_rl)
     return (rh_next, rl_next)
 
-  final_rh, final_rl = jax.lax.fori_loop(0, 128, body_fun, init_state, unroll=True)
-  return final_rh, final_rl
+  state = init_state
+  for i in range(128):
+    state = body_fun(i, state)
+  return state
+  # final_rh, final_rl = jax.lax.fori_loop(0, 128, body_fun, init_state, unroll=True)
+  # return final_rh, final_rl
 
 
 def random_u48(

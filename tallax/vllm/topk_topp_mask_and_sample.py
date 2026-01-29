@@ -159,7 +159,7 @@ def topk_topp_mask_and_sample(
       rng_key = jnp.reshape(rng_key, (1, 2))
   else:
     # For U48 sampling, we need 4 keys
-    rng_key = jnp.stack(jax.random.split(rng_key, 4))
+    rng_key = tuple(jax.random.split(rng_key, 4))
 
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
@@ -185,7 +185,7 @@ def topk_topp_mask_and_sample(
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      pl.BlockSpec(memory_space=pltpu.VMEM if sample_in_i32 else pltpu.SMEM),  # rng_key
+      (pl.BlockSpec(memory_space=pltpu.VMEM),)*4 if sample_in_i32 else pl.BlockSpec(memory_space=pltpu.SMEM),  # rng_key
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature
