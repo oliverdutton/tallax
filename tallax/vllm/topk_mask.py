@@ -131,13 +131,11 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
   # Within tile cumsum check
   # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
   iota1 = jax.lax.broadcasted_iota(jnp.int32, (ref.shape[0], NUM_LANES), 1)
-  num_matches = [
-    (map_fn(boundary_slice) * (iota1 == i)).sum(1, keepdims=True)
+  mapped_slice = map_fn(boundary_slice)
+  cumsums = [
+    jnp.where(iota1 <= i, mapped_slice, 0).sum(1, keepdims=True)
     for i in range(NUM_LANES)
   ]
-  cumsums = [num_matches[0]]
-  for i in range(1, len(num_matches)):
-    cumsums.append(cumsums[i - 1] + num_matches[i])
   return (ref_offset + sum((c < target) for c in cumsums))
 
 
