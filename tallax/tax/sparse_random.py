@@ -45,6 +45,23 @@ def _bits_to_uniform(bits, dtype):
   floats = jax.lax.bitcast_convert_type(float_bits, dtype)
   return floats - jnp.ones((), dtype=dtype)
 
+def sparse_random_bits(
+  key_ref, indices, dim1_size
+):
+  assert len(indices) == 2
+  # Handle JAX key format - if scalar key, extract data; if already (1,2), use as-is
+  if key_ref.ndim == 0:
+    # Scalar JAX key - extract data and reshape
+    key_ref = jnp.reshape(jax.random.key_data(key_ref), (1, 2))
+  counts_lo = indices[0] * dim1_size + indices[1]
+  counts_lo = counts_lo.astype(jnp.uint32)
+  counts_hi = jnp.zeros_like(counts_lo)
+  k1 = jnp.reshape(key_ref[0, 0], (1, 1))
+  k2 = jnp.reshape(key_ref[0, 1], (1, 1))
+  bits1, bits2 = threefry2x32_p.bind(k1, k2, counts_hi, counts_lo)
+  bits = bits1 ^ bits2
+  return bits
+
 
 def sparse_random_uniform(
   key_ref, indices, dim1_size, dtype=jnp.float32, minval=0.0, maxval=1.0
@@ -66,18 +83,7 @@ def sparse_random_uniform(
   Returns:
       Array of uniform random values with same shape as indices[0].
   """
-  assert len(indices) == 2
-  # Handle JAX key format - if scalar key, extract data; if already (1,2), use as-is
-  if key_ref.ndim == 0:
-    # Scalar JAX key - extract data and reshape
-    key_ref = jnp.reshape(jax.random.key_data(key_ref), (1, 2))
-  counts_lo = indices[0] * dim1_size + indices[1]
-  counts_lo = counts_lo.astype(jnp.uint32)
-  counts_hi = jnp.zeros_like(counts_lo)
-  k1 = jnp.reshape(key_ref[0, 0], (1, 1))
-  k2 = jnp.reshape(key_ref[0, 1], (1, 1))
-  bits1, bits2 = threefry2x32_p.bind(k1, k2, counts_hi, counts_lo)
-  bits = bits1 ^ bits2
+  bits = sparse_random_bits(key_ref, indices, dim1_size)
   floats = _bits_to_uniform(bits, dtype)
   # Scale to [minval, maxval) following JAX's implementation
   minval = jax.lax.convert_element_type(minval, dtype)
