@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 
+from tallax.tax.sparse_random import sparse_random_bits
 
 @dataclass(init=False)
 class U48:
@@ -215,18 +216,17 @@ def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array])
 
 
 def random_u48(
-  rng_keys: list[jax.Array],
+  rng_key_refs,
+  dim0_indices: jax.Array
   max_val: U48,
-  shape: Tuple[int, ...] = (),
 ) -> U48:
   """Generate random U48 values uniformly in [0, max_val)."""
   max_val_u64_in_u32s = max_val.to_u64_in_u32s()
-  random_u128_in_u32s = [jax.random.bits(key, shape=shape, dtype=jnp.uint32) for key in rng_keys]
+  indices = (dim0_indices, jnp.zeros_like(dim0_indices))
+  random_u128_in_u32s = [sparse_random_bits(key_ref, indices, dim1_size=1) for key_ref in rng_key_refs]
+  assert len(random_u128_in_u32s) == 4
   sampled_u64_in_u32s = modulo_u128_u64(random_u128_in_u32s, max_val_u64_in_u32s)
   return U48.from_u64_in_u32s(sampled_u64_in_u32s)
-
-
-
 
 # Register PyTree
 def _u48_tree_flatten(val: U48):

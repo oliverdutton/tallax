@@ -77,14 +77,6 @@ def topk_topp_mask_and_sample_kernel(
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
   )[:, :1]
 
-  # Create token indices for greedy sampling and RNG seeding
-  # token_idx = lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1)
-  # greedy_sampled = max_arrays(
-  #   [logits_ref[...], token_idx], num_keys=1+int(stable), axis=1
-  # )[1]
-  # Reshape to (block_token, 1) to match output ref
-  # greedy_sampled = jnp.expand_dims(greedy_sampled, axis=-1)
-
   # Top-k masking
   logits = topk_mask_ref_inputs(
     logits_ref, k_ref, 
@@ -100,10 +92,12 @@ def topk_topp_mask_and_sample_kernel(
     return_unnorm_i32_probs=sample_in_i32,
     logits_max=logits_max
   )
+
   if not sample_in_i32:
     # Random key splitting is based on idx in ravelled array
     # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
     batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
+    token_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 1)
     next_tokens = sparse_random_categorical(
       rng_key_ref,
       logits,
@@ -114,11 +108,11 @@ def topk_topp_mask_and_sample_kernel(
     )[1]  # Take sampled token indices
   else:
     unnorm_probs_i32 = logits # alias
+    batch_idx = lax.broadcasted_iota(jnp.int32, (logits.shape[0], 1), 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
     # High-precision integer sampling
     total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits=24)
     # Split rng_key_ref (4, 2) into list of 4 keys for random_u48
-    keys = [rng_key_ref[i][...] for i in range(4)]
-    target_u48 = random_u48(keys, total_sum_u48, shape=(logits.shape[0], 1))
+    target_u48 = random_u48(rng_key_ref, total_sum_u48, dim0_indices=batch_idx)
     next_tokens = find_boundary_idx(
       unnorm_probs_i32,
       map_fn=lambda x: U48(x, max_val=2**24-1),
