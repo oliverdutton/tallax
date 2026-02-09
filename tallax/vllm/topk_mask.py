@@ -176,7 +176,7 @@ def topk_mask_ref_inputs(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (finfo.min, finfo.max)),
     num_iter=(underlying_dtype.itemsize * 8) if underlying_dtype is not None else 32, # 32 for f32, 16 for bf16
-    underlying_dtype=None,
+    underlying_dtype=underlying_dtype,
   )
 
   assert logits.shape[1] % NUM_LANES == 0

@@ -217,7 +217,7 @@ def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array])
 
 def random_u48(
   rng_key_refs,
-  dim0_indices: jax.Array
+  dim0_indices: jax.Array,
   max_val: U48,
 ) -> U48:
   """Generate random U48 values uniformly in [0, max_val)."""
