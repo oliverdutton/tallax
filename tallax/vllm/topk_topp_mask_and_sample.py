@@ -8,7 +8,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
-from tallax.vllm.high_precision_uint import U48, random_u48
+from tallax.vllm.high_precision_uint import U48, modulo_u128_u64, sample_random_u128_in_u32s
 from tallax.vllm.topp_mask import topp_mask, sum_in_u48
 from tallax.vllm.topk_mask import topk_mask_ref_inputs, find_boundary_idx
 from tallax.tax.sparse_random import sparse_random_categorical
@@ -108,11 +108,15 @@ def topk_topp_mask_and_sample_kernel(
     )[1]  # Take sampled token indices
   else:
     unnorm_probs_i32 = logits # alias
-    batch_idx = lax.broadcasted_iota(jnp.int32, (logits.shape[0], 1), 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
     # High-precision integer sampling
     total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits=24)
-    # Split rng_key_ref (4, 2) into list of 4 keys for random_u48
-    target_u48 = random_u48(rng_key_ref, total_sum_u48, dim0_indices=batch_idx)
+    # rng_key_ref contains pre-generated random u128 as 4 u32 arrays
+    # This matches how JAX random.randint samples in i64
+    sampled_u64_in_u32s = modulo_u128_u64(
+      [ref[...] for ref in rng_key_ref],
+      total_sum_u48.to_u64_in_u32s()
+    )
+    target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
     next_tokens = find_boundary_idx(
       unnorm_probs_i32,
       map_fn=lambda x: U48(x, max_val=2**24-1),
@@ -191,10 +195,6 @@ def topk_topp_mask_and_sample(
     elif rng_key.shape != (1, 2):
       # If it's already 2D, ensure it's (1, 2)
       rng_key = jnp.reshape(rng_key, (1, 2))
-  else:
-    # For U48 sampling, we need 4 keys
-    rng_key = tuple(jax.random.split(rng_key, 4))
-
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
   padded_batch = num_blocks * block_token
@@ -205,6 +205,10 @@ def topk_topp_mask_and_sample(
     k = jnp.pad(k, ((0, pad_size), (0, 0)), constant_values=1)
     p = jnp.pad(p, ((0, pad_size), (0, 0)), constant_values=1.0)
     temperature = jnp.pad(temperature, ((0, pad_size), (0, 0)), constant_values=1.0)
+
+  if sample_in_i32:
+    # Generate random u128 as 4 u32 arrays outside the kernel
+    rng_key = tuple(sample_random_u128_in_u32s(rng_key, (padded_batch, 1)))
 
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
@@ -219,7 +223,7 @@ def topk_topp_mask_and_sample(
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      (pl.BlockSpec(memory_space=pltpu.VMEM),)*4 if sample_in_i32 else pl.BlockSpec(memory_space=pltpu.SMEM),  # rng_key
+      tuple(pl.BlockSpec((block_token, 1), lambda i: (i, 0)) for _ in range(4)) if sample_in_i32 else pl.BlockSpec(memory_space=pltpu.SMEM),  # rng random bits / rng_key
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature

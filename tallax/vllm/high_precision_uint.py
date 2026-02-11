@@ -9,6 +9,7 @@ from typing import Tuple, List, Union, Optional
 import jax
 import jax.numpy as jnp
 from jax import tree_util
+from jax.experimental import enable_x64
 
 from tallax.tax.sparse_random import sparse_random_bits
 
@@ -170,13 +171,25 @@ class U48:
     return less_high | (equal_high & less_low)
 
 
-
+def sample_random_u128_in_u32s(key: jax.Array, shape: tuple) -> list[jax.Array]:
+  """Generate a random u128 as 4 u32 arrays from a single JAX RNG key."""
+  with enable_x64():
+    higher_bits, lower_bits = [jax.random.bits(subkey, shape, jnp.uint64) for subkey in jax.random.split(key)]
+    u32_scale = jnp.array(2**32, dtype=jnp.uint64)
+    return [
+      x.astype(jnp.uint32) for x in [
+        higher_bits // u32_scale, higher_bits % u32_scale,
+        lower_bits // u32_scale, lower_bits % u32_scale,
+      ]
+    ]
 
 
 
 
 def modulo_u128_u64(dividend_u32: list[jax.Array], divisor_u32: list[jax.Array]) -> Tuple[jax.Array, jax.Array]:
   """Compute (128-bit dividend) % (64-bit divisor) using only 32-bit operations."""
+  assert len(dividend_u32) == 4, "Dividend should be u128 represented as four u32 arrays"
+  assert len(divisor_u32) == 2, "Divisor should be u64 represented as two u32 arrays"
   bh = divisor_u32[0]
   bl = divisor_u32[1]
 
