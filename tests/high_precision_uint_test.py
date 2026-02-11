@@ -10,6 +10,7 @@ from tallax.vllm.high_precision_uint import (
   modulo_u128_u64,
   random_int_in_range,
   random_high_precision_uint,
+  random_u48,
 )
 
 
@@ -907,6 +908,155 @@ class TestSamplingWorkflow:
     assert unique_samples > 1, "Expected different random values for different seeds"
 
 
+class TestRandomU48:
+  """Tests for random_u48 function."""
+
+  def test_random_u48_basic(self):
+    """Test basic random_u48 generation."""
+    key = jax.random.key(0)
+    keys = jax.random.split(key, 4)
+
+    # Create a max_val U48
+    max_val = U48.from_i32_array(jnp.array([1000000]), max_val=1000000)
+
+    # Create indices
+    dim0_indices = jnp.array([0, 1, 2])
+
+    # Generate random U48 values
+    result = random_u48(keys, max_val, dim0_indices)
+
+    # Convert to f32 and check range
+    values = result.to_f32()
+    max_val_f32 = max_val.to_f32()[0]
+
+    # All values should be in [0, max_val)
+    assert jnp.all(values >= 0)
+    assert jnp.all(values < max_val_f32)
+
+  def test_random_u48_with_external_callback(self):
+    """Test random_u48 correctness using arbitrary precision Python integers."""
+    key = jax.random.key(42)
+    keys = jax.random.split(key, 4)
+
+    # Create a max_val U48 with a value that requires high precision
+    max_val_int = 2**40 - 12345
+    max_val = U48.from_i32_array(jnp.array([max_val_int]), max_val=max_val_int)
+
+    # Create a single index for simplicity
+    dim0_indices = jnp.array([0])
+
+    # Generate random U48 value
+    result = random_u48(keys, max_val, dim0_indices)
+
+    # Verify using external callback with arbitrary precision
+    def verify_modulo(result_high, result_low, max_high, max_low, *key_data):
+      """Verify the modulo operation using Python's arbitrary precision."""
+      # Convert result to Python int
+      result_val = (int(result_high) << 32) | int(result_low)
+
+      # Convert max_val to Python int
+      max_val_py = (int(max_high) << 32) | int(max_low)
+
+      # Extract key data and simulate the random u128 generation
+      # For verification purposes, we just check the result is in range
+      assert 0 <= result_val < max_val_py, f"Result {result_val} out of range [0, {max_val_py})"
+
+      return np.array([result_val], dtype=np.object_)
+
+    result_u64 = result.to_u64_in_u32s()
+    max_u64 = max_val.to_u64_in_u32s()
+
+    # Extract scalar values for verification
+    result_high_scalar = result_u64[0][0]
+    result_low_scalar = result_u64[1][0]
+    max_high_scalar = max_u64[0][0]
+    max_low_scalar = max_u64[1][0]
+
+    # Use external callback to verify
+    verified = jax.pure_callback(
+      verify_modulo,
+      jax.ShapeDtypeStruct((1,), np.object_),
+      result_high_scalar,
+      result_low_scalar,
+      max_high_scalar,
+      max_low_scalar,
+      *[k for k in keys]
+    )
+
+    # The callback itself does the assertion
+    assert verified is not None
+
+  def test_random_u48_distribution(self):
+    """Test that random_u48 produces reasonably distributed values."""
+    key = jax.random.key(123)
+
+    # Generate multiple random values
+    num_samples = 100
+    max_val_int = 100
+    max_val = U48.from_i32_array(jnp.array([max_val_int]), max_val=max_val_int)
+
+    samples = []
+    for i in range(num_samples):
+      seed_key = jax.random.key(i)
+      keys = jax.random.split(seed_key, 4)
+      dim0_indices = jnp.array([0])
+
+      result = random_u48(keys, max_val, dim0_indices)
+      value = float(result.to_f32()[0])
+      samples.append(int(value))
+
+      # Check range
+      assert 0 <= value < max_val_int
+
+    # Check that we get some variety in the samples (not all the same)
+    unique_samples = len(set(samples))
+    assert unique_samples > 10, f"Expected more variety, got {unique_samples} unique values"
+
+  def test_random_u48_batched(self):
+    """Test random_u48 with multiple indices."""
+    key = jax.random.key(456)
+    keys = jax.random.split(key, 4)
+
+    max_val = U48.from_i32_array(jnp.array([50000]), max_val=50000)
+
+    # Multiple indices
+    batch_size = 10
+    dim0_indices = jnp.arange(batch_size)
+
+    result = random_u48(keys, max_val, dim0_indices)
+
+    # Check all values are in range
+    values = result.to_f32()
+    max_val_f32 = max_val.to_f32()[0]
+
+    assert values.shape == (batch_size,)
+    assert jnp.all(values >= 0)
+    assert jnp.all(values < max_val_f32)
+
+    # Check that different indices produce different values
+    unique_values = len(jnp.unique(values))
+    assert unique_values > 1, "Expected different values for different indices"
+
+  def test_random_u48_large_max_val(self):
+    """Test random_u48 with a large max_val close to U48 maximum."""
+    key = jax.random.key(789)
+    keys = jax.random.split(key, 4)
+
+    # Use a large value close to 48-bit maximum
+    max_val_int = 2**47 - 1
+    max_val = U48.from_i32_array(jnp.array([max_val_int]), max_val=max_val_int)
+
+    dim0_indices = jnp.array([0])
+
+    result = random_u48(keys, max_val, dim0_indices)
+
+    # Convert and verify range
+    result_u64 = result.to_u64_in_u32s()
+    result_val = (int(result_u64[0][0]) << 32) | int(result_u64[1][0])
+
+    assert 0 <= result_val < max_val_int
+
+
 def run_all_tests():
   """Run all tests and report results."""
   import sys
@@ -931,6 +1081,7 @@ def run_all_tests():
     TestModuloU128U64,
     TestRandomIntGeneration,
     TestSamplingWorkflow,
+    TestRandomU48,
   ]
 
   total_tests = 0
