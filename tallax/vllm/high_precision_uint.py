@@ -121,15 +121,16 @@ class U48:
     new_max_high = self.max_value_bound_per_part[1] + max_carry
     
     if new_max_high >= 2**31:
-      # We allow it in some cases but let's be safe.
-      pass
+      raise ValueError("Value may exceed 2**54, it might overflow so is not allowed.")
       
     return U48(new_parts, [mask, int(new_max_high)])
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> 'U48':
     """Sum along specified axis."""
-    summed_parts = [p.sum(axis=axis, keepdims=keepdims) for p in self.parts]
     num_vals = self.parts[0].shape[axis]
+    if any([bound * num_vals >= 2**31 for bound in self.max_value_bound_per_part]):
+      raise ValueError("Sum may exceed 2**31, it might overflow so is not allowed, handle in smaller sums with normalizes.")
+    summed_parts = [p.sum(axis=axis, keepdims=keepdims) for p in self.parts]
     new_bounds = [b * num_vals for b in self.max_value_bound_per_part]
     result = U48(summed_parts, new_bounds)
     return result.normalize() if result.needs_normalize() else result
