@@ -5,7 +5,7 @@ behavior across platforms.
 """
 
 from dataclasses import dataclass
-from typing import Tuple, List, Union, Optional
+from typing import Tuple, List, Union
 import jax
 import jax.numpy as jnp
 from jax import tree_util
@@ -143,6 +143,19 @@ class U48:
   def sum(self, axis: int = 1, keepdims: bool = True) -> "U48":
     """Sum along specified axis."""
     num_vals = self.parts[0].shape[axis]
+    if (
+      self.max_value_bound_per_part[1] == 0
+      and self.parts[0].shape[1] > NUM_LANES
+      and axis == 1
+      and self.parts[0].ndim == 2
+      and keepdims
+    ):
+      # Sub i32 already and not too big, can do partial sums in i32 then normalize and do final sum in u48
+      return self.map_reduce_sum(
+        self.parts[0],
+        self.max_value_bound_per_part[0],
+      )
+
     if any(
       bound * num_vals >= 2**31 for bound in self.max_value_bound_per_part
     ):
@@ -228,13 +241,13 @@ class U48:
 
 def sample_random_u128_in_u32s(key: jax.Array, shape: tuple) -> list[jax.Array]:
   """Generate a random u128 as 4 u32 arrays from a single JAX RNG key."""
-  with enable_x64():
+  with enable_x64(True):
     higher_bits, lower_bits = [
       jax.random.bits(subkey, shape, jnp.uint64)
       for subkey in jax.random.split(key)
     ]
     u32_scale = jnp.array(2**32, dtype=jnp.uint64)
-    return [
+    u128_in_u32s = [
       x.astype(jnp.uint32)
       for x in [
         higher_bits // u32_scale,
@@ -243,6 +256,7 @@ def sample_random_u128_in_u32s(key: jax.Array, shape: tuple) -> list[jax.Array]:
         lower_bits % u32_scale,
       ]
     ]
+  return u128_in_u32s
 
 
 def modulo_u128_u64(
