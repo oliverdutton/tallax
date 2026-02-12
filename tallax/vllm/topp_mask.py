@@ -29,32 +29,11 @@ from tallax.vllm.topk_mask import find_boundary_idx
 
 
 def map_chunks(x, fn):
+  """Apply a function to chunks of the input array to help force compiler fusion."""
   assert x.shape[1] % NUM_LANES == 0
   return jnp.concatenate(
     [fn(c) for c in jnp.split(x, x.shape[1] // NUM_LANES, 1)], axis=1
   )
-
-
-def sum_in_u48(vals: jax.Array, scale_bits: int, map_fn=lambda x: x) -> U48:
-  """Sum values in U48 with precision scaling."""
-  num_vals = vals.shape[1]
-  scale = 2**scale_bits - 1
-  safe_reduce_size = 2 ** (31 - scale_bits)
-  num_chunks = num_vals // NUM_LANES
-  num_parallel = max(8, pl.cdiv(num_chunks, safe_reduce_size))
-  chunks_per_parallel = pl.cdiv(num_chunks, num_parallel)
-  actual_partial_sum_max = scale * chunks_per_parallel
-
-  return map_reduce(
-    vals,
-    map_fn=map_fn,
-    reduce_fn="sum",
-    num_parallel=num_parallel,
-    apply_post_partial_sums_fn=lambda x: U48.from_i32_array(
-      x, max_val=actual_partial_sum_max
-    ),
-  )
-
 
 
 def topp_mask_ref_inputs(
@@ -84,23 +63,29 @@ def topp_mask_ref_inputs(
     )  # logits.max(axis=1, keepdims=True)
 
   scale = 2**scale_bits - 1
-  unnorm_probs_i32 = map_chunks(logits, lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32))
+  unnorm_probs_i32 = map_chunks(
+    logits,
+    lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32),
+  )
 
   # 2. Convert to U48 and sum safely using map_reduce_sum
-  total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits)
+  total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=scale)
 
   # 3. Compute target sum: total_sum * top_p (also bounded by max_total_sum)
   target_sum_u48 = U48.from_f32(
-    total_sum_u48.to_f32() * top_p,
-    max_val=num_vals * scale)
+    total_sum_u48.to_f32() * top_p, max_val=num_vals * scale
+  )
 
   # 4. Binary search for threshold
   # Uses int32 during parallel reduction, then converts to U48
   def predicate_fn(threshold):
     """Check if cumulative sum of values >= threshold is less than target."""
     return (
-      sum_in_u48(unnorm_probs_i32, scale_bits,
-                 map_fn=lambda chunk: jnp.where(chunk >= threshold, chunk, 0))
+      U48.map_reduce_sum(
+        unnorm_probs_i32,
+        max_val=scale,
+        map_fn=lambda chunk: jnp.where(chunk >= threshold, chunk, 0),
+      )
       < target_sum_u48
     )
 
@@ -112,7 +97,9 @@ def topp_mask_ref_inputs(
   )
   # 5. Apply mask to original logits
   # Broadcast threshold from (batch, NUM_LANES) to (batch, vocab_size)
-  threshold_i32 = pltpu.repeat(threshold_i32, logits.shape[1] // NUM_LANES, axis=1)
+  threshold_i32 = pltpu.repeat(
+    threshold_i32, logits.shape[1] // NUM_LANES, axis=1
+  )
   mask = unnorm_probs_i32 >= threshold_i32
   if return_unnorm_i32_probs:
     return jnp.where(mask, unnorm_probs_i32, 0)
@@ -142,12 +129,14 @@ def topp_sample_ref_inputs(
   scale = 2**scale_bits - 1
   max_total_sum = num_vals * scale
 
-  total_sum_u48 = sum_in_u48(masked_probs_i32, scale_bits)
+  total_sum_u48 = U48.map_reduce_sum(masked_probs_i32, max_val=scale)
 
   # 3. Generate random target in [0, total_sum)
   # Using specialized U48 random generation
   rng_keys = list(jax.random.split(rng_key_ref, 4))
-  target_u48 = random_u48(rng_keys, total_sum_u48, shape=(logits_ref.shape[0], 1))
+  target_u48 = random_u48(
+    rng_keys, total_sum_u48, shape=(logits_ref.shape[0], 1)
+  )
 
   # 4. Use find_boundary_idx to sample the token
   # map_fn returns the probs themselves as U48

@@ -8,8 +8,12 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.bitonic.topk import max_arrays
-from tallax.vllm.high_precision_uint import U48, modulo_u128_u64, sample_random_u128_in_u32s
-from tallax.vllm.topp_mask import topp_mask, sum_in_u48
+from tallax.vllm.high_precision_uint import (
+  U48,
+  modulo_u128_u64,
+  sample_random_u128_in_u32s,
+)
+from tallax.vllm.topp_mask import topp_mask
 from tallax.vllm.topk_mask import topk_mask_ref_inputs, find_boundary_idx
 from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.utils import NUM_LANES, map_reduce
@@ -20,6 +24,7 @@ _SAMPLING_EPS = 1e-5
 def topk_topp_mask_and_sample_kernel(
   logits_ref,
   rng_key_ref,
+  random_u128_in_u32s_ref,
   k_ref,
   p_ref,
   temperature_ref,
@@ -29,7 +34,7 @@ def topk_topp_mask_and_sample_kernel(
   stable: bool,
   replace_val: float,
   sample_in_i32: bool,
-  underlying_logits_dtype = None,
+  underlying_logits_dtype=None,
 ):
   """Pallas kernel for topk/topp masking and sampling.
 
@@ -51,7 +56,10 @@ def topk_topp_mask_and_sample_kernel(
     def scoped_body(scoped_ref):
       scoped_ref[...] = logits_ref[...].astype(jnp.float32)
       return topk_topp_mask_and_sample_kernel(
-        scoped_ref, rng_key_ref,  k_ref,
+        scoped_ref,
+        rng_key_ref,
+        random_u128_in_u32s_ref,
+        k_ref,
         p_ref,
         temperature_ref,
         dim0_offset_ref,
@@ -61,6 +69,7 @@ def topk_topp_mask_and_sample_kernel(
         sample_in_i32=sample_in_i32,
         underlying_logits_dtype=logits_ref.dtype,
       )
+
     return pl.run_scoped(scoped_body, pltpu.VMEM(logits_ref.shape, jnp.float32))
 
   # logits = logits_ref[...]
@@ -72,31 +81,41 @@ def topk_topp_mask_and_sample_kernel(
   logits_max_lanes = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
   greedy_sampled = find_boundary_idx(
     logits_ref,
-    map_fn=lambda chunk: (chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
+    map_fn=lambda chunk: (
+      chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)
+    ).astype(jnp.int32),
     # stable -> first matching index
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
   )[:, :1]
 
   # Top-k masking
   logits = topk_mask_ref_inputs(
-    logits_ref, k_ref, 
+    logits_ref,
+    k_ref,
     replace_val=replace_val,
     stable=stable,
-    underlying_dtype=underlying_logits_dtype)
+    underlying_dtype=underlying_logits_dtype,
+  )
   logits /= temperature_ref[...].astype(logits.dtype)
   logits_max /= temperature_ref[...].astype(logits.dtype)
 
   # Top-p masking
   logits = topp_mask(
-    logits, p_ref[...], replace_val=replace_val,
+    logits,
+    p_ref[...],
+    replace_val=replace_val,
     return_unnorm_i32_probs=sample_in_i32,
-    logits_max=logits_max
+    logits_max=logits_max,
   )
 
   if not sample_in_i32:
     # Random key splitting is based on idx in ravelled array
     # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-    batch_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 0) + pl.program_id(0) * logits_ref.shape[0] + dim0_offset_ref[0]
+    batch_idx = (
+      lax.broadcasted_iota(jnp.int32, logits.shape, 0)
+      + pl.program_id(0) * logits_ref.shape[0]
+      + dim0_offset_ref[0]
+    )
     token_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 1)
     next_tokens = sparse_random_categorical(
       rng_key_ref,
@@ -107,31 +126,39 @@ def topk_topp_mask_and_sample_kernel(
       dtype=jnp.float32,
     )[1]  # Take sampled token indices
   else:
-    unnorm_probs_i32 = logits # alias
+    unnorm_probs_i32 = logits  # alias
     # High-precision integer sampling
-    total_sum_u48 = sum_in_u48(unnorm_probs_i32, scale_bits=24)
+    total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=2**24 - 1)
     # rng_key_ref contains pre-generated random u128 as 4 u32 arrays
     # This matches how JAX random.randint samples in i64
     sampled_u64_in_u32s = modulo_u128_u64(
-      [ref[...] for ref in rng_key_ref],
-      total_sum_u48.to_u64_in_u32s()
+      [ref[...] for ref in random_u128_in_u32s_ref],
+      total_sum_u48.to_u64_in_u32s(),
     )
     target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
     next_tokens = find_boundary_idx(
       unnorm_probs_i32,
-      map_fn=lambda x: U48(x, max_val=2**24-1),
-      target=target_u48
+      map_fn=lambda x: U48(x, max_val=2**24 - 1),
+      target=target_u48,
     )
   # # Reshape to (block_token, 1) to match output ref
   if next_tokens.ndim == 1:
     next_tokens = jnp.expand_dims(next_tokens, axis=-1)
 
-  sampled_tokens_ref[...] = jnp.where(temperature_ref[...] < _SAMPLING_EPS, greedy_sampled, next_tokens)
+  sampled_tokens_ref[...] = jnp.where(
+    temperature_ref[...] < _SAMPLING_EPS, greedy_sampled, next_tokens
+  )
 
 
 @functools.partial(
   jax.jit,
-  static_argnames=["stable", "replace_val", "block_token", "interpret", "sample_in_i32"],
+  static_argnames=[
+    "stable",
+    "replace_val",
+    "block_token",
+    "interpret",
+    "sample_in_i32",
+  ],
 )
 def topk_topp_mask_and_sample(
   logits: jax.Array,
@@ -145,7 +172,7 @@ def topk_topp_mask_and_sample(
   replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
-  sample_in_i32: bool = False,
+  sample_in_i32: bool = True,
 ) -> jax.Array:
   """Top-k, top-p masking and sampling using Pallas.
 
@@ -201,14 +228,21 @@ def topk_topp_mask_and_sample(
 
   if padded_batch != batch_size:
     pad_size = padded_batch - batch_size
-    logits = jnp.pad(logits, ((0, pad_size), (0, 0)), constant_values=replace_val)
+    logits = jnp.pad(
+      logits, ((0, pad_size), (0, 0)), constant_values=replace_val
+    )
     k = jnp.pad(k, ((0, pad_size), (0, 0)), constant_values=1)
     p = jnp.pad(p, ((0, pad_size), (0, 0)), constant_values=1.0)
-    temperature = jnp.pad(temperature, ((0, pad_size), (0, 0)), constant_values=1.0)
+    temperature = jnp.pad(
+      temperature, ((0, pad_size), (0, 0)), constant_values=1.0
+    )
 
-  if sample_in_i32:
-    # Generate random u128 as 4 u32 arrays outside the kernel
-    rng_key = tuple(sample_random_u128_in_u32s(rng_key, (padded_batch, 1)))
+  # Generate random u128 as 4 u32 arrays outside the kernel
+  random_u128_in_u32s = (
+    tuple(sample_random_u128_in_u32s(rng_key, (padded_batch, 1)))
+    if sample_in_i32
+    else None
+  )
 
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
@@ -223,16 +257,30 @@ def topk_topp_mask_and_sample(
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      tuple(pl.BlockSpec((block_token, 1), lambda i: (i, 0)) for _ in range(4)) if sample_in_i32 else pl.BlockSpec(memory_space=pltpu.SMEM),  # rng random bits / rng_key
+      pl.BlockSpec(memory_space=pltpu.SMEM)
+      if not sample_in_i32
+      else None,  # rng random bits / rng_key
+      jax.tree.map(
+        lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+        random_u128_in_u32s,
+      ),  # random u128 in u32s
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature
       pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
+    # compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
-  )(logits, rng_key, k, p, temperature, dim0_offset_arr)
+  )(
+    logits,
+    rng_key if not sample_in_i32 else None,
+    random_u128_in_u32s,
+    k,
+    p,
+    temperature,
+    dim0_offset_arr,
+  )
 
   # Remove padding
   result = result[:batch_size, 0]

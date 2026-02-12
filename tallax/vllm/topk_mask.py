@@ -20,7 +20,12 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.vllm.binary_search import binary_search
-from tallax.tax.utils import NUM_LANES, get_dtype_info, map_reduce, to_32bit_dtype
+from tallax.tax.utils import (
+  NUM_LANES,
+  get_dtype_info,
+  map_reduce,
+  to_32bit_dtype,
+)
 
 
 def _find_boundary_chunk(
@@ -55,7 +60,9 @@ def _find_boundary_chunk(
   # Calculate number of chunks using ceiling division
   num_chunks = arr.shape[1] // chunk_size
   chunks = [
-    arr[:, i * chunk_size : (i + 1) * chunk_size].astype(to_32bit_dtype(arr.dtype))
+    arr[:, i * chunk_size : (i + 1) * chunk_size].astype(
+      to_32bit_dtype(arr.dtype)
+    )
     for i in range(num_chunks)
   ]
   assert chunk_size % NUM_LANES == 0
@@ -83,9 +90,14 @@ def _find_boundary_chunk(
   ref_offset += boundary_idx * chunk_size
   # Reconstruct boundary_slice using dynamic_slice
   # We want ref[i, ref_offset[i]:ref_offset[i]+chunk_size]
-  # We do this for all batch items using vmap or a loop with where  
+  # We do this for all batch items using vmap or a loop with where
   # Initialize with first slice
-  boundary_slices = [ref[:, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)].astype(to_32bit_dtype(ref.dtype)) for i in range(batch_size)]
+  boundary_slices = [
+    ref[
+      :, pl.dslice(pl.multiple_of(ref_offset[i, 0], chunk_size), chunk_size)
+    ].astype(to_32bit_dtype(ref.dtype))
+    for i in range(batch_size)
+  ]
   boundary_slice = boundary_slices[0]
   for i in range(1, batch_size):
     boundary_slice = jnp.where(iota0 == i, boundary_slices[i], boundary_slice)
@@ -98,16 +110,19 @@ def _find_boundary_chunk(
     )
   return ref_offset, boundary_slice, target
 
+
 def find_boundary_idx(ref_or_arr, map_fn, target):
   """Find the lowest idx when the map_fn(ref[...]).cumsum(1) >= target."""
-  if 'Ref' not in str(ref_or_arr):
+  if "Ref" not in str(ref_or_arr):
     # We need a ref, as it's the only way to do dynamic_slices in mosaic
     # If it's not a ref (doesn't have memory space attr), we'll turn it into one.
     # We don't do this unconditionally as it incurs a copy
     arr = ref_or_arr
+
     def scoped_body(scoped_ref):
       scoped_ref[...] = arr
       return find_boundary_idx(scoped_ref, map_fn, target)
+
     return pl.run_scoped(scoped_body, pltpu.VMEM(arr.shape, arr.dtype))
   ref = ref_or_arr
 
@@ -136,7 +151,7 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
     (mapped_slice * (iota1 <= i)).sum(1, keepdims=True)
     for i in range(NUM_LANES)
   ]
-  return (ref_offset + sum((c < target) for c in cumsums))
+  return ref_offset + sum((c < target) for c in cumsums)
 
 
 def topk_mask_ref_inputs(
@@ -145,7 +160,7 @@ def topk_mask_ref_inputs(
   *,
   replace_val: float,
   stable: bool,
-  underlying_dtype = None,
+  underlying_dtype=None,
 ):
   """Pallas kernel for topk masking with parallel chunk-based reduction.
 
@@ -175,24 +190,28 @@ def topk_mask_ref_inputs(
   _, threshold, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, logits.dtype) for v in (finfo.min, finfo.max)),
-    num_iter=(underlying_dtype.itemsize * 8) if underlying_dtype is not None else 32, # 32 for f32, 16 for bf16
+    num_iter=(underlying_dtype.itemsize * 8)
+    if underlying_dtype is not None
+    else 32,  # 32 for f32, 16 for bf16
     underlying_dtype=underlying_dtype,
   )
 
   assert logits.shape[1] % NUM_LANES == 0
   if not stable:
     # Simple threshold masking
-    mask = (logits >= pltpu.repeat(
+    mask = logits >= pltpu.repeat(
       threshold,
       logits.shape[1] // NUM_LANES,
       axis=1,
-    ))
+    )
   else:
     # Stable masking, only k values
     # Find exact boundary for stable masking
     boundary_idx = find_boundary_idx(
       logits_ref,
-      map_fn=lambda chunk: (chunk == pltpu.repeat(threshold, chunk.shape[1] // NUM_LANES, 1)).astype(jnp.int32),
+      map_fn=lambda chunk: (
+        chunk == pltpu.repeat(threshold, chunk.shape[1] // NUM_LANES, 1)
+      ).astype(jnp.int32),
       target=k
       - map_reduce(
         logits,
@@ -206,15 +225,16 @@ def topk_mask_ref_inputs(
       axis=1,
     )
     boundary_idx = pltpu.repeat(
-      boundary_idx,
-      logits.shape[1] // NUM_LANES,
-      axis=1
+      boundary_idx, logits.shape[1] // NUM_LANES, axis=1
     )
     mask = (logits > threshold) | (
-      (logits == threshold) &
-      (jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx)
+      (logits == threshold)
+      & (
+        jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx
+      )
     )
   return jnp.where(mask, logits, replace_val).astype(logits_ref.dtype)
+
 
 def topk_mask_pallas_kernel(
   logits_ref,
@@ -230,8 +250,7 @@ def topk_mask_pallas_kernel(
 
 
 @functools.partial(
-  jax.jit,
-  static_argnames=["replace_val", "stable", "interpret"]
+  jax.jit, static_argnames=["replace_val", "stable", "interpret"]
 )
 def topk_mask_pallas(
   x: jax.Array,
