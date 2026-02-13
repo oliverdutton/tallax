@@ -10,6 +10,7 @@ import jax
 import jax.numpy as jnp
 from jax import tree_util
 from jax.experimental import enable_x64
+from jax.extend.random import threefry_2x32
 from jax.experimental import pallas as pl
 
 from tallax.tax.sparse_random import sparse_random_bits
@@ -241,22 +242,41 @@ class U48:
 
 def sample_random_u128_in_u32s(key: jax.Array, shape: tuple) -> list[jax.Array]:
   """Generate a random u128 as 4 u32 arrays from a single JAX RNG key."""
-  with enable_x64(True):
-    higher_bits, lower_bits = [
-      jax.random.bits(subkey, shape, jnp.uint64)
-      for subkey in jax.random.split(key)
-    ]
-    u32_scale = jnp.array(2**32, dtype=jnp.uint64)
-    u128_in_u32s = [
-      x.astype(jnp.uint32)
-      for x in [
-        higher_bits // u32_scale,
-        higher_bits % u32_scale,
-        lower_bits // u32_scale,
-        lower_bits % u32_scale,
-      ]
-    ]
-  return u128_in_u32s
+  # with enable_x64(True):
+  #   higher_bits, lower_bits = [
+  #     jax.random.bits(subkey, shape, jnp.uint64)
+  #     for subkey in jax.random.split(key)
+  #   ]
+  #   u32_scale = jnp.array(2**32, dtype=jnp.uint64)
+  #   u128_in_u32s = [
+  #     x.astype(jnp.uint32)
+  #     for x in [
+  #       higher_bits // u32_scale,
+  #       higher_bits % u32_scale,
+  #       lower_bits // u32_scale,
+  #       lower_bits % u32_scale,
+  #     ]
+  #   ]
+
+  # x64 free simulation of x64 code path in u32
+  # Done to avoid using jax.enable_x64 which led to MLIR verification errors under jit.
+  if len(shape) != 2:
+    raise NotImplementedError
+
+  def compute_bits(k):
+    return list(
+      threefry_2x32(
+        jax.random.key_data(k),
+        jax.lax.iota(jnp.uint32, shape[0] * shape[1] * 2),
+      ).reshape(2, *shape)
+    )
+
+  subkeys = jax.random.split(key)
+  k1, k2 = subkeys
+  return [
+    *compute_bits(k1),
+    *compute_bits(k2),
+  ]
 
 
 def modulo_u128_u64(
