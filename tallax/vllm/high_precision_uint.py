@@ -292,8 +292,6 @@ def modulo_u128_u64(
   for i in range(128):
     state = body_fun(i, state)
   return state
-  # final_rh, final_rl = jax.lax.fori_loop(0, 128, body_fun, init_state, unroll=True)
-  # return final_rh, final_rl
 
 
 def random_u48(
