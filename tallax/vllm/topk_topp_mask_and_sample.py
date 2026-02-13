@@ -7,7 +7,6 @@ from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
-from tallax.tax.bitonic.topk import max_arrays
 from tallax.vllm.high_precision_uint import (
   U48,
   modulo_u128_u64,
