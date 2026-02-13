@@ -297,6 +297,7 @@ def topk_topp_mask_and_sample(
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
     # compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
+    debug=debug,
   )(
     logits,
     rng_key if not sample_in_i32 else None,
