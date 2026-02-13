@@ -178,6 +178,7 @@ def topk_topp_mask_and_sample_kernel(
     "block_token",
     "interpret",
     "sample_in_i32",
+    "debug",
   ],
 )
 def topk_topp_mask_and_sample(
