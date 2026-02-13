@@ -41,8 +41,6 @@ def topp_mask_ref_inputs(
   top_p_ref,
   *,
   scale_bits: int = 24,
-  replace_val: float = -1e12,
-  return_unnorm_i32_probs: bool = False,
   logits_max: jax.Array = None,
 ) -> jax.Array:
   """Core nucleus sampling logic for both standard and Pallas interfaces."""
@@ -101,58 +99,13 @@ def topp_mask_ref_inputs(
     threshold_i32, logits.shape[1] // NUM_LANES, axis=1
   )
   mask = unnorm_probs_i32 >= threshold_i32
-  if return_unnorm_i32_probs:
-    return jnp.where(mask, unnorm_probs_i32, 0)
-  return jnp.where(mask, logits, replace_val)
-
-
-def topp_sample_ref_inputs(
-  logits_ref,
-  rng_key_ref,
-  top_p_ref,
-  *,
-  scale_bits: int = 24,
-  logits_max: jax.Array = None,
-) -> jax.Array:
-  """Categorical sampling after top-p masking using high-precision logic."""
-  # 1. Get masked unnormalized probs (batch, vocab_size)
-  masked_probs_i32 = topp_mask_ref_inputs(
-    logits_ref,
-    top_p_ref,
-    scale_bits=scale_bits,
-    return_unnorm_i32_probs=True,
-    logits_max=logits_max,
-  )
-
-  # 2. Sum them to get total sum
-  scale = 2**scale_bits - 1
-
-  total_sum_u48 = U48.map_reduce_sum(masked_probs_i32, max_val=scale)
-
-  # 3. Generate random target in [0, total_sum)
-  # Using specialized U48 random generation
-  rng_keys = list(jax.random.split(rng_key_ref, 4))
-  target_u48 = random_u48(
-    rng_keys, total_sum_u48, shape=(logits_ref.shape[0], 1)
-  )
-
-  # 4. Use find_boundary_idx to sample the token
-  # map_fn returns the probs themselves as U48
-  sampled_tokens = find_boundary_idx(
-    masked_probs_i32,
-    map_fn=lambda x: U48(x, max_val=scale),
-    target=target_u48,
-  )
-
-  return sampled_tokens
+  return jnp.where(mask, unnorm_probs_i32, 0)
 
 
 def topp_mask(
   logits: jax.Array,
   top_p: jax.Array,
   scale_bits: int = 24,
-  replace_val: float = -1e12,
-  return_unnorm_i32_probs: bool = False,
   logits_max: jax.Array = None,
 ) -> jax.Array:
   """Platform-portable top-p sampling using high-precision arithmetic."""
@@ -160,8 +113,6 @@ def topp_mask(
     logits,
     top_p,
     scale_bits=scale_bits,
-    replace_val=replace_val,
-    return_unnorm_i32_probs=return_unnorm_i32_probs,
     logits_max=logits_max,
   )
 
@@ -172,22 +123,20 @@ def topp_mask_pallas_kernel(
   output_ref,
   *,
   scale_bits: int,
-  replace_val: float,
 ):
   """Pallas kernel writing results to an output reference."""
   output_ref[...] = topp_mask_ref_inputs(
-    logits_ref, top_p_ref, scale_bits=scale_bits, replace_val=replace_val
+    logits_ref, top_p_ref, scale_bits=scale_bits
   )
 
 
 @functools.partial(
-  jax.jit, static_argnames=["scale_bits", "replace_val", "interpret"]
+  jax.jit, static_argnames=["scale_bits", "interpret"]
 )
 def topp_mask_pallas(
   logits: jax.Array,
   top_p: jax.Array,
   scale_bits: int = 24,
-  replace_val: float = -1e12,
   interpret: bool = False,
 ) -> jax.Array:
   """Pallas-based interface for nucleus sampling.
@@ -196,7 +145,6 @@ def topp_mask_pallas(
     logits: Input array of shape [batch, vocab_size]
     top_p: Number of top elements
     scale_bits: Precision for probability scaling
-    replace_val: Value for masked elements
     interpret: Whether to use interpret mode
 
   Returns:
@@ -209,22 +157,8 @@ def topp_mask_pallas(
     functools.partial(
       topp_mask_pallas_kernel,
       scale_bits=scale_bits,
-      replace_val=replace_val,
     ),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     out_shape=output_shape,
     interpret=interpret,
   )(logits, top_p)
-
-
-def topp_sample(
-  logits: jax.Array,
-  rng_key: jax.Array,
-  top_p: jax.Array,
-  scale_bits: int = 24,
-  logits_max: jax.Array = None,
-) -> jax.Array:
-  """Nucleus sampling using high-precision integer arithmetic."""
-  return topp_sample_ref_inputs(
-    logits, rng_key, top_p, scale_bits=scale_bits, logits_max=logits_max
-  )
