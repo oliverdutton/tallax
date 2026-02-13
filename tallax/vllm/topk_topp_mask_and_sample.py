@@ -35,7 +35,6 @@ def topk_topp_mask_and_sample_kernel(
   replace_val: float,
   sample_in_i32: bool,
   underlying_logits_dtype=None,
-  debug: bool = False,
 ):
   """Pallas kernel for topk/topp masking and sampling.
 
@@ -92,9 +91,6 @@ def topk_topp_mask_and_sample_kernel(
   # Apply temperature, only after argmax's incase 0 / negative
   temperature = temperature_ref[...].astype(logits_ref.dtype)
 
-  if debug:
-    jax.debug.print("temperatures={},\nk={},\np={},\nstable={}", temperature)
-
   # Top-k masking
   logits = topk_mask_ref_inputs(
     logits_ref,
@@ -106,9 +102,6 @@ def topk_topp_mask_and_sample_kernel(
   logits /= temperature
   logits_max /= temperature
 
-  if debug:
-    jax.debug.print("Post top-k\nlogits={}\nlogits_max={}", logits, logits_max)
-
   # Top-p masking
   logits = topp_mask(
     logits,
@@ -117,9 +110,6 @@ def topk_topp_mask_and_sample_kernel(
     return_unnorm_i32_probs=sample_in_i32,
     logits_max=logits_max,
   )
-
-  if debug:
-    jax.debug.print("Post top-p\nlogits={}", logits)
 
   if not sample_in_i32:
     # Random key splitting is based on idx in ravelled array
@@ -148,18 +138,12 @@ def topk_topp_mask_and_sample_kernel(
       [ref[...] for ref in random_u128_in_u32s_ref],
       total_sum_u48.to_u64_in_u32s(),
     )
-    if debug:
-      jax.debug.print("unnorm_probs_i32={}", unnorm_probs_i32)
-      jax.debug.print("total_sum_u48={}", total_sum_u48.parts)
-      jax.debug.print("sampled_u64_in_u32s={}", sampled_u64_in_u32s)
     target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
     next_tokens = find_boundary_idx(
       unnorm_probs_i32,
       map_fn=lambda x: U48(x, max_val=2**24 - 1),
       target=target_u48,
     )
-    if debug:
-      jax.debug.print("next_tokens={}", next_tokens)
 
   # # Reshape to (block_token, 1) to match output ref
   if next_tokens.ndim == 1:
@@ -178,7 +162,6 @@ def topk_topp_mask_and_sample_kernel(
     "block_token",
     "interpret",
     "sample_in_i32",
-    "debug",
   ],
 )
 def topk_topp_mask_and_sample(
@@ -194,7 +177,6 @@ def topk_topp_mask_and_sample(
   block_token: int = 8,
   interpret: bool = False,
   sample_in_i32: bool = True,
-  debug: bool = False,
 ) -> jax.Array:
   """Top-k, top-p masking and sampling using Pallas.
 
@@ -265,8 +247,6 @@ def topk_topp_mask_and_sample(
     if sample_in_i32
     else None
   )
-  if debug:
-    jax.debug.print("random_u128_in_u32s={}", random_u128_in_u32s)
 
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
@@ -276,7 +256,6 @@ def topk_topp_mask_and_sample(
       stable=stable,
       replace_val=replace_val,
       sample_in_i32=sample_in_i32,
-      debug=debug,
     ),
     out_shape=output_shape,
     grid=(num_blocks,),
@@ -295,9 +274,8 @@ def topk_topp_mask_and_sample(
       pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-    # compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
-    debug=debug,
   )(
     logits,
     rng_key if not sample_in_i32 else None,

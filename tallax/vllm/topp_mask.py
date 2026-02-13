@@ -125,9 +125,7 @@ def topp_sample_ref_inputs(
   )
 
   # 2. Sum them to get total sum
-  num_vals = logits_ref.shape[1]
   scale = 2**scale_bits - 1
-  max_total_sum = num_vals * scale
 
   total_sum_u48 = U48.map_reduce_sum(masked_probs_i32, max_val=scale)
 

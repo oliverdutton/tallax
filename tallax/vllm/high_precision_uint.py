@@ -2,6 +2,8 @@
 
 Specialized for 48-bit (24 bits per part) for efficiency and deterministic
 behavior across platforms.
+
+Parts are stored in descending order: [high, low].
 """
 
 from dataclasses import dataclass
@@ -21,11 +23,11 @@ from tallax.tax.utils import NUM_LANES, map_reduce
 class U48:
   """48-bit unsigned integer using two i32 parts (24 bits each).
 
-  Value = parts[0] + parts[1] * 2^24
+  Value = parts[0] * 2^24 + parts[1]
 
   Attributes:
-    parts: List of 2 i32 arrays representing the value
-    max_value_bound_per_part: List of 2 upper bounds for each part
+    parts: List of 2 i32 arrays [high, low] representing the value
+    max_value_bound_per_part: List of 2 upper bounds [high_bound, low_bound]
   """
 
   parts: list[jax.Array]
@@ -44,7 +46,7 @@ class U48:
       **kwargs: Ignored (for backward compatibility)
     """
     if isinstance(x_or_parts, (list, tuple)):
-      # Constructed from existing parts
+      # Constructed from existing parts [high, low]
       self.parts = list(x_or_parts)
       if isinstance(max_val, (list, tuple)):
         self.max_value_bound_per_part = list(max_val)
@@ -52,8 +54,8 @@ class U48:
         # Fallback if only single max_val provided for parts
         mask = (1 << 24) - 1
         self.max_value_bound_per_part = [
-          mask,
           int((max_val or (2**48 - 1)) >> 24),
+          mask,
         ]
     else:
       # Initialization from array and max value
@@ -61,50 +63,50 @@ class U48:
         max_val = 2**48 - 1
 
       mask = (1 << 24) - 1
-      self.parts = [x_or_parts & mask, x_or_parts >> 24]
+      self.parts = [x_or_parts >> 24, x_or_parts & mask]
 
       if isinstance(max_val, (list, tuple)):
         self.max_value_bound_per_part = list(max_val)
       else:
-        self.max_value_bound_per_part = [mask, int(max_val >> 24)]
+        self.max_value_bound_per_part = [int(max_val >> 24), mask]
 
   @classmethod
   def from_i32_array(cls, x: jax.Array, max_val: int, **kwargs) -> "U48":
-    """Create from i32 array by splitting into 24-bit parts."""
+    """Create from i32 array by splitting into 24-bit parts [high, low]."""
     mask = (1 << 24) - 1
-    parts = [x & mask, x >> 24]
-    bounds = [mask, int(max_val >> 24)]
+    parts = [x >> 24, x & mask]
+    bounds = [int(max_val >> 24), mask]
     return cls(parts, bounds)
 
   @classmethod
   def from_f32(cls, x: jax.Array, max_val: int, **kwargs) -> "U48":
-    """Create from f32 by extracting 24-bit parts."""
+    """Create from f32 by extracting 24-bit parts [high, low]."""
     mask = (1 << 24) - 1
     modulo = float(1 << 24)
     parts = [
-      jnp.fmod(x, modulo).astype(jnp.int32),
       jnp.floor(x / modulo).astype(jnp.int32),
+      jnp.fmod(x, modulo).astype(jnp.int32),
     ]
-    bounds = [mask, int(max_val >> 24)]
+    bounds = [int(max_val >> 24), mask]
     return cls(parts, bounds)
 
   def to_f32(self) -> jax.Array:
     """Convert back to f32."""
     base = float(1 << 24)
-    return (
-      self.parts[0].astype(jnp.float32)
-      + self.parts[1].astype(jnp.float32) * base
+    return self.parts[0].astype(jnp.float32) * base + self.parts[1].astype(
+      jnp.float32
     )
 
   def to_u64_in_u32s(self) -> Tuple[jax.Array, jax.Array]:
     """Convert to a pair of u32 values (high, low) representing a 64-bit value."""
     normalized = self.normalize() if self.needs_normalize() else self
-    # low 32 bits: bits 0-23 from parts[0], bits 24-31 from bits 0-7 of parts[1]
-    low = normalized.parts[0].astype(jnp.uint32) | (
-      (normalized.parts[1].astype(jnp.uint32) & 0xFF) << 24
+    # parts[0] = high 24 bits, parts[1] = low 24 bits
+    # low 32 bits: bits 0-23 from parts[1], bits 24-31 from bits 0-7 of parts[0]
+    low = normalized.parts[1].astype(jnp.uint32) | (
+      (normalized.parts[0].astype(jnp.uint32) & 0xFF) << 24
     )
-    # high 32 bits: bits 32-47 from bits 8-23 of parts[1]
-    high = normalized.parts[1].astype(jnp.uint32) >> 8
+    # high 32 bits: bits 32-47 from bits 8-23 of parts[0]
+    high = normalized.parts[0].astype(jnp.uint32) >> 8
     return high, low
 
   @classmethod
@@ -114,47 +116,48 @@ class U48:
     """Create from a pair of u32 values [high, low]."""
     high, low = u
     mask24 = (1 << 24) - 1
-    p0 = (low & mask24).astype(jnp.int32)
-    p1 = ((low >> 24) | (high << 8)).astype(jnp.int32)
-    return cls([p0, p1], [mask24, mask24])
+    p_low = (low & mask24).astype(jnp.int32)
+    p_high = ((low >> 24) | (high << 8)).astype(jnp.int32)
+    return cls([p_high, p_low], [mask24, mask24])
 
   def needs_normalize(self) -> bool:
     """Check if carry propagation is needed."""
     mask = (1 << 24) - 1
-    if self.max_value_bound_per_part[0] > mask:
+    # Check if low part (parts[1]) bound exceeds 24 bits
+    if self.max_value_bound_per_part[1] > mask:
       return True
     return any(b >= 2**31 for b in self.max_value_bound_per_part)
 
   def normalize(self) -> "U48":
-    """Propagate carries from parts[0] to parts[1]."""
+    """Propagate carries from low part (parts[1]) to high part (parts[0])."""
     mask = (1 << 24) - 1
-    carry = self.parts[0] >> 24
-    new_parts = [self.parts[0] & mask, self.parts[1] + carry]
+    carry = self.parts[1] >> 24
+    new_parts = [self.parts[0] + carry, self.parts[1] & mask]
 
-    max_carry = self.max_value_bound_per_part[0] >> 24
-    new_max_high = self.max_value_bound_per_part[1] + max_carry
+    max_carry = self.max_value_bound_per_part[1] >> 24
+    new_max_high = self.max_value_bound_per_part[0] + max_carry
 
     if new_max_high >= 2**31:
       raise ValueError(
         "Value may exceed 2**54, it might overflow so is not allowed."
       )
 
-    return U48(new_parts, [mask, int(new_max_high)])
+    return U48(new_parts, [int(new_max_high), mask])
 
   def sum(self, axis: int = 1, keepdims: bool = True) -> "U48":
     """Sum along specified axis."""
     num_vals = self.parts[0].shape[axis]
     if (
-      self.max_value_bound_per_part[1] == 0
-      and self.parts[0].shape[1] > NUM_LANES
+      self.max_value_bound_per_part[0] == 0
+      and self.parts[1].shape[1] > NUM_LANES
       and axis == 1
-      and self.parts[0].ndim == 2
+      and self.parts[1].ndim == 2
       and keepdims
     ):
       # Sub i32 already and not too big, can do partial sums in i32 then normalize and do final sum in u48
       return self.map_reduce_sum(
-        self.parts[0],
-        self.max_value_bound_per_part[0],
+        self.parts[1],
+        self.max_value_bound_per_part[1],
       )
 
     if any(
@@ -219,11 +222,11 @@ class U48:
   def __sub__(self, other: "U48") -> "U48":
     s1 = self.normalize() if self.needs_normalize() else self
     s2 = other.normalize() if other.needs_normalize() else other
-    # Assumes s1 >= s2.
-    borrow = (s1.parts[0] < s2.parts[0]).astype(jnp.int32)
-    p0 = s1.parts[0] - s2.parts[0] + (borrow << 24)
-    p1 = s1.parts[1] - s2.parts[1] - borrow
-    return U48([p0, p1], s1.max_value_bound_per_part)
+    # Assumes s1 >= s2. Borrow from high (parts[0]) when low (parts[1]) underflows.
+    borrow = (s1.parts[1] < s2.parts[1]).astype(jnp.int32)
+    p_low = s1.parts[1] - s2.parts[1] + (borrow << 24)
+    p_high = s1.parts[0] - s2.parts[0] - borrow
+    return U48([p_high, p_low], s1.max_value_bound_per_part)
 
   def __mul__(self, other: jax.Array) -> "U48":
     return U48([p * other for p in self.parts], self.max_value_bound_per_part)
@@ -234,49 +237,17 @@ class U48:
   def __lt__(self, other: "U48") -> jax.Array:
     s1 = self.normalize() if self.needs_normalize() else self
     s2 = other.normalize() if other.needs_normalize() else other
-    less_high = s1.parts[1] < s2.parts[1]
-    equal_high = s1.parts[1] == s2.parts[1]
-    less_low = s1.parts[0] < s2.parts[0]
+    less_high = s1.parts[0] < s2.parts[0]
+    equal_high = s1.parts[0] == s2.parts[0]
+    less_low = s1.parts[1] < s2.parts[1]
     return less_high | (equal_high & less_low)
 
 
-def sample_random_u128_in_u32s(key: jax.Array, shape: tuple) -> list[jax.Array]:
+def sample_random_u128_in_u32s(
+  key: jax.Array, shape: tuple[int, ...]
+) -> tuple[jax.Array, ...]:
   """Generate a random u128 as 4 u32 arrays from a single JAX RNG key."""
-  # with enable_x64(True):
-  #   higher_bits, lower_bits = [
-  #     jax.random.bits(subkey, shape, jnp.uint64)
-  #     for subkey in jax.random.split(key)
-  #   ]
-  #   u32_scale = jnp.array(2**32, dtype=jnp.uint64)
-  #   u128_in_u32s = [
-  #     x.astype(jnp.uint32)
-  #     for x in [
-  #       higher_bits // u32_scale,
-  #       higher_bits % u32_scale,
-  #       lower_bits // u32_scale,
-  #       lower_bits % u32_scale,
-  #     ]
-  #   ]
-
-  # x64 free simulation of x64 code path in u32
-  # Done to avoid using jax.enable_x64 which led to MLIR verification errors under jit.
-  if len(shape) != 2:
-    raise NotImplementedError
-
-  def compute_bits(k):
-    return list(
-      threefry_2x32(
-        jax.random.key_data(k),
-        jax.lax.iota(jnp.uint32, shape[0] * shape[1] * 2),
-      ).reshape(2, *shape)
-    )
-
-  subkeys = jax.random.split(key)
-  k1, k2 = subkeys
-  return [
-    *compute_bits(k1),
-    *compute_bits(k2),
-  ]
+  return tuple(jax.random.bits(key, (4, *shape), jnp.uint32))
 
 
 def modulo_u128_u64(
