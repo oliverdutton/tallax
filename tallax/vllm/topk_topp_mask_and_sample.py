@@ -3,7 +3,6 @@
 import functools
 import jax
 import jax.numpy as jnp
-from jax import lax
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
@@ -14,10 +13,33 @@ from tallax.vllm.high_precision_uint import (
 )
 from tallax.vllm.topp_mask import topp_mask
 from tallax.vllm.topk_mask import topk_mask_ref_inputs, find_boundary_idx
-from tallax.tax.sparse_random import sparse_random_categorical
 from tallax.tax.utils import NUM_LANES, map_reduce
 
 _SAMPLING_EPS = 1e-5
+
+
+def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
+  """Sample from unnormalized probabilities using high precision integers.
+
+  Args:
+    unnorm_probs_i32: Unnormalized probabilities in i32 format
+    random_u128_in_u32s: Random u128 values in u32 format
+    max_val: Maximum bound of unnorm_probs_i32 values
+
+  Returns:
+    Sampled token indices
+  """
+  total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=max_val)
+  sampled_u64_in_u32s = modulo_u128_u64(
+    random_u128_in_u32s,
+    total_sum_u48.to_u64_in_u32s(),
+  )
+  target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
+  return find_boundary_idx(
+    unnorm_probs_i32,
+    map_fn=lambda x: U48(x, max_val=max_val),
+    target=target_u48,
+  )
 
 
 def topk_topp_mask_and_sample_kernel(
@@ -102,51 +124,16 @@ def topk_topp_mask_and_sample_kernel(
   logits_max /= temperature
 
   # Top-p masking
-  logits = topp_mask(
+  unnorm_probs_i32 = topp_mask(
     logits,
     p_ref[...],
-    replace_val=replace_val,
-    return_unnorm_i32_probs=sample_in_i32,
     logits_max=logits_max,
   )
 
-  if not sample_in_i32:
-    # Random key splitting is based on idx in ravelled array
-    # We pass in (batch_idx, token_idx) for linearized position: batch_idx * vocab_size + token_idx
-    batch_idx = (
-      lax.broadcasted_iota(jnp.int32, logits.shape, 0)
-      + pl.program_id(0) * logits_ref.shape[0]
-      + dim0_offset_ref[0]
-    )
-    token_idx = lax.broadcasted_iota(jnp.int32, logits.shape, 1)
-    next_tokens = sparse_random_categorical(
-      rng_key_ref,
-      logits,
-      (batch_idx, token_idx),
-      dim1_size=logits.shape[1],
-      axis=1,  # Sample along vocab axis
-      dtype=jnp.float32,
-    )[1]  # Take sampled token indices
-  else:
-    unnorm_probs_i32 = logits  # alias
-    # High-precision integer sampling
-    total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=2**24 - 1)
-    # rng_key_ref contains pre-generated random u128 as 4 u32 arrays
-    # This matches how JAX random.randint samples in i64
-    sampled_u64_in_u32s = modulo_u128_u64(
-      [ref[...] for ref in random_u128_in_u32s_ref],
-      total_sum_u48.to_u64_in_u32s(),
-    )
-    target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
-    next_tokens = find_boundary_idx(
-      unnorm_probs_i32,
-      map_fn=lambda x: U48(x, max_val=2**24 - 1),
-      target=target_u48,
-    )
-
-  # # Reshape to (block_token, 1) to match output ref
-  if next_tokens.ndim == 1:
-    next_tokens = jnp.expand_dims(next_tokens, axis=-1)
+  # Sample
+  next_tokens = sample_probs(
+    unnorm_probs_i32, [ref[...] for ref in random_u128_in_u32s_ref]
+  )
 
   sampled_tokens_ref[...] = jnp.where(
     temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
@@ -218,13 +205,7 @@ def topk_topp_mask_and_sample(
 
   # Prepare RNG key
   if not sample_in_i32:
-    if rng_key.ndim == 0:
-      rng_key = jax.random.key_data(rng_key)
-    if rng_key.ndim == 1:
-      rng_key = jnp.reshape(rng_key, (1, 2))
-    elif rng_key.shape != (1, 2):
-      # If it's already 2D, ensure it's (1, 2)
-      rng_key = jnp.reshape(rng_key, (1, 2))
+    rng_key = jax.random.key_data(rng_key).reshape(1, 2)
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
   padded_batch = num_blocks * block_token
