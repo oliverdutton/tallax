@@ -88,6 +88,8 @@ def topk_topp_mask_and_sample_kernel(
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
   )[:, :1]
 
+  temperature = temperature_ref[...].astype(logits_ref.dtype)
+
   # Top-k masking
   logits = topk_mask_ref_inputs(
     logits_ref,
@@ -96,8 +98,8 @@ def topk_topp_mask_and_sample_kernel(
     stable=stable,
     underlying_dtype=underlying_logits_dtype,
   )
-  logits /= temperature_ref[...].astype(logits.dtype)
-  logits_max /= temperature_ref[...].astype(logits.dtype)
+  logits /= temperature
+  logits_max /= temperature
 
   # Top-p masking
   logits = topp_mask(
@@ -146,7 +148,7 @@ def topk_topp_mask_and_sample_kernel(
     next_tokens = jnp.expand_dims(next_tokens, axis=-1)
 
   sampled_tokens_ref[...] = jnp.where(
-    temperature_ref[...] < _SAMPLING_EPS, greedy_sampled, next_tokens
+    temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
   )
 
 
