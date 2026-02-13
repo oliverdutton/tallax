@@ -263,8 +263,6 @@ def modulo_u128_u64(
   bh = divisor_u32[0]
   bl = divisor_u32[1]
 
-  init_state = (jnp.zeros_like(dividend_u32[0]),) * 2
-
   def body_fun(i, state):
     rh, rl = state
     bit_idx = 127 - i
@@ -290,7 +288,7 @@ def modulo_u128_u64(
     rl_next = jnp.where(is_greater, sub_rl, new_rl)
     return (rh_next, rl_next)
 
-  state = init_state
+  state = (jnp.zeros_like(dividend_u32[0]),) * 2
   for i in range(128):
     state = body_fun(i, state)
   return state
