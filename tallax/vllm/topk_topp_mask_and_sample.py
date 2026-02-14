@@ -44,28 +44,23 @@ def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
 
 def topk_topp_mask_and_sample_kernel(
   logits_ref,
-  rng_key_ref,
   random_u128_in_u32s_ref,
   k_ref,
   p_ref,
   temperature_ref,
-  dim0_offset_ref,
   sampled_tokens_ref,
   *,
   stable: bool,
   replace_val: float,
-  sample_in_i32: bool,
   underlying_logits_dtype=None,
 ):
   """Pallas kernel for topk/topp masking and sampling.
 
   Args:
     logits_ref: Input logits [block_token, vocab_size]
-    rng_key_ref: RNG key [1, 2]
     k_ref: Top-k values [block_token, 1]
     p_ref: Top-p values [block_token, 1]
     temperature_ref: Temperature values [block_token, 1]
-    dim0_offset_ref: Offset for batch indexing [1]
     sampled_tokens_ref: Output sampled tokens [block_token, 1]
     stable: Whether to use stable masking
     replace_val: Replacement value for masked elements
@@ -78,16 +73,13 @@ def topk_topp_mask_and_sample_kernel(
       scoped_ref[...] = logits_ref[...].astype(jnp.float32)
       return topk_topp_mask_and_sample_kernel(
         scoped_ref,
-        rng_key_ref,
         random_u128_in_u32s_ref,
         k_ref,
         p_ref,
         temperature_ref,
-        dim0_offset_ref,
         sampled_tokens_ref,
         stable=stable,
         replace_val=replace_val,
-        sample_in_i32=sample_in_i32,
         underlying_logits_dtype=logits_ref.dtype,
       )
 
@@ -147,7 +139,6 @@ def topk_topp_mask_and_sample_kernel(
     "replace_val",
     "block_token",
     "interpret",
-    "sample_in_i32",
   ],
 )
 def topk_topp_mask_and_sample(
@@ -156,13 +147,11 @@ def topk_topp_mask_and_sample(
   k: jax.Array,
   p: jax.Array,
   temperature: jax.Array,
-  dim0_offset: int = 0,
   *,
   stable: bool = True,
   replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
-  sample_in_i32: bool = True,
 ) -> jax.Array:
   """Top-k, top-p masking and sampling using Pallas.
 
@@ -172,7 +161,6 @@ def topk_topp_mask_and_sample(
     k: Top-k values [batch] or scalar
     p: Top-p values [batch] or scalar
     temperature: Temperature values [batch] or scalar
-    dim0_offset: Offset for batch indexing
     stable: Whether to use stable masking
     replace_val: Replacement value for masked elements
     block_token: Number of tokens per block
@@ -201,11 +189,7 @@ def topk_topp_mask_and_sample(
   k = jnp.reshape(k, (batch_size, 1))
   p = jnp.reshape(p, (batch_size, 1))
   temperature = jnp.reshape(temperature, (batch_size, 1))
-  dim0_offset_arr = jnp.array([dim0_offset], dtype=jnp.int32)
 
-  # Prepare RNG key
-  if not sample_in_i32:
-    rng_key = jax.random.key_data(rng_key).reshape(1, 2)
   # Pad batch to multiple of block_token
   num_blocks = pl.cdiv(batch_size, block_token)
   padded_batch = num_blocks * block_token
@@ -222,10 +206,8 @@ def topk_topp_mask_and_sample(
     )
 
   # Generate random u128 as 4 u32 arrays outside the kernel
-  random_u128_in_u32s = (
-    tuple(sample_random_u128_in_u32s(rng_key, (padded_batch, 1)))
-    if sample_in_i32
-    else None
+  random_u128_in_u32s = tuple(
+    sample_random_u128_in_u32s(rng_key, (padded_batch, 1))
   )
 
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
@@ -235,15 +217,11 @@ def topk_topp_mask_and_sample(
       topk_topp_mask_and_sample_kernel,
       stable=stable,
       replace_val=replace_val,
-      sample_in_i32=sample_in_i32,
     ),
     out_shape=output_shape,
     grid=(num_blocks,),
     in_specs=[
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),  # logits
-      pl.BlockSpec(memory_space=pltpu.SMEM)
-      if not sample_in_i32
-      else None,  # rng random bits / rng_key
       jax.tree.map(
         lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
         random_u128_in_u32s,
@@ -251,19 +229,16 @@ def topk_topp_mask_and_sample(
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # k
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # p
       pl.BlockSpec((block_token, 1), lambda i: (i, 0)),  # temperature
-      pl.BlockSpec(memory_space=pltpu.SMEM),  # dim0_offset
     ],
     out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
     compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
     interpret=interpret,
   )(
     logits,
-    rng_key if not sample_in_i32 else None,
     random_u128_in_u32s,
     k,
     p,
     temperature,
-    dim0_offset_arr,
   )
 
   # Remove padding

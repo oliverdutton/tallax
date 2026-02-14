@@ -48,17 +48,14 @@ def reference_topk_topp_mask_and_sample(
   k: jax.Array,
   p: jax.Array,
   temperature: jax.Array,
-  dim0_offset: int = 0,
   *,
   stable: bool = True,
   replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
-  sample_in_i32: bool = True,
   debug: bool = False,
 ) -> jax.Array:
   """Reference implementation in pure JAX of topk_topp_mask_and_sample."""
-  assert sample_in_i32
   assert stable
   with jax.enable_x64(True):
     shape = logits.shape
