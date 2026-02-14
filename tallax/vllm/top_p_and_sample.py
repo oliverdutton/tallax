@@ -3,6 +3,8 @@ Fused TPU sampling kernel implementing top-p filtering, temperature scaling,
 and categorical sampling.
 """
 
+from tallax.vllm.high_precision_uint import modulo_u128_u64
+from tallax.tax.sparse_random import sparse_random_bits
 import functools
 import jax
 import jax.numpy as jnp
@@ -12,7 +14,7 @@ from jax.experimental.pallas import tpu as pltpu
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.sharding import NamedSharding, PartitionSpec as P
 
-from tallax.tax.sparse_random import sparse_random_categorical
+from tallax.tax.bitonic.topk import bitonic_topk_arrays
 from tallax.tax.cumsum import cumsum_arrays
 from tallax.tax.gather import take_along_axis_arrays
 from tallax.tax.utils import NUM_SUBLANES, NUM_LANES
@@ -72,11 +74,58 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
   return topp_logits
 
 
+def top_p_integer_mask(*, topk_logits, p, axis):
+  """
+  Apply top-p filtering mask to sorted logits.
+
+  Args:
+      topk_logits: Sorted logits (descending order)
+      p: Top-p threshold(s)
+      replace_val: Value to replace filtered logits with
+      axis: Axis along which to apply filtering (must be 0)
+
+  Returns:
+      Masked logits with values outside top-p set to replace_val
+  """
+  if axis != 0:
+    raise NotImplementedError("topp_mask only supports axis=0")
+
+  shape = topk_logits.shape
+
+  # Compute softmax probabilities
+  # For numerical stability, subtract max (pre-sorted so its the first element)
+  exp_logits = jnp.exp(topk_logits - topk_logits[:1, :])
+  scale = 2**24 - 1
+  unnorm_probs_i32 = (exp_logits * scale).astype(jnp.int32)
+  if unnorm_probs_i32.shape[1] > 2**7:
+    raise NotImplementedError(
+      "top_p_integer_mask only supports vocab_size <= 128, otherwise overflows i32 and higher precision simulation is required."
+    )
+
+  # Top-p filtering using cumsum on sorted probabilities
+  cumsum_probs = cumsum_arrays(unnorm_probs_i32, axis=0)
+
+  cumsum_threshold_i32 = (
+    p[None, :] * unnorm_probs_i32.sum(0, keepdims=True).astype(jnp.float32)
+  ).astype(jnp.int32)
+  # Find last idx where top-p probability mass is (over)covered
+  threshold_idx = (cumsum_probs < cumsum_threshold_i32).sum(0, keepdims=True)
+  # Clamp for p=1.0 case
+  threshold_idx = jnp.where(p[None, :] == 1.0, shape[0] - 1, threshold_idx)
+  # vLLM current implementation uses binary search, computing a threshold.
+  # so ties at the threshold are all included
+  # we replicate that behavior here
+  thresholds = take_along_axis_arrays(
+    unnorm_probs_i32, broadcast_to(threshold_idx, shape), axis=0
+  )
+  return jnp.where(unnorm_probs_i32 >= thresholds, unnorm_probs_i32, 0)
+
+
 def top_p_and_sample_arrays(
   *,
   topk_logits,
   topk_idx,
-  rng_key,
+  random_u128_in_u32s,
   top_p,
   temperature,
   vocab_size,
@@ -89,7 +138,7 @@ def top_p_and_sample_arrays(
   Args:
       topk_logits: Sorted logits of shape (batch_size, k)
       topk_idx: Indices corresponding to sorted logits of shape (batch_size, k)
-      rng_key: RNG key for sampling, shape (1, 2)
+      random_u128_in_u32s: Random u128 in u32s for sampling, list of four (batch_size, 1)
       top_p: Top-p threshold values, shape (batch_size,)
       temperature: Temperature values, shape (batch_size,)
       vocab_size: Vocabulary size for sampling
@@ -107,27 +156,34 @@ def top_p_and_sample_arrays(
   topk_idx = topk_idx.T
   shape = topk_logits.shape
 
-  topp_logits = top_p_mask(
-    topk_logits=topk_logits, p=top_p, replace_val=replace_val, axis=0
+  topk_logits = topk_logits / temperature[None, :].astype(topk_logits.dtype)
+
+  unnorm_probs_i32 = top_p_integer_mask(
+    topk_logits=topk_logits, p=top_p, axis=0
   )
 
-  topp_logits_scaled = topp_logits / temperature[None, :].astype(
-    topp_logits.dtype
+  # Reorder back to original order, to make sampling bitwise match with arbitrary k sampling kernel
+  inverted_idxs, unnorm_probs_i32 = bitonic_topk_arrays(
+    [-topk_idx, unnorm_probs_i32], k=topk_idx.shape[0], axis=0, num_keys=1
   )
-
-  # random key splitting is based on idx in ravelled array
-  # we pass in (batch_idx.T, token_idx.T) and sample across axis 0, taking the token_idx
-  batch_idx = lax.broadcasted_iota(jnp.int32, shape, 1) + dim0_offset
-  next_tokens = sparse_random_categorical(
-    rng_key,
-    topp_logits_scaled,
-    # these are both transposed, (token, batch) shape
-    (batch_idx, topk_idx),
-    dim1_size=vocab_size,
-    axis=0,
-    dtype=jnp.float32,
-    # take sampled_indices[1], the token idx
+  idxs = -inverted_idxs
+  target_cumsum = modulo_u128_u64(
+    random_u128_in_u32s,
+    [
+      jnp.zeros((shape[0], 1), dtype=jnp.uint32),
+      unnorm_probs_i32.sum(0, keepdims=True).astype(jnp.uint32),
+    ],
   )[1]
+  # Within tile cumsum check
+  # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
+  iota1 = jax.lax.broadcasted_iota(jnp.int32, (shape[0], NUM_LANES), 0)
+  cumsums = [
+    (unnorm_probs_i32 * (iota1 <= i)).sum(0, keepdims=True)
+    for i in range(NUM_LANES)
+  ]
+  threshold_local_idx = sum((c < target_cumsum) for c in cumsums)
+
+  next_tokens = (idxs * (iota1 == threshold_local_idx)).sum(0)
   greedy_sampled = topk_idx[0, :]
   return jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
 

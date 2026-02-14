@@ -23,7 +23,7 @@ from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
 from tallax.tax.utils import NUM_LANES, map_reduce
-from tallax.vllm.high_precision_uint import U48, random_u48
+from tallax.vllm.high_precision_uint import U48, modulo_u128_u64
 from tallax.vllm.binary_search import binary_search
 from tallax.vllm.topk_mask import find_boundary_idx
 
@@ -33,6 +33,30 @@ def map_chunks(x, fn):
   assert x.shape[1] % NUM_LANES == 0
   return jnp.concatenate(
     [fn(c) for c in jnp.split(x, x.shape[1] // NUM_LANES, 1)], axis=1
+  )
+
+
+def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
+  """Sample from unnormalized probabilities using high precision integers.
+
+  Args:
+    unnorm_probs_i32: Unnormalized probabilities in i32 format
+    random_u128_in_u32s: Random u128 values in u32 format
+    max_val: Maximum bound of unnorm_probs_i32 values
+
+  Returns:
+    Sampled token indices
+  """
+  total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=max_val)
+  sampled_u64_in_u32s = modulo_u128_u64(
+    random_u128_in_u32s,
+    total_sum_u48.to_u64_in_u32s(),
+  )
+  target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
+  return find_boundary_idx(
+    unnorm_probs_i32,
+    map_fn=lambda x: U48(x, max_val=max_val),
+    target=target_u48,
   )
 
 
@@ -130,9 +154,7 @@ def topp_mask_pallas_kernel(
   )
 
 
-@functools.partial(
-  jax.jit, static_argnames=["scale_bits", "interpret"]
-)
+@functools.partial(jax.jit, static_argnames=["scale_bits", "interpret"])
 def topp_mask_pallas(
   logits: jax.Array,
   top_p: jax.Array,
