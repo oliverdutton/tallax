@@ -32,6 +32,32 @@ from tallax.tax.utils import NUM_LANES, map_reduce
 _SAMPLING_EPS = 1e-5
 
 
+def canonicalize_args(batch_size, block_token, *args_with_pad):
+  """Canonicalize per-sample args and pad batch to block_token multiple.
+
+  Each arg is (value, pad_constant). 1D/scalar args are broadcast to batch_size
+  and reshaped to (batch_size, 1). All args are padded to the next multiple
+  of block_token.
+
+  Returns (padded_batch, num_blocks, *padded_args)
+  """
+  num_blocks = pl.cdiv(batch_size, block_token)
+  padded_batch = num_blocks * block_token
+  pad_size = padded_batch - batch_size
+
+  result = []
+  for val, pad_val in args_with_pad:
+    val = jnp.atleast_1d(val)
+    if val.ndim == 1:
+      if val.shape[0] == 1:
+        val = jnp.broadcast_to(val, (batch_size,))
+      val = jnp.reshape(val, (batch_size, 1))
+    if pad_size > 0:
+      val = jnp.pad(val, ((0, pad_size), (0, 0)), constant_values=pad_val)
+    result.append(val)
+  return (padded_batch, num_blocks, *result)
+
+
 def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
   """Sample from unnormalized i32 probabilities using U48 arithmetic.
 
@@ -218,35 +244,14 @@ def arbitrary_topk_topp_and_sample(
   """
   batch_size, vocab_size = logits.shape
 
-  k = jnp.atleast_1d(k)
-  p = jnp.atleast_1d(p)
-  temperature = jnp.atleast_1d(temperature)
-
-  if k.shape[0] == 1:
-    k = jnp.broadcast_to(k, (batch_size,))
-  if p.shape[0] == 1:
-    p = jnp.broadcast_to(p, (batch_size,))
-  if temperature.shape[0] == 1:
-    temperature = jnp.broadcast_to(temperature, (batch_size,))
-
-  k = jnp.reshape(k, (batch_size, 1))
-  p = jnp.reshape(p, (batch_size, 1))
-  temperature = jnp.reshape(temperature, (batch_size, 1))
-
-  # Pad batch to multiple of block_token
-  num_blocks = pl.cdiv(batch_size, block_token)
-  padded_batch = num_blocks * block_token
-
-  if padded_batch != batch_size:
-    pad_size = padded_batch - batch_size
-    logits = jnp.pad(
-      logits, ((0, pad_size), (0, 0)), constant_values=replace_val
-    )
-    k = jnp.pad(k, ((0, pad_size), (0, 0)), constant_values=1)
-    p = jnp.pad(p, ((0, pad_size), (0, 0)), constant_values=1.0)
-    temperature = jnp.pad(
-      temperature, ((0, pad_size), (0, 0)), constant_values=1.0
-    )
+  padded_batch, num_blocks, logits, k, p, temperature = canonicalize_args(
+    batch_size,
+    block_token,
+    (logits, 0.0),
+    (k, 1),
+    (p, 1.0),
+    (temperature, 1.0),
+  )
 
   random_u128_in_u32s = tuple(
     sample_random_u128_in_u32s(rng_key, (padded_batch, 1))
