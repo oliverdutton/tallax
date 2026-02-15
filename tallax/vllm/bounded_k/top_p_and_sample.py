@@ -294,13 +294,7 @@ def _top_p_and_sample(
 
 @functools.partial(
   jit,
-  static_argnames=(
-    "vocab_size",
-    "max_k",
-    "replace_val",
-    "interpret",
-    "debug",
-  ),
+  static_argnames=("debug",),
 )
 def topp_and_sample(
   topk_logits: jax.Array,
