@@ -176,6 +176,7 @@ def arbitrary_topk_topp_and_sample_kernel(
     unnorm_probs_i32,
     map_fn=lambda x: U48(x, max_val=2**24 - 1),
     target=random_unnorm_cdf_sampled,
+    pad_val=0,
   )
 
   sampled_tokens_ref[...] = jnp.where(

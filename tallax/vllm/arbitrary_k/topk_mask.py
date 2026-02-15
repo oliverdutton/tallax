@@ -26,6 +26,7 @@ def _find_boundary_chunk(
   map_fn,
   target,
   chunk_size: int,
+  pad_val,
   active_chunk: jax.Array | None = None,
   ref_offset: jax.Array | int = 0,
 ):
@@ -40,6 +41,7 @@ def _find_boundary_chunk(
     map_fn: Unary function mapping chunks to binary counters
     target: Target count (shape [batch, 1])
     chunk_size: Size of each chunk
+    pad_val: Fill value for out-of-bounds positions in the boundary slice
     active_chunk: Optional subset of ref to search in
     ref_offset: Offset into ref for indexing
 
@@ -85,12 +87,12 @@ def _find_boundary_chunk(
     boundary_slice = jnp.where(
       (ref_offset[:, :1] + iota1) < ref.shape[1],
       boundary_slice,
-      get_dtype_info(boundary_slice).min,
+      pad_val,
     )
   return ref_offset, boundary_slice, target
 
 
-def find_boundary_idx(ref_or_arr, map_fn, target):
+def find_boundary_idx(ref_or_arr, map_fn, target, pad_val):
   """Find the lowest idx where map_fn(ref[...]).cumsum(1) >= target.
 
   Uses a two-level chunk search: first finds the right chunk of chunks,
@@ -100,6 +102,7 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
     ref_or_arr: Pallas ref or array of shape [batch, vocab_size]
     map_fn: Maps chunks to binary counts
     target: Target cumulative sum value
+    pad_val: Fill value for out-of-bounds positions in boundary slices
 
   Returns:
     Index array of shape [batch, NUM_LANES]
@@ -109,7 +112,7 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
 
     def scoped_body(scoped_ref):
       scoped_ref[...] = arr
-      return find_boundary_idx(scoped_ref, map_fn, target)
+      return find_boundary_idx(scoped_ref, map_fn, target, pad_val)
 
     return pl.run_scoped(scoped_body, pltpu.VMEM(arr.shape, arr.dtype))
   ref = ref_or_arr
@@ -120,12 +123,14 @@ def find_boundary_idx(ref_or_arr, map_fn, target):
     map_fn=map_fn,
     target=target,
     chunk_size=int(math.sqrt(ref.shape[1] // NUM_LANES)) * NUM_LANES,
+    pad_val=pad_val,
   )
   ref_offset, boundary_slice, target = _find_boundary_chunk(
     ref,
     map_fn=map_fn,
     target=target,
     chunk_size=NUM_LANES,
+    pad_val=pad_val,
     ref_offset=ref_offset,
     active_chunk=boundary_slice,
   )
@@ -200,6 +205,7 @@ def topk_mask(
         lambda chunk: (chunk > threshold).astype(jnp.int32),
         reduce_fn="sum",
       ),
+      pad_val=get_dtype_info(logits_ref).min,
     )
     threshold = pltpu.repeat(
       threshold,
