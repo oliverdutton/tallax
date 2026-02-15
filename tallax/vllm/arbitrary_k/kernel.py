@@ -127,6 +127,7 @@ def arbitrary_topk_topp_and_sample_kernel(
   )
 
   # Stage 3: Temperature scaling
+  topk_logits_pre_temperature = topk_logits
   topk_logits /= temperature
   logits_max /= temperature
 
@@ -158,7 +159,7 @@ def arbitrary_topk_topp_and_sample_kernel(
   # Debug: write full intermediate arrays if debug refs are provided
   if debug_arrays_ref is not None:
     debug_arrays_ref["greedy_sampled"][...] = greedy_sampled
-    debug_arrays_ref["topk_logits_unsorted"][...] = topk_logits
+    debug_arrays_ref["topk_logits_unsorted"][...] = topk_logits_pre_temperature
     debug_arrays_ref["topk_topp_unnorm_probs_i32_unsorted"][...] = (
       unnorm_probs_i32
     )

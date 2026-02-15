@@ -39,6 +39,7 @@ def u128_modulo_u64_pure_callback(r_parts, m_parts):
     (jax.ShapeDtypeStruct(r_parts[0].shape, jnp.uint32),) * 2,
     *r_parts,
     *m_parts,
+    vectorized=True,
   )
   return (high.astype(jnp.int64) << 32) + low.astype(jnp.int64)
 
@@ -140,7 +141,10 @@ def reference_topk_topp_and_sample(
       "greedy_sampled": greedy_sampled,
       "topk_logits_unsorted": topk_logits_unsorted,
       "topk_topp_unnorm_probs_i32_unsorted": unnorm_probs_i32,
-      "random_unnorm_cdf_sampled": (sampled_total_high, sampled_total_low),
+      "random_unnorm_cdf_sampled": (
+        sampled_total_high.squeeze(1),
+        sampled_total_low.squeeze(1),
+      ),
       "next_tokens": next_tokens,
     }
     return result, debug_results
