@@ -323,13 +323,15 @@ def topp_and_sample(
   )
 
   out_shapes = jax.eval_shape(
-    _top_p_and_sample,
+    functools.partial(
+      _top_p_and_sample,
+      debug=debug,
+    ),
     topk_logits,
     topk_idx,
     random_u128_in_u32s,
     top_p,
     temperature,
-    debug=debug,
   )
 
   @custom_partitioning
