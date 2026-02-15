@@ -44,7 +44,7 @@ def u128_modulo_u64_pure_callback(r_parts, m_parts):
   return (high.astype(jnp.int64) << 32) + low.astype(jnp.int64)
 
 
-def reference_topk_topp_mask_and_sample(
+def reference_topk_topp_and_sample(
   logits: jax.Array,
   rng_key: jax.Array,
   k: jax.Array,
