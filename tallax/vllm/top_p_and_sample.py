@@ -148,6 +148,7 @@ def top_p_and_sample_arrays(
   # we shift sampling to dim 0
   topk_logits = topk_logits.T
   topk_idx = topk_idx.T
+  random_u128_in_u32s = [x.T for x in random_u128_in_u32s]
   shape = topk_logits.shape
 
   topk_logits = topk_logits / temperature[None, :].astype(topk_logits.dtype)
