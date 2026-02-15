@@ -80,7 +80,8 @@ def to_comparison_dtype(x):
 
 
 def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
-  """Top-k of arrays, packing bf16 and indices into single 32-bit dtype if possible.
+  """Top-k of arrays, first operand of value, second of indices, possibly with further operands.
+  Packing bf16 and indices into single 32-bit dtype if possible.
 
   Args:
     operands: List of arrays to find top-k from.
@@ -91,21 +92,34 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   Returns:
     List of top-k arrays.
   """
-  if val_dtype is None or max_index is None:
-    return _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
-  assert len(operands) == 2 and type(operands) == list
+  assert type(operands) == list
+  stable = num_keys > 1
+  if not jnp.issubdtype(operands[1].dtype, jnp.integer):
+    raise ValueError("Expected second operand to be indices, so integer dtype")
+  if num_keys == 2:
+    # sort vals descending, indices ascending so we negate indices
+    operands[1] = -operands[1]
   dtypes = [x.dtype for x in operands]
-  pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
-  if pack:
-    operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys > 1))]
-  operands = _bitonic_topk_arrays(
-    operands, k=k, num_keys=min(len(operands), num_keys)
+  pack = (
+    val_dtype is not None
+    and max_index is not None
+    and (val_dtype == jnp.bfloat16 and max_index <= 2**16)
   )
   if pack:
-    assert len(operands) == 1
-    operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
-    assert len(operands) == 2
-  # convert back dtypes (incase theyve changed)
+    operands = [
+      pack_bf16_u16_to_i32(*operands[:2], stable=stable),
+      *operands[2:],
+    ]
+    num_keys = max(1, num_keys - 1)
+  operands = _bitonic_topk_arrays(operands, k=k, num_keys=num_keys)
+  if pack:
+    operands = (
+      list(unpack_bf16_u16_from_i32(operands[0], stable=stable)) + operands[1:]
+    )
+  if num_keys == 2:
+    # invert back so sort vals descending, indices ascending
+    operands[1] = -operands[1]
+  # convert back dtypes (incase they've changed)
   return [x.astype(dtype) for x, dtype in zip(operands, dtypes, strict=True)]
 
 
@@ -184,7 +198,7 @@ def binned_topk(
   def loop_body(i, bins_topk_outs):
     # Process in reverse order, due to >= swap
     # this leads to stable index ordering
-    i = num_full_bins - 1 - i
+    i = num_full_slices - 1 - i
     vals = logits[..., pl.dslice(num_bins * i, num_bins)]
     idxs = compute_idxs(i)
     return update_bins_topk(vals, idxs, *bins_topk_outs)
@@ -228,15 +242,22 @@ def _merge_unconverged_bins_topk(
   num_packed_bins = pl.cdiv(max_k, m) - 1
   if num_packed_bins > NUM_LANES or num_packed_bins > num_bins:
     raise NotImplementedError
-  bin_vals = bins_topm_vals_ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
+  bin_vals, bin_idxs = (
+    ref[:, pl.dslice((m - 1) * num_bins, num_bins)]
+    for ref in (bins_topm_vals_ref, bins_topm_idxs_ref)
+  )
   # Use bitonic_topk_arrays descending to get bin indices ordered by contribution count
   bin_indices = jax.lax.broadcasted_iota(jnp.int32, (block_token, num_bins), 1)
-  # Sort descending by num_gt_k to get top NUM_LANES bin indices
-  _, sorted_bin_indices = bitonic_topk_arrays(
-    [bin_vals, bin_indices],
+  bin_operands = [bin_vals, bin_indices]
+  if stable:
+    # stable sort comparison using indices
+    bin_operands.insert(1, bin_idxs)
+  # Sort descending by m'th largest value of each bin to get bins which may contribute to top-k
+  sorted_bin_indices = bitonic_topk_arrays(
+    bin_operands,
     k=num_packed_bins,
     num_keys=1 + int(stable),
-  )
+  )[-1]
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
 
   # Repeat first num_packed_bins values across NUM_LANES positions to create packing permutation
@@ -447,7 +468,7 @@ def dynamic_topk_refs(
       # if not we just need k values greater than or equal to
       _comp = operator.gt if stable else operator.ge
       num_larger = (
-        sum(_comp(v, pivot) for v in bins_topm_vals[: m - 1])
+        sum((_comp(v, pivot) for v in bins_topm_vals[: m - 1]))
         .astype(jnp.float32)
         .sum(-1)
       )
@@ -773,6 +794,7 @@ def _top_bounded_k(
     "guarantee_convergence",
     "replace_val",
     "interpret",
+    "stable",
   ),
 )
 @functools.wraps(_top_bounded_k)
@@ -788,6 +810,7 @@ def top_bounded_k(
   guarantee_convergence: bool = False,
   replace_val: float | int | None = None,
   interpret: bool = False,
+  stable: bool = True,
 ):
   def _closed_topk(logits: jax.Array, k: jax.Array):
     return _top_bounded_k(
@@ -802,6 +825,7 @@ def top_bounded_k(
       guarantee_convergence=guarantee_convergence,
       replace_val=replace_val,
       interpret=interpret,
+      stable=stable,
     )
 
   @custom_partitioning

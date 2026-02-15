@@ -18,7 +18,7 @@ vLLM    ███████████████ 390μs
 tallax  █ 25μs
          
      🔥 15× AVERAGE SPEEDUP
-     ⚡ 10× WORST-CASE SPEEDUP (36μs)
+     ⚡ 10× WORST-CASE SPEEDUP (40μs)
 ```
 
 #### 📦📦📦 Large Batch (128)
@@ -28,7 +28,7 @@ vLLM    ████████████████████████
 tallax  █ 150μs
 
      🔥 75× AVERAGE SPEEDUP
-     ⚡ 45× WORST-CASE SPEEDUP (240μs)
+     ⚡ 45× WORST-CASE SPEEDUP (250μs)
 ```
 
 ### 🎯 Scenario 2: Speculative Decoding Top-k
