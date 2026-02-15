@@ -14,6 +14,7 @@ Optional debug_results: a nested dict of int32[1] SMEM values (1=match, 0=mismat
 for verifying that each intermediate matches the reference implementation.
 """
 
+from collections import OrderedDict
 import functools
 import jax
 import jax.numpy as jnp
@@ -63,7 +64,7 @@ def topk_topp_mask_and_sample_kernel(
   p_ref,
   temperature_ref,
   sampled_tokens_ref,
-  debug_results_ref=None,
+  debug_arrays_ref=None,
   *,
   stable: bool,
   replace_val: float,
@@ -78,7 +79,7 @@ def topk_topp_mask_and_sample_kernel(
     p_ref: Top-p values [block_token, 1]
     temperature_ref: Temperature values [block_token, 1]
     sampled_tokens_ref: Output sampled tokens [block_token, 1]
-    debug_results_ref: Optional dict of SMEM refs for intermediate checks
+    debug_arrays_ref: Optional dict of refs for full intermediate arrays
     stable: Whether to use stable masking
     replace_val: Replacement value for masked elements
     underlying_logits_dtype: Original dtype if logits were cast
@@ -93,7 +94,7 @@ def topk_topp_mask_and_sample_kernel(
         p_ref,
         temperature_ref,
         sampled_tokens_ref,
-        debug_results_ref=debug_results_ref,
+        debug_arrays_ref=debug_arrays_ref,
         stable=stable,
         replace_val=replace_val,
         underlying_logits_dtype=logits_ref.dtype,
@@ -102,6 +103,7 @@ def topk_topp_mask_and_sample_kernel(
     return pl.run_scoped(scoped_body, pltpu.VMEM(logits_ref.shape, jnp.float32))
 
   batch_size = logits_ref.shape[0]
+  vocab_size = logits_ref.shape[1]
   logits_max = map_reduce(logits_ref, reduce_fn="max")
   logits_max_lanes = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
 
@@ -136,51 +138,35 @@ def topk_topp_mask_and_sample_kernel(
   )
 
   # Stage 5: Sample
-  next_tokens = sample_probs(
-    unnorm_probs_i32, [ref[...] for ref in random_u128_in_u32s_ref]
+  random_u128_parts = [ref[...] for ref in random_u128_in_u32s_ref]
+  total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=2**24 - 1)
+  sampled_u64_in_u32s = modulo_u128_u64(
+    random_u128_parts,
+    total_sum_u48.to_u64_in_u32s(),
+  )
+  random_unnorm_cdf_sampled = U48.from_u64_in_u32s(sampled_u64_in_u32s)
+  next_tokens = find_boundary_idx(
+    unnorm_probs_i32,
+    map_fn=lambda x: U48(x, max_val=2**24 - 1),
+    target=random_unnorm_cdf_sampled,
   )
 
   sampled_tokens_ref[...] = jnp.where(
     temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
   )
 
-  # Debug: write intermediate match checks if debug refs are provided
-  if debug_results_ref is not None:
-    _write_debug_results(
-      debug_results_ref,
-      greedy_sampled=greedy_sampled,
-      topk_logits=topk_logits,
-      unnorm_probs_i32=unnorm_probs_i32,
-      next_tokens=next_tokens,
+  # Debug: write full intermediate arrays if debug refs are provided
+  if debug_arrays_ref is not None:
+    debug_arrays_ref["greedy_sampled"][...] = greedy_sampled
+    debug_arrays_ref["topk_logits_unsorted"][...] = topk_logits
+    debug_arrays_ref["topk_topp_unnorm_probs_i32_unsorted"][...] = unnorm_probs_i32
+    # Extract the low 32 bits of the sampled value for consistency with reference
+    random_unnorm_cdf_sampled_i64 = (
+      (random_unnorm_cdf_sampled.high.astype(jnp.int64) << 32) +
+      random_unnorm_cdf_sampled.low.astype(jnp.int64)
     )
-
-
-def _write_debug_results(
-  debug_refs,
-  *,
-  greedy_sampled,
-  topk_logits,
-  unnorm_probs_i32,
-  next_tokens,
-):
-  """Write debug intermediate values to SMEM refs.
-
-  Each ref is int32[1]: 1 if the intermediate matches the expected value,
-  0 if not. The expected values are written by the test harness.
-  """
-  if "greedy_sampled" in debug_refs:
-    debug_refs["greedy_sampled"][...] = greedy_sampled[:1, :1].astype(jnp.int32)
-  if "topk_logits_hash" in debug_refs:
-    # Store a simple checksum: sum of sign bits as a fingerprint
-    debug_refs["topk_logits_hash"][...] = (
-      (topk_logits != 0).astype(jnp.int32).sum(keepdims=True)[:1, :1]
-    )
-  if "topp_nonzero_count" in debug_refs:
-    debug_refs["topp_nonzero_count"][...] = (
-      (unnorm_probs_i32 != 0).astype(jnp.int32).sum(keepdims=True)[:1, :1]
-    )
-  if "next_tokens" in debug_refs:
-    debug_refs["next_tokens"][...] = next_tokens[:1, :1].astype(jnp.int32)
+    debug_arrays_ref["random_unnorm_cdf_sampled"][...] = random_unnorm_cdf_sampled_i64
+    debug_arrays_ref["next_tokens"][...] = next_tokens
 
 
 @functools.partial(
@@ -262,12 +248,6 @@ def topk_topp_mask_and_sample(
     sample_random_u128_in_u32s(rng_key, (padded_batch, 1))
   )
 
-  # Build debug output specs if requested
-  debug_shapes = {}
-  if debug:
-    for name in ["greedy_sampled", "topk_logits_hash", "topp_nonzero_count", "next_tokens"]:
-      debug_shapes[name] = jax.ShapeDtypeStruct((1, 1), jnp.int32)
-
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
   if not debug:
@@ -296,7 +276,14 @@ def topk_topp_mask_and_sample(
 
     return result[:batch_size, 0]
   else:
-    # Debug mode: also output debug intermediates via SMEM
+    # Debug mode: also output debug intermediates as full arrays
+    debug_shapes = OrderedDict([
+      ("greedy_sampled", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
+      ("topk_logits_unsorted", jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.float32)),
+      ("topk_topp_unnorm_probs_i32_unsorted", jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.int32)),
+      ("random_unnorm_cdf_sampled", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int64)),
+      ("next_tokens", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
+    ])
     out_shapes = (output_shape, debug_shapes)
     result, debug_results = pl.pallas_call(
       functools.partial(
@@ -318,13 +305,24 @@ def topk_topp_mask_and_sample(
       ],
       out_specs=(
         pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda _: pl.BlockSpec(memory_space=pltpu.SMEM),
-          debug_shapes,
-        ),
+        OrderedDict([
+          ("greedy_sampled", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
+          ("topk_logits_unsorted", pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0))),
+          ("topk_topp_unnorm_probs_i32_unsorted", pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0))),
+          ("random_unnorm_cdf_sampled", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
+          ("next_tokens", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
+        ]),
       ),
       compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
       interpret=interpret,
     )(logits, random_u128_in_u32s, k, p, temperature)
 
-    return result[:batch_size, 0], debug_results
+    # Trim padding and reshape debug outputs to match reference format
+    debug_results_trimmed = OrderedDict([
+      ("greedy_sampled", debug_results["greedy_sampled"][:batch_size, 0]),
+      ("topk_logits_unsorted", debug_results["topk_logits_unsorted"][:batch_size, :]),
+      ("topk_topp_unnorm_probs_i32_unsorted", debug_results["topk_topp_unnorm_probs_i32_unsorted"][:batch_size, :]),
+      ("random_unnorm_cdf_sampled", debug_results["random_unnorm_cdf_sampled"][:batch_size, 0]),
+      ("next_tokens", debug_results["next_tokens"][:batch_size, 0]),
+    ])
+    return result[:batch_size, 0], debug_results_trimmed

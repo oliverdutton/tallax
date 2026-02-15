@@ -7,6 +7,7 @@ This is the ground truth that both the arbitrary_k and bounded_k kernels
 should match (modulo the intermediate representation).
 """
 
+from collections import OrderedDict
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -132,12 +133,11 @@ def reference_topk_topp_mask_and_sample(
     if not debug:
       return result
 
-    debug_results = {
-      "greedy_sampled": greedy_sampled,
-      "topk_logits_unsorted": topk_logits_unsorted,
-      "topp_unnorm_probs_i32": unnorm_probs_i32,
-      "topp_nonzero_count": (unnorm_probs_i32 != 0).sum(axis=1),
-      "total_sum": total_sum,
-      "next_tokens": next_tokens,
-    }
+    debug_results = OrderedDict([
+      ("greedy_sampled", greedy_sampled),
+      ("topk_logits_unsorted", topk_logits_unsorted),
+      ("topk_topp_unnorm_probs_i32_unsorted", unnorm_probs_i32),
+      ("random_unnorm_cdf_sampled", sampled_total),
+      ("next_tokens", next_tokens),
+    ])
     return result, debug_results

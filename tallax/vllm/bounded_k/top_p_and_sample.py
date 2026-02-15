@@ -10,6 +10,7 @@ This kernel assumes logits have already been reduced to top-k elements
 Only supports vocab_size (k) <= 128 due to i32 overflow constraints.
 """
 
+from collections import OrderedDict
 import functools
 import jax
 import jax.numpy as jnp
@@ -113,6 +114,7 @@ def top_p_and_sample_arrays(
   random_u128_in_u32s,
   top_p,
   temperature,
+  debug=False,
 ):
   """Fused top-p filtering + sampling on pre-sorted top-k logits.
 
@@ -122,42 +124,69 @@ def top_p_and_sample_arrays(
     random_u128_in_u32s: List of 4 u32 arrays for random sampling
     top_p: Top-p threshold values, shape (batch_size,)
     temperature: Temperature values, shape (batch_size,)
+    debug: If True, return (tokens, debug_results) with intermediate values
 
   Returns:
-    Sampled tokens of shape (batch_size,)
+    Sampled tokens of shape (batch_size,), or (tokens, debug_dict) if debug=True
   """
   topk_logits = topk_logits.astype(jnp.float32)
 
+  # Store original shape for debug
+  batch_size, k = topk_logits.shape
+
   # Shift to dim 0 for sublane-based reductions
-  topk_logits = topk_logits.T
-  topk_idx = topk_idx.T
-  random_u128_in_u32s = [x.T for x in random_u128_in_u32s]
-  shape = topk_logits.shape
+  topk_logits_transposed = topk_logits.T
+  topk_idx_transposed = topk_idx.T
+  random_u128_in_u32s_transposed = [x.T for x in random_u128_in_u32s]
+  shape = topk_logits_transposed.shape
 
-  topk_logits = topk_logits / temperature[None, :].astype(topk_logits.dtype)
+  # Greedy sample (before temperature scaling)
+  greedy_sampled = topk_idx[:, 0]
 
-  unnorm_probs_i32 = top_p_integer_mask(
-    topk_logits=topk_logits, p=top_p, axis=0
+  # Temperature scaling
+  topk_logits_scaled = topk_logits_transposed / temperature[None, :].astype(topk_logits_transposed.dtype)
+
+  # Top-p masking in i32 space
+  unnorm_probs_i32_sorted = top_p_integer_mask(
+    topk_logits=topk_logits_scaled, p=top_p, axis=0
   )
 
   # Re-sort back to original index order for bitwise-matching sampling
-  inverted_idxs, unnorm_probs_i32 = bitonic_topk_arrays(
-    [-topk_idx, unnorm_probs_i32], k=topk_idx.shape[0], axis=0, num_keys=1
+  inverted_idxs, unnorm_probs_i32_unsorted = bitonic_topk_arrays(
+    [-topk_idx_transposed, unnorm_probs_i32_sorted], k=topk_idx_transposed.shape[0], axis=0, num_keys=1
   )
   idxs = -inverted_idxs
+
+  # Sample from the unnormalized probabilities
   target_cumsum = modulo_u128_u64(
-    random_u128_in_u32s,
+    random_u128_in_u32s_transposed,
     [
       jnp.zeros((1, shape[1]), dtype=jnp.uint32),
-      unnorm_probs_i32.sum(0, keepdims=True).astype(jnp.uint32),
+      unnorm_probs_i32_unsorted.sum(0, keepdims=True).astype(jnp.uint32),
     ],
   )[1]
-  cumsums = cumsum_arrays(unnorm_probs_i32, axis=0)
+  cumsums = cumsum_arrays(unnorm_probs_i32_unsorted, axis=0)
   threshold_local_idx = sum((c < target_cumsum) for c in cumsums)
 
   next_tokens = (idxs * (jax.lax.broadcasted_iota(jnp.int32, idxs.shape, 0) == threshold_local_idx)).sum(0)
-  greedy_sampled = topk_idx[0, :]
-  return jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
+  result = jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
+
+  if not debug:
+    return result
+
+  # Build debug output matching the reference format but for the k-slice
+  # Convert sampled CDF value to int64 for consistency
+  random_unnorm_cdf_sampled = target_cumsum.astype(jnp.int64)
+
+  debug_results = OrderedDict([
+    ("greedy_sampled", greedy_sampled),
+    ("topk_logits_unsorted", topk_logits),  # Original sorted logits in batch-first format
+    ("topk_topp_unnorm_probs_i32_unsorted", unnorm_probs_i32_unsorted.T),  # Transpose back to [batch, k]
+    ("random_unnorm_cdf_sampled", random_unnorm_cdf_sampled),
+    ("next_tokens", next_tokens),
+  ])
+
+  return result, debug_results
 
 
 def top_p_and_sample_refs(
@@ -195,6 +224,7 @@ def _top_p_and_sample(
   replace_val: float,
   interpret: bool = False,
   dim0_offset: int = 0,
+  debug: bool = False,
 ) -> jax.Array:
   """Fused TPU kernel for sampling with top-p filtering and temperature scaling.
 
@@ -208,9 +238,10 @@ def _top_p_and_sample(
     replace_val: Value to replace filtered logits with
     interpret: If True, run in CPU interpret mode
     dim0_offset: Offset for dim0 (batch) axis, for sharding
+    debug: If True, return (tokens, debug_results) with intermediate values
 
   Returns:
-    Sampled tokens of shape (batch_size,)
+    Sampled tokens of shape (batch_size,), or (tokens, debug_dict) if debug=True
   """
   batch_size = topk_logits.shape[0]
 
@@ -226,6 +257,7 @@ def _top_p_and_sample(
     random_u128_in_u32s=random_u128_in_u32s,
     top_p=top_p,
     temperature=temperature,
+    debug=debug,
   )
 
 
@@ -235,6 +267,7 @@ def _top_p_and_sample(
     "vocab_size",
     "replace_val",
     "interpret",
+    "debug",
   ),
 )
 def top_p_and_sample(
@@ -247,6 +280,7 @@ def top_p_and_sample(
   vocab_size: int,
   replace_val: float,
   interpret: bool = False,
+  debug: bool = False,
 ) -> jax.Array:
   """Sharded wrapper for top-p sampling with custom partitioning.
 
@@ -261,9 +295,10 @@ def top_p_and_sample(
     vocab_size: Total vocabulary size.
     replace_val: Value to replace filtered logits with.
     interpret: If True, run in CPU interpret mode.
+    debug: If True, return (tokens, debug_results) with intermediate values.
 
   Returns:
-    Sampled tokens of shape (batch_size,).
+    Sampled tokens of shape (batch_size,), or (tokens, debug_dict) if debug=True.
   """
 
   @custom_partitioning
@@ -279,6 +314,7 @@ def top_p_and_sample(
       vocab_size=vocab_size,
       replace_val=replace_val,
       interpret=interpret,
+      debug=debug,
     )
 
   def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
@@ -305,6 +341,7 @@ def top_p_and_sample(
         replace_val=replace_val,
         interpret=interpret,
         dim0_offset=dim0_offset,
+        debug=debug,
       )
 
     return mesh, shmap_fn, out_shardings, arg_shardings

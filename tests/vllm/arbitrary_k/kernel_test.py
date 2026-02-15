@@ -43,18 +43,31 @@ def test_arbitrary_k_vs_reference(seed):
 
   # Greedy argmax matches
   np.testing.assert_array_equal(
-    kernel_debug["greedy_sampled"][0, 0],
+    kernel_debug["greedy_sampled"][0],
     ref_debug["greedy_sampled"][0],
   )
 
   # Next tokens match
   np.testing.assert_array_equal(
-    kernel_debug["next_tokens"][0, 0],
+    kernel_debug["next_tokens"][0],
     ref_debug["next_tokens"][0],
   )
 
-  # Top-p nonzero count matches
+  # Top-k logits match (unsorted order)
+  np.testing.assert_allclose(
+    kernel_debug["topk_logits_unsorted"][0],
+    ref_debug["topk_logits_unsorted"][0],
+    rtol=1e-5,
+  )
+
+  # Top-p unnormalized probs match (unsorted order)
   np.testing.assert_array_equal(
-    kernel_debug["topp_nonzero_count"][0, 0],
-    ref_debug["topp_nonzero_count"][0],
+    kernel_debug["topk_topp_unnorm_probs_i32_unsorted"][0],
+    ref_debug["topk_topp_unnorm_probs_i32_unsorted"][0],
+  )
+
+  # Random sampled CDF value matches
+  np.testing.assert_array_equal(
+    kernel_debug["random_unnorm_cdf_sampled"][0],
+    ref_debug["random_unnorm_cdf_sampled"][0],
   )
