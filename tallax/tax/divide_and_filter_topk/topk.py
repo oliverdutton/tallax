@@ -64,7 +64,7 @@ def nan_to_min(x):
   """
   if jnp.issubdtype(x.dtype, jnp.floating):
     x = jnp.where(jnp.isnan(x), get_dtype_info(x).min, x)
-  return x 
+  return x
 
 
 def to_comparison_dtype(x):
@@ -98,7 +98,9 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
   pack = val_dtype == jnp.bfloat16 and max_index <= 2**16
   if pack:
     operands = [pack_bf16_u16_to_i32(*operands, stable=(num_keys > 1))]
-  operands = _bitonic_topk_arrays(operands, k=k, num_keys=min(len(operands), num_keys))
+  operands = _bitonic_topk_arrays(
+    operands, k=k, num_keys=min(len(operands), num_keys)
+  )
   if pack:
     assert len(operands) == 1
     operands = list(unpack_bf16_u16_from_i32(operands[0], stable=False))
@@ -178,6 +180,7 @@ def binned_topk(
     )
 
   num_full_slices = vocab_size // num_bins
+
   def loop_body(i, bins_topk_outs):
     # Process in reverse order, due to >= swap
     # this leads to stable index ordering
@@ -232,7 +235,7 @@ def _merge_unconverged_bins_topk(
   _, sorted_bin_indices = bitonic_topk_arrays(
     [bin_vals, bin_indices],
     k=num_packed_bins,
-    num_keys=1+int(stable),
+    num_keys=1 + int(stable),
   )
   sorted_bin_indices = pad(sorted_bin_indices, (NUM_SUBLANES, NUM_LANES))
 
@@ -338,7 +341,7 @@ def _merge_unconverged_bins_topk(
       k=max_k,
       val_dtype=logits_ref.dtype,
       max_index=logits_ref.shape[1],
-      num_keys=1+int(stable),
+      num_keys=1 + int(stable),
     )
   )
 
@@ -379,9 +382,9 @@ def dynamic_topk_refs(
   block_token = logits_ref.shape[0]
   shape = (block_token, bins_topm_vals_ref.shape[1])
   block_topk = bins_topm_vals_ref.shape[0]
-  assert block_topk % block_token == 0, (
-    "block_topk must be a multiple of block_token"
-  )
+  assert (
+    block_topk % block_token == 0
+  ), "block_topk must be a multiple of block_token"
 
   pid = pl.program_id(0)
 
@@ -440,7 +443,7 @@ def dynamic_topk_refs(
       # the largest m-th largest value, then top-k is guaranteed to be in bins
       # top-(m-1) collated
       pivot = bins_topm_vals[m - 1].max(-1, keepdims=True)
-      # if stable sort, we must include values at the boundary in to the bitonic stable sort 
+      # if stable sort, we must include values at the boundary in to the bitonic stable sort
       # if not we just need k values greater than or equal to
       _comp = operator.gt if stable else operator.ge
       num_larger = (
@@ -542,7 +545,7 @@ def dynamic_topk_refs(
           k=max_k,
           val_dtype=logits_ref.dtype,
           max_index=logits_ref.shape[1],
-          num_keys=1+int(stable),
+          num_keys=1 + int(stable),
         )
         topk_vals_ref[...], topk_idxs_ref[...] = (
           vals.astype(topk_vals_ref.dtype),
@@ -567,6 +570,7 @@ def dynamic_topk_refs(
     "guarantee_convergence",
     "replace_val",
     "interpret",
+    "stable",
   ),
 )
 def _top_bounded_k(
@@ -581,6 +585,7 @@ def _top_bounded_k(
   guarantee_convergence: bool = True,
   replace_val: float | int | None = None,
   interpret: bool = False,
+  stable: bool = True,
 ):
   """
   High-level interface for adaptive binned top-k computation on TPU.
@@ -723,6 +728,7 @@ def _top_bounded_k(
       bins_topm_schedule=bins_topm_schedule,
       guarantee_convergence=guarantee_convergence,
       replace_val=replace_val,
+      stable=stable,
     ),
     in_specs=(
       pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
