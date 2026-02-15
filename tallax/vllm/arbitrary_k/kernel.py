@@ -27,7 +27,7 @@ from tallax.vllm.utils.high_precision_uint import (
 )
 from tallax.vllm.arbitrary_k.topp_mask import topp_mask
 from tallax.vllm.arbitrary_k.topk_mask import topk_mask, find_boundary_idx
-from tallax.tax.utils import NUM_LANES, map_reduce
+from tallax.tax.utils import NUM_LANES, map_reduce, get_dtype_info
 
 _SAMPLING_EPS = 1e-5
 
@@ -79,6 +79,7 @@ def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
     unnorm_probs_i32,
     map_fn=lambda x: U48(x, max_val=max_val),
     target=target_u48,
+    pad_val=0,
   )
 
 
@@ -140,6 +141,7 @@ def arbitrary_topk_topp_and_sample_kernel(
       chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)
     ).astype(jnp.int32),
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
+    pad_val=get_dtype_info(logits_ref).min,
   )[:, :1]
 
   # Stage 2: Top-k masking
