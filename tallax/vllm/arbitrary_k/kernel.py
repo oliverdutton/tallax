@@ -74,18 +74,18 @@ def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
     random_u128_in_u32s,
     total_sum_u48.to_u64_in_u32s(),
   )
-  target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
+  random_unnorm_cdf_sampled = U48.from_u64_in_u32s(sampled_u64_in_u32s)
   return find_boundary_idx(
     unnorm_probs_i32,
     map_fn=lambda x: U48(x, max_val=max_val),
-    target=target_u48,
+    target=random_unnorm_cdf_sampled,
     pad_val=0,
-  )
+  ), random_unnorm_cdf_sampled
 
 
 def arbitrary_topk_topp_and_sample_kernel(
   logits_ref,
-  random_u128_in_u32s_ref,
+  random_u128_in_u32s_refs,
   k_ref,
   p_ref,
   temperature_ref,
@@ -116,7 +116,7 @@ def arbitrary_topk_topp_and_sample_kernel(
       scoped_ref[...] = logits_ref[...].astype(jnp.float32)
       return arbitrary_topk_topp_and_sample_kernel(
         scoped_ref,
-        random_u128_in_u32s_ref,
+        random_u128_in_u32s_refs,
         k_ref,
         p_ref,
         temperature_ref,
@@ -167,20 +167,11 @@ def arbitrary_topk_topp_and_sample_kernel(
   )
 
   # Stage 5: Sample
-  random_u128_parts = [ref[...] for ref in random_u128_in_u32s_ref]
-  total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=2**24 - 1)
-  sampled_u64_in_u32s = modulo_u128_u64(
-    random_u128_parts,
-    total_sum_u48.to_u64_in_u32s(),
-  )
-  random_unnorm_cdf_sampled = U48.from_u64_in_u32s(sampled_u64_in_u32s)
-  next_tokens = find_boundary_idx(
+  next_tokens, random_unnorm_cdf_sampled = sample_probs(
     unnorm_probs_i32,
-    map_fn=lambda x: U48(x, max_val=2**24 - 1),
-    target=random_unnorm_cdf_sampled,
-    pad_val=0,
+    [ref[...] for ref in random_u128_in_u32s_refs],
+    max_val=2**24 - 1,
   )
-
   sampled_tokens_ref[...] = jnp.where(
     temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
   )
