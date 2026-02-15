@@ -8,8 +8,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tallax.vllm.reference import reference_topk_topp_mask_and_sample
-from tallax.vllm.arbitrary_k.kernel import topk_topp_mask_and_sample as arbitrary_k_sample
+from tallax.vllm.reference import reference_topk_topp_and_sample
+from tallax.vllm.arbitrary_k.kernel import arbitrary_topk_topp_and_sample
 from tallax.tax.utils import is_cpu_platform
 
 
@@ -31,10 +31,10 @@ def test_arbitrary_k_vs_reference(seed):
   """arbitrary_k kernel matches reference output and debug intermediates."""
   logits, k, p, temperature, rng_key = _make_inputs(seed, 4, 256)
 
-  ref_result, ref_debug = reference_topk_topp_mask_and_sample(
+  ref_result, ref_debug = reference_topk_topp_and_sample(
     logits, rng_key, k, p, temperature, debug=True
   )
-  kernel_result, kernel_debug = arbitrary_k_sample(
+  kernel_result, kernel_debug = arbitrary_topk_topp_and_sample(
     logits, rng_key, k, p, temperature, stable=True, debug=True
   )
 

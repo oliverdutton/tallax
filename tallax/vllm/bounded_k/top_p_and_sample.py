@@ -218,7 +218,7 @@ def top_p_and_sample_refs(
 def _top_p_and_sample(
   topk_logits: jax.Array,
   topk_idx: jax.Array,
-  rng_key: jax.Array,
+  random_u128_in_u32s: list,
   top_p: jax.Array,
   temperature: jax.Array,
   *,
@@ -233,7 +233,7 @@ def _top_p_and_sample(
   Args:
     topk_logits: Sorted logits of shape (batch_size, k)
     topk_idx: Indices corresponding to sorted logits (batch_size, k)
-    rng_key: RNG key for sampling, shape (2,)
+    random_u128_in_u32s: List of 4 u32 arrays for random sampling
     top_p: Top-p threshold values
     temperature: Temperature values
     vocab_size: Vocabulary size for sampling
@@ -245,12 +245,6 @@ def _top_p_and_sample(
   Returns:
     Sampled tokens of shape (batch_size,), or (tokens, debug_dict) if debug=True
   """
-  batch_size = topk_logits.shape[0]
-
-  # Generate random u128 outside kernel
-  from tallax.vllm.utils.high_precision_uint import sample_random_u128_in_u32s
-  random_u128_in_u32s = list(sample_random_u128_in_u32s(rng_key, (batch_size, 1)))
-
   # Run the arrays-based implementation directly (no inner pallas_call needed
   # since the outer top_p_and_sample already wraps this)
   return top_p_and_sample_arrays(
@@ -267,12 +261,13 @@ def _top_p_and_sample(
   jit,
   static_argnames=(
     "vocab_size",
+    "max_k",
     "replace_val",
     "interpret",
     "debug",
   ),
 )
-def top_p_and_sample(
+def bounded_topk_topp_and_sample(
   topk_logits: jax.Array,
   topk_idx: jax.Array,
   rng_key: jax.Array,
@@ -280,6 +275,7 @@ def top_p_and_sample(
   temperature: jax.Array,
   *,
   vocab_size: int,
+  max_k: int,
   replace_val: float,
   interpret: bool = False,
   debug: bool = False,
@@ -295,6 +291,7 @@ def top_p_and_sample(
     top_p: Top-p threshold values.
     temperature: Temperature values.
     vocab_size: Total vocabulary size.
+    max_k: Maximum k value (bounded implementation supports k <= 128).
     replace_val: Value to replace filtered logits with.
     interpret: If True, run in CPU interpret mode.
     debug: If True, return (tokens, debug_results) with intermediate values.
@@ -302,15 +299,19 @@ def top_p_and_sample(
   Returns:
     Sampled tokens of shape (batch_size,), or (tokens, debug_dict) if debug=True.
   """
+  # Generate random u128 outside the sharded function
+  from tallax.vllm.utils.high_precision_uint import sample_random_u128_in_u32s
+  batch_size = topk_logits.shape[0]
+  random_u128_in_u32s = list(sample_random_u128_in_u32s(rng_key, (batch_size, 1)))
 
   @custom_partitioning
   def sharded_top_p_and_sample(
-    topk_logits, topk_idx, rng_key, top_p, temperature
+    topk_logits, topk_idx, random_u128_in_u32s, top_p, temperature
   ):
     return _top_p_and_sample(
       topk_logits,
       topk_idx,
-      rng_key,
+      random_u128_in_u32s,
       top_p,
       temperature,
       vocab_size=vocab_size,
@@ -329,14 +330,14 @@ def top_p_and_sample(
     )
     batch_axis_name = arg_shardings[0].spec[0]
 
-    def shmap_fn(topk_logits, topk_idx, rng_key, top_p, temperature):
+    def shmap_fn(topk_logits, topk_idx, random_u128_in_u32s, top_p, temperature):
       dim0_offset = 0
       if batch_axis_name is not None:
         dim0_offset = jax.lax.axis_index(batch_axis_name) * topk_logits.shape[0]
       return _top_p_and_sample(
         topk_logits,
         topk_idx,
-        rng_key,
+        random_u128_in_u32s,
         top_p,
         temperature,
         vocab_size=vocab_size,
@@ -351,10 +352,10 @@ def top_p_and_sample(
   sharded_top_p_and_sample.def_partition(
     infer_sharding_from_operands=infer_sharding_from_operands,
     partition=partition,
-    sharding_rule="b k, b k, r, b, b -> b",
+    sharding_rule="b k, b k, r r r r, b, b -> b",
     need_replication_factors=("k", "r"),
   )
 
   return sharded_top_p_and_sample(
-    topk_logits, topk_idx, rng_key, top_p, temperature
+    topk_logits, topk_idx, random_u128_in_u32s, top_p, temperature
   )

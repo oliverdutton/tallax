@@ -57,7 +57,7 @@ def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
   )
 
 
-def topk_topp_mask_and_sample_kernel(
+def arbitrary_topk_topp_and_sample_kernel(
   logits_ref,
   random_u128_in_u32s_ref,
   k_ref,
@@ -87,7 +87,7 @@ def topk_topp_mask_and_sample_kernel(
   if logits_ref.dtype != jnp.float32:
     def scoped_body(scoped_ref):
       scoped_ref[...] = logits_ref[...].astype(jnp.float32)
-      return topk_topp_mask_and_sample_kernel(
+      return arbitrary_topk_topp_and_sample_kernel(
         scoped_ref,
         random_u128_in_u32s_ref,
         k_ref,
@@ -176,7 +176,7 @@ def topk_topp_mask_and_sample_kernel(
     "debug",
   ],
 )
-def topk_topp_mask_and_sample(
+def arbitrary_topk_topp_and_sample(
   logits: jax.Array,
   rng_key: jax.Array,
   k: jax.Array,
@@ -250,7 +250,7 @@ def topk_topp_mask_and_sample(
   if not debug:
     result = pl.pallas_call(
       functools.partial(
-        topk_topp_mask_and_sample_kernel,
+        arbitrary_topk_topp_and_sample_kernel,
         stable=stable,
         replace_val=replace_val,
       ),
@@ -285,7 +285,7 @@ def topk_topp_mask_and_sample(
     out_shapes = (output_shape, debug_shapes)
     result, debug_results = pl.pallas_call(
       functools.partial(
-        topk_topp_mask_and_sample_kernel,
+        arbitrary_topk_topp_and_sample_kernel,
         stable=stable,
         replace_val=replace_val,
       ),
