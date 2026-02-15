@@ -97,7 +97,7 @@ def top_p_integer_mask(*, topk_logits, p, axis):
   exp_logits = jnp.exp(topk_logits - topk_logits[:1, :])
   scale = 2**24 - 1
   unnorm_probs_i32 = (exp_logits * scale).astype(jnp.int32)
-  if unnorm_probs_i32.shape[1] > 2**7:
+  if unnorm_probs_i32.shape[axis] > 2**7:
     raise NotImplementedError(
       "top_p_integer_mask only supports vocab_size <= 128, otherwise overflows i32 and higher precision simulation is required."
     )
@@ -164,20 +164,14 @@ def top_p_and_sample_arrays(
   target_cumsum = modulo_u128_u64(
     random_u128_in_u32s,
     [
-      jnp.zeros((shape[0], 1), dtype=jnp.uint32),
+      jnp.zeros((1, shape[1]), dtype=jnp.uint32),
       unnorm_probs_i32.sum(0, keepdims=True).astype(jnp.uint32),
     ],
   )[1]
-  # Within tile cumsum check
-  # For high parallelism we make 128 (b, 1) tiles instead of several rounds of cumsum on (b, 128)
-  iota1 = jax.lax.broadcasted_iota(jnp.int32, (shape[0], NUM_LANES), 0)
-  cumsums = [
-    (unnorm_probs_i32 * (iota1 <= i)).sum(0, keepdims=True)
-    for i in range(NUM_LANES)
-  ]
+  cumsums = cumsum_arrays(unnorm_probs_i32, axis=0)
   threshold_local_idx = sum((c < target_cumsum) for c in cumsums)
 
-  next_tokens = (idxs * (iota1 == threshold_local_idx)).sum(0)
+  next_tokens = (idxs * (jax.lax.broadcasted_iota(jnp.int32, idxs.shape, 0) == threshold_local_idx)).sum(0)
   greedy_sampled = topk_idx[0, :]
   return jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
 
