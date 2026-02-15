@@ -8,6 +8,6 @@ The top-k itself uses the divide-and-filter algorithm which is stable when
 enabled.
 """
 
-from tallax.vllm.bounded_k.top_p_and_sample import bounded_topk_topp_and_sample
+# from tallax.vllm.bounded_k.top_p_and_sample import bounded_topk_topp_and_sample
 
-__all__ = ["bounded_topk_topp_and_sample"]
+# __all__ = ["bounded_topk_topp_and_sample"]
