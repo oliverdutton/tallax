@@ -39,7 +39,7 @@ def u128_modulo_u64_pure_callback(r_parts, m_parts):
     (jax.ShapeDtypeStruct(r_parts[0].shape, jnp.uint32),) * 2,
     *r_parts,
     *m_parts,
-    vectorized=True,
+    vmap_method="legacy_vectorized",
   )
   return (high.astype(jnp.int64) << 32) + low.astype(jnp.int64)
 
