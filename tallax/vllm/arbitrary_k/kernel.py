@@ -130,7 +130,6 @@ def arbitrary_topk_topp_and_sample_kernel(
     return pl.run_scoped(scoped_body, pltpu.VMEM(logits_ref.shape, jnp.float32))
 
   batch_size = logits_ref.shape[0]
-  vocab_size = logits_ref.shape[1]
   logits_max = map_reduce(logits_ref, reduce_fn="max")
   logits_max_lanes = jnp.broadcast_to(logits_max, (batch_size, NUM_LANES))
 

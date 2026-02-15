@@ -15,7 +15,7 @@ from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 @functools.partial(
   jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule")
 )
-def topk_topp_and_sample(
+def bounded_topk_topp_and_sample(
   rng_key,
   logits,
   tpu_sampling_metadata,
@@ -38,7 +38,6 @@ def topk_topp_and_sample(
   Returns:
     Sampled token indices.
   """
-  vocab_size = logits.shape[1]
   topk_logits, topk_idxs = top_bounded_k(
     logits,
     k=tpu_sampling_metadata.top_k,
@@ -49,11 +48,9 @@ def topk_topp_and_sample(
     guarantee_convergence=True,
   )
   return top_p_and_sample(
-    topk_logits,
-    topk_idxs,
-    rng_key,
+    topk_logits=topk_logits,
+    topk_idx=topk_idxs,
+    rng_key=rng_key,
     top_p=tpu_sampling_metadata.top_p,
     temperature=tpu_sampling_metadata.temperature,
-    vocab_size=vocab_size,
-    replace_val=-1e12,
   )

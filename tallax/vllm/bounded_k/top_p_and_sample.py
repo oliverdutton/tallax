@@ -29,16 +29,6 @@ from tallax.tax.utils import NUM_SUBLANES, NUM_LANES
 _SAMPLING_EPS = 1e-5
 
 
-def canonicalize_args(batch_size, *args):
-  result = []
-  for val in args:
-    val = jnp.atleast_1d(val)
-    if val.shape[0] == 1:
-      val = jnp.broadcast_to(val, (batch_size,))
-    result.append(val)
-  return result
-
-
 def broadcast_to(x, shape):
   if x.shape[1] == shape[1] and shape[0] % NUM_LANES == 0 and x.shape[0] == 1:
     return pltpu.repeat(
@@ -247,7 +237,9 @@ def _top_p_and_sample(
   topk_logits, topk_idx, random_u128_in_u32s, top_p, temperature, *, debug=False
 ):
   batch_size, k = topk_logits.shape
-  top_p, temperature = canonicalize_args(batch_size, top_p, temperature)
+  top_p, temperature = (
+    jnp.broadcast_to(v, (batch_size,)) for v in (top_p, temperature)
+  )
 
   output_shape = jax.ShapeDtypeStruct((batch_size,), jnp.int32)
 
