@@ -2,7 +2,7 @@ import pytest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from tallax.vllm.top_p_and_sample import top_p_mask as pallas_top_p_mask
+from tallax.vllm.reducedk.top_p_and_sample import top_p_mask as pallas_top_p_mask
 from tallax.vllm.tpu_inference_sampling_as_standalone_file import (
   topp_mask as tpu_inference_top_p_mask,
 )

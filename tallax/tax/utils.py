@@ -507,3 +507,70 @@ def maybe_static_jit(
     return fs[key](*args, **kwargs)
 
   return jit_f
+
+
+def map_reduce(
+  vals,
+  map_fn=lambda x: x,
+  reduce_fn="sum",
+  num_parallel: int = 7,
+  apply_post_partial_sums_fn=None,
+):
+  """Computes unary_reduce(map_fn(vals)) efficiently using parallel chunks.
+
+  The input vals is chunked along axis 1 using NUM_LANES.
+  The map_fn is expected to already close over any required parameters.
+
+  reduce_fn can be a string ('sum', 'max', 'min') or a tuple
+  (binary_reduce, unary_reduce).
+  """
+  if reduce_fn == "sum":
+    binary_reduce, unary_reduce = (lambda x, y: x + y), (lambda x: x.sum(1, keepdims=True))
+  elif reduce_fn == "max":
+    binary_reduce, unary_reduce = jnp.maximum, lambda x: x.max(1, keepdims=True)
+  elif reduce_fn == "min":
+    binary_reduce, unary_reduce = jnp.minimum, lambda x: x.min(1, keepdims=True)
+  else:
+    binary_reduce, unary_reduce = reduce_fn
+
+  vals_shape_1 = vals.shape[1]
+
+  # Fast path for small inputs
+  if num_parallel == 0 or vals_shape_1 < NUM_LANES:
+    return unary_reduce(map_fn(vals))
+
+  num_chunks = vals_shape_1 // NUM_LANES
+  chunks = [
+    vals[:, i * NUM_LANES : (i + 1) * NUM_LANES] for i in range(num_chunks)
+  ]
+  num_parallel = min(num_parallel, len(chunks))
+
+  # Compute partial results
+  partial_results = [map_fn(chunk) for chunk in chunks[:num_parallel]]
+  for i, chunk in enumerate(chunks[num_parallel:]):
+    partial_results[i % num_parallel] = binary_reduce(
+      partial_results[i % num_parallel], map_fn(chunk)
+    )
+
+  if apply_post_partial_sums_fn is not None:
+    partial_results = list(map(apply_post_partial_sums_fn, partial_results))
+
+  # Tree reduction
+  while len(partial_results) > 1:
+    n = len(partial_results)
+    for i in range(n // 2):
+      partial_results[i] = binary_reduce(
+        partial_results[i], partial_results[i + (n + 1) // 2]
+      )
+    partial_results = partial_results[: (n + 1) // 2]
+
+  full_result = unary_reduce(partial_results[0])
+
+  has_remainder = vals_shape_1 % NUM_LANES
+  if has_remainder:
+    remainder_vals = vals[:, num_chunks * NUM_LANES :]
+    full_result = binary_reduce(
+      full_result, unary_reduce(map_fn(remainder_vals))
+    )
+
+  return full_result
