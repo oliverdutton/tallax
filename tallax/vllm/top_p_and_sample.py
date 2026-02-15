@@ -128,9 +128,6 @@ def top_p_and_sample_arrays(
   random_u128_in_u32s,
   top_p,
   temperature,
-  vocab_size,
-  replace_val,
-  dim0_offset: int = 0,
 ):
   """
   Implements top-p filtering, temperature scaling, and sampling.
@@ -141,9 +138,6 @@ def top_p_and_sample_arrays(
       random_u128_in_u32s: Random u128 in u32s for sampling, list of four (batch_size, 1)
       top_p: Top-p threshold values, shape (batch_size,)
       temperature: Temperature values, shape (batch_size,)
-      vocab_size: Vocabulary size for sampling
-      replace_val: Value to replace filtered logits with
-      dim0_offset: Offset for dim0 (batch) axis, used for sharding (default: 0)
 
   Returns:
       Sampled tokens of shape (batch_size,)
