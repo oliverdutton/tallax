@@ -14,7 +14,6 @@ Optional debug_results: a nested dict of int32[1] SMEM values (1=match, 0=mismat
 for verifying that each intermediate matches the reference implementation.
 """
 
-from collections import OrderedDict
 import functools
 import jax
 import jax.numpy as jnp
@@ -254,117 +253,72 @@ def arbitrary_topk_topp_and_sample(
 
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
-  if not debug:
-    result = pl.pallas_call(
-      functools.partial(
-        arbitrary_topk_topp_and_sample_kernel,
-        stable=stable,
-        replace_val=replace_val,
+  if debug:
+    debug_out_shapes = {
+      "greedy_sampled": jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32),
+      "topk_logits_unsorted": jax.ShapeDtypeStruct(
+        (padded_batch, vocab_size), jnp.float32
       ),
-      out_shape=output_shape,
-      grid=(num_blocks,),
-      in_specs=[
-        pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          random_u128_in_u32s,
-        ),
+      "topk_topp_unnorm_probs_i32_unsorted": jax.ShapeDtypeStruct(
+        (padded_batch, vocab_size), jnp.int32
+      ),
+      "random_unnorm_cdf_sampled": (
+        jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32),
+      )
+      * 2,
+      "next_tokens": jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32),
+    }
+    debug_out_specs = {
+      "greedy_sampled": pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      "topk_logits_unsorted": pl.BlockSpec(
+        (block_token, vocab_size), lambda i: (i, 0)
+      ),
+      "topk_topp_unnorm_probs_i32_unsorted": pl.BlockSpec(
+        (block_token, vocab_size), lambda i: (i, 0)
+      ),
+      "random_unnorm_cdf_sampled": (
         pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      ],
-      out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
-      interpret=interpret,
-    )(logits, random_u128_in_u32s, k, p, temperature)
-
-    return result[:batch_size, 0]
+      )
+      * 2,
+      "next_tokens": pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    }
   else:
-    # Debug mode: also output debug intermediates as full arrays
-    debug_shapes = OrderedDict([
-      ("greedy_sampled", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
-      (
-        "topk_logits_unsorted",
-        jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.float32),
-      ),
-      (
-        "topk_topp_unnorm_probs_i32_unsorted",
-        jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.int32),
-      ),
-      (
-        "random_unnorm_cdf_sampled_high",
-        jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32),
-      ),
-      (
-        "random_unnorm_cdf_sampled_low",
-        jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32),
-      ),
-      ("next_tokens", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
-    ])
-    out_shapes = (output_shape, debug_shapes)
-    result, debug_results = pl.pallas_call(
-      functools.partial(
-        arbitrary_topk_topp_and_sample_kernel,
-        stable=stable,
-        replace_val=replace_val,
-      ),
-      out_shape=out_shapes,
-      grid=(num_blocks,),
-      in_specs=[
-        pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          random_u128_in_u32s,
-        ),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      ],
-      out_specs=(
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        OrderedDict([
-          ("greedy_sampled", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
-          (
-            "topk_logits_unsorted",
-            pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-          ),
-          (
-            "topk_topp_unnorm_probs_i32_unsorted",
-            pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-          ),
-          (
-            "random_unnorm_cdf_sampled_high",
-            pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          ),
-          (
-            "random_unnorm_cdf_sampled_low",
-            pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          ),
-          ("next_tokens", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
-        ]),
-      ),
-      compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
-      interpret=interpret,
-    )(logits, random_u128_in_u32s, k, p, temperature)
+    debug_out_shapes = None
+    debug_out_specs = None
 
-    # Trim padding and reshape debug outputs to match reference format
-    debug_results_trimmed = OrderedDict([
-      ("greedy_sampled", debug_results["greedy_sampled"][:batch_size, 0]),
-      (
-        "topk_logits_unsorted",
-        debug_results["topk_logits_unsorted"][:batch_size, :],
+  results = pl.pallas_call(
+    functools.partial(
+      arbitrary_topk_topp_and_sample_kernel,
+      stable=stable,
+      replace_val=replace_val,
+    ),
+    out_shape=(output_shape, debug_out_shapes),
+    grid=(num_blocks,),
+    in_specs=[
+      pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
+      jax.tree.map(
+        lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+        random_u128_in_u32s,
       ),
-      (
-        "topk_topp_unnorm_probs_i32_unsorted",
-        debug_results["topk_topp_unnorm_probs_i32_unsorted"][:batch_size, :],
-      ),
-      (
-        "random_unnorm_cdf_sampled",
-        (
-          debug_results["random_unnorm_cdf_sampled_high"][:batch_size, 0],
-          debug_results["random_unnorm_cdf_sampled_low"][:batch_size, 0],
-        ),
-      ),
-      ("next_tokens", debug_results["next_tokens"][:batch_size, 0]),
-    ])
-    return result[:batch_size, 0], debug_results_trimmed
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    ],
+    out_specs=(
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      debug_out_specs,
+    ),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
+    interpret=interpret,
+  )(logits, random_u128_in_u32s, k, p, temperature)
+
+  def trim(x):
+    if x.shape[1] == 1:
+      x = x.squeeze(1)
+    return x[:batch_size]
+
+  sampled_tokens, debug_aux = jax.tree.map(trim, results)
+
+  if debug:
+    return sampled_tokens, debug_aux
+  return sampled_tokens

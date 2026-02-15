@@ -10,7 +10,6 @@ This kernel assumes logits have already been reduced to top-k elements
 Only supports vocab_size (k) <= 128 due to i32 overflow constraints.
 """
 
-from collections import OrderedDict
 import functools
 import jax
 import jax.numpy as jnp
@@ -180,13 +179,13 @@ def top_p_and_sample_arrays(
   random_unnorm_cdf_sampled_high = (target_cumsum_i64 >> 32).astype(jnp.uint32)
   random_unnorm_cdf_sampled_low = (target_cumsum_i64 & 0xFFFFFFFF).astype(jnp.uint32)
 
-  debug_results = OrderedDict([
-    ("greedy_sampled", greedy_sampled),
-    ("topk_logits_unsorted", topk_logits),  # Original sorted logits in batch-first format
-    ("topk_topp_unnorm_probs_i32_unsorted", unnorm_probs_i32_unsorted.T),  # Transpose back to [batch, k]
-    ("random_unnorm_cdf_sampled", (random_unnorm_cdf_sampled_high, random_unnorm_cdf_sampled_low)),
-    ("next_tokens", next_tokens),
-  ])
+  debug_results = {
+    "greedy_sampled": greedy_sampled,
+    "topk_logits_unsorted": topk_logits,  # Original sorted logits in batch-first format
+    "topk_topp_unnorm_probs_i32_unsorted": unnorm_probs_i32_unsorted.T,  # Transpose back to [batch, k]
+    "random_unnorm_cdf_sampled": (random_unnorm_cdf_sampled_high, random_unnorm_cdf_sampled_low),
+    "next_tokens": next_tokens,
+  }
 
   return result, debug_results
 
