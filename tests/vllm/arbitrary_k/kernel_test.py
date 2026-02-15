@@ -66,8 +66,12 @@ def test_arbitrary_k_vs_reference(seed):
     ref_debug["topk_topp_unnorm_probs_i32_unsorted"][0],
   )
 
-  # Random sampled CDF value matches
+  # Random sampled CDF value matches (tuple of high and low u32)
   np.testing.assert_array_equal(
-    kernel_debug["random_unnorm_cdf_sampled"][0],
-    ref_debug["random_unnorm_cdf_sampled"][0],
+    kernel_debug["random_unnorm_cdf_sampled"][0][0],
+    ref_debug["random_unnorm_cdf_sampled"][0][0],
+  )
+  np.testing.assert_array_equal(
+    kernel_debug["random_unnorm_cdf_sampled"][1][0],
+    ref_debug["random_unnorm_cdf_sampled"][1][0],
   )

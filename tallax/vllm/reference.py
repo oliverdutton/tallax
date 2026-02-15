@@ -133,11 +133,15 @@ def reference_topk_topp_mask_and_sample(
     if not debug:
       return result
 
+    # Convert sampled_total (i64) to tuple of (high_u32, low_u32)
+    sampled_total_high = (sampled_total >> 32).astype(jnp.uint32)
+    sampled_total_low = (sampled_total & 0xFFFFFFFF).astype(jnp.uint32)
+
     debug_results = OrderedDict([
       ("greedy_sampled", greedy_sampled),
       ("topk_logits_unsorted", topk_logits_unsorted),
       ("topk_topp_unnorm_probs_i32_unsorted", unnorm_probs_i32),
-      ("random_unnorm_cdf_sampled", sampled_total),
+      ("random_unnorm_cdf_sampled", (sampled_total_high, sampled_total_low)),
       ("next_tokens", next_tokens),
     ])
     return result, debug_results

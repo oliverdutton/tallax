@@ -160,12 +160,9 @@ def topk_topp_mask_and_sample_kernel(
     debug_arrays_ref["greedy_sampled"][...] = greedy_sampled
     debug_arrays_ref["topk_logits_unsorted"][...] = topk_logits
     debug_arrays_ref["topk_topp_unnorm_probs_i32_unsorted"][...] = unnorm_probs_i32
-    # Extract the low 32 bits of the sampled value for consistency with reference
-    random_unnorm_cdf_sampled_i64 = (
-      (random_unnorm_cdf_sampled.high.astype(jnp.int64) << 32) +
-      random_unnorm_cdf_sampled.low.astype(jnp.int64)
-    )
-    debug_arrays_ref["random_unnorm_cdf_sampled"][...] = random_unnorm_cdf_sampled_i64
+    # Store as tuple of (high_u32, low_u32)
+    debug_arrays_ref["random_unnorm_cdf_sampled_high"][...] = random_unnorm_cdf_sampled.high
+    debug_arrays_ref["random_unnorm_cdf_sampled_low"][...] = random_unnorm_cdf_sampled.low
     debug_arrays_ref["next_tokens"][...] = next_tokens
 
 
@@ -281,7 +278,8 @@ def topk_topp_mask_and_sample(
       ("greedy_sampled", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
       ("topk_logits_unsorted", jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.float32)),
       ("topk_topp_unnorm_probs_i32_unsorted", jax.ShapeDtypeStruct((padded_batch, vocab_size), jnp.int32)),
-      ("random_unnorm_cdf_sampled", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int64)),
+      ("random_unnorm_cdf_sampled_high", jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32)),
+      ("random_unnorm_cdf_sampled_low", jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32)),
       ("next_tokens", jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)),
     ])
     out_shapes = (output_shape, debug_shapes)
@@ -309,7 +307,8 @@ def topk_topp_mask_and_sample(
           ("greedy_sampled", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
           ("topk_logits_unsorted", pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0))),
           ("topk_topp_unnorm_probs_i32_unsorted", pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0))),
-          ("random_unnorm_cdf_sampled", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
+          ("random_unnorm_cdf_sampled_high", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
+          ("random_unnorm_cdf_sampled_low", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
           ("next_tokens", pl.BlockSpec((block_token, 1), lambda i: (i, 0))),
         ]),
       ),
@@ -322,7 +321,10 @@ def topk_topp_mask_and_sample(
       ("greedy_sampled", debug_results["greedy_sampled"][:batch_size, 0]),
       ("topk_logits_unsorted", debug_results["topk_logits_unsorted"][:batch_size, :]),
       ("topk_topp_unnorm_probs_i32_unsorted", debug_results["topk_topp_unnorm_probs_i32_unsorted"][:batch_size, :]),
-      ("random_unnorm_cdf_sampled", debug_results["random_unnorm_cdf_sampled"][:batch_size, 0]),
+      ("random_unnorm_cdf_sampled", (
+        debug_results["random_unnorm_cdf_sampled_high"][:batch_size, 0],
+        debug_results["random_unnorm_cdf_sampled_low"][:batch_size, 0],
+      )),
       ("next_tokens", debug_results["next_tokens"][:batch_size, 0]),
     ])
     return result[:batch_size, 0], debug_results_trimmed

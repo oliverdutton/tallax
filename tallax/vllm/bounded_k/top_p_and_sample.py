@@ -175,14 +175,16 @@ def top_p_and_sample_arrays(
     return result
 
   # Build debug output matching the reference format but for the k-slice
-  # Convert sampled CDF value to int64 for consistency
-  random_unnorm_cdf_sampled = target_cumsum.astype(jnp.int64)
+  # Convert sampled CDF value to tuple of (high_u32, low_u32)
+  target_cumsum_i64 = target_cumsum.astype(jnp.int64)
+  random_unnorm_cdf_sampled_high = (target_cumsum_i64 >> 32).astype(jnp.uint32)
+  random_unnorm_cdf_sampled_low = (target_cumsum_i64 & 0xFFFFFFFF).astype(jnp.uint32)
 
   debug_results = OrderedDict([
     ("greedy_sampled", greedy_sampled),
     ("topk_logits_unsorted", topk_logits),  # Original sorted logits in batch-first format
     ("topk_topp_unnorm_probs_i32_unsorted", unnorm_probs_i32_unsorted.T),  # Transpose back to [batch, k]
-    ("random_unnorm_cdf_sampled", random_unnorm_cdf_sampled),
+    ("random_unnorm_cdf_sampled", (random_unnorm_cdf_sampled_high, random_unnorm_cdf_sampled_low)),
     ("next_tokens", next_tokens),
   ])
 
