@@ -13,7 +13,6 @@ import jax.numpy as jnp
 from jax import tree_util
 from jax.experimental import pallas as pl
 
-from tallax.tax.sparse_random import sparse_random_bits
 from tallax.tax.utils import NUM_LANES, map_reduce
 
 
@@ -278,25 +277,6 @@ def modulo_u128_u64(
   for i in range(128):
     state = body_fun(i, state)
   return state
-
-
-def random_u48(
-  rng_key_refs,
-  max_val: U48,
-  dim0_indices: jax.Array,
-) -> U48:
-  """Generate random U48 values uniformly in [0, max_val)."""
-  max_val_u64_in_u32s = max_val.to_u64_in_u32s()
-  indices = (dim0_indices, jnp.zeros_like(dim0_indices))
-  random_u128_in_u32s = [
-    sparse_random_bits(key_ref, indices, dim1_size=1)
-    for key_ref in rng_key_refs
-  ]
-  assert len(random_u128_in_u32s) == 4
-  sampled_u64_in_u32s = modulo_u128_u64(
-    random_u128_in_u32s, max_val_u64_in_u32s
-  )
-  return U48.from_u64_in_u32s(sampled_u64_in_u32s)
 
 
 # Register PyTree

@@ -25,8 +25,8 @@ from tallax.vllm.utils.high_precision_uint import (
   modulo_u128_u64,
   sample_random_u128_in_u32s,
 )
-from tallax.vllm.fullvocab.topp_mask import topp_mask
-from tallax.vllm.fullvocab.topk_mask import topk_mask, find_boundary_idx
+from tallax.vllm.arbitrary_k.topp_mask import topp_mask
+from tallax.vllm.arbitrary_k.topk_mask import topk_mask, find_boundary_idx
 from tallax.tax.utils import NUM_LANES, map_reduce
 
 _SAMPLING_EPS = 1e-5

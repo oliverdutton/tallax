@@ -1,14 +1,14 @@
 """vLLM top-k top-p sampling, using two stages.
 
-Stage 1 (reducedk path): Divide-and-filter top-k to reduce vocab to k elements.
-Stage 2 (reducedk path): Top-p + sample on the reduced sorted subset.
+Stage 1 (bounded_k path): Divide-and-filter top-k to reduce vocab to k elements.
+Stage 2 (bounded_k path): Top-p + sample on the reduced sorted subset.
 
-For direct full-vocab binary-search path, use fullvocab.topk_topp_mask_and_sample.
+For direct full-vocab binary-search path, use arbitrary_k.topk_topp_mask_and_sample.
 """
 
 import functools
 import jax
-from tallax.vllm.reducedk import top_p_and_sample
+from tallax.vllm.bounded_k import top_p_and_sample
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
 
@@ -25,7 +25,7 @@ def topk_topp_and_sample(
 ):
   """Combined top-k, top-p filtering, and sampling for vLLM inference.
 
-  Uses the reducedk path: divide-and-filter top-k -> bitonic sort -> top-p -> sample.
+  Uses the bounded_k path: divide-and-filter top-k -> bitonic sort -> top-p -> sample.
 
   Args:
     rng_key: RNG key for sampling.

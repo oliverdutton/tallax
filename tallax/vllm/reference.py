@@ -3,7 +3,7 @@
 No Pallas, no TPU-specific operations. Uses jax.enable_x64 for exact
 i64 arithmetic and jax.pure_callback for arbitrary-precision u128 % u64.
 
-This is the ground truth that both the fullvocab and reducedk kernels
+This is the ground truth that both the arbitrary_k and bounded_k kernels
 should match (modulo the intermediate representation).
 """
 

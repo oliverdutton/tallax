@@ -1,4 +1,4 @@
-"""Reduced-k top-p filtering and sampling using bitonic sort.
+"""Bounded-k top-p filtering and sampling using bitonic sort.
 
 This kernel assumes logits have already been reduced to top-k elements
 (via bitonic sort). It operates on the sorted subset:
