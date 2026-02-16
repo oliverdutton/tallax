@@ -110,7 +110,7 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
 def top_p_and_sample_arrays(
   *,
   topk_logits,
-  topk_idx,
+  topk_idxs,
   random_u128_in_u32s,
   top_p,
   temperature,
@@ -131,17 +131,14 @@ def top_p_and_sample_arrays(
   """
   topk_logits = topk_logits.astype(jnp.float32)
 
-  # Store original shape for debug
-  batch_size, k = topk_logits.shape
-
   # Shift to dim 0 for sublane-based reductions
   topk_logits_transposed = topk_logits.T
-  topk_idx_transposed = topk_idx.T
+  topk_idxs_transposed = topk_idxs.T
   random_u128_in_u32s_transposed = [x.T for x in random_u128_in_u32s]
   shape = topk_logits_transposed.shape
 
   # Greedy sample (before temperature scaling)
-  greedy_sampled = topk_idx_transposed[:1, :]
+  greedy_sampled = topk_idxs_transposed[:1, :]
 
   # Temperature scaling
   topk_logits_scaled = topk_logits_transposed / temperature[None, :].astype(
@@ -155,8 +152,8 @@ def top_p_and_sample_arrays(
 
   # Re-sort back to original index order for bitwise-matching sampling
   inverted_idxs, unnorm_probs_i32_unsorted = bitonic_topk_arrays(
-    [-topk_idx_transposed, unnorm_probs_i32_sorted],
-    k=topk_idx_transposed.shape[0],
+    [-topk_idxs_transposed, unnorm_probs_i32_sorted],
+    k=topk_idxs_transposed.shape[0],
     axis=0,
     num_keys=1,
   )
@@ -191,8 +188,9 @@ def top_p_and_sample_arrays(
 
   debug_results = {
     "greedy_sampled": greedy_sampled.T,
-    "topk_logits_unsorted": topk_logits,  # Original sorted logits in batch-first format
-    "topk_topp_unnorm_probs_i32_unsorted": unnorm_probs_i32_unsorted.T,  # Transpose back to [batch, k]
+    "topk_logits": topk_logits,  # Top-k logits
+    "topk_idxs": topk_idxs,
+    "topk_topp_unnorm_probs_i32_topk_filtered_unsorted": unnorm_probs_i32_unsorted.T,  # Transpose back to [batch, k]
     "random_unnorm_cdf_sampled": (
       jnp.zeros_like(random_unnorm_cdf_sampled_low),
       random_unnorm_cdf_sampled_low,
@@ -215,7 +213,7 @@ def top_p_and_sample_refs(
   """Pallas kernel body for top-p filtering + sampling."""
   result = top_p_and_sample_arrays(
     topk_logits=topk_logits_ref[...],
-    topk_idx=topk_idx_ref[...],
+    topk_idxs=topk_idx_ref[...],
     random_u128_in_u32s=[ref[...] for ref in random_u128_in_u32s_refs],
     top_p=top_p_ref[...],
     temperature=temperature_ref[...],
@@ -248,10 +246,9 @@ def _top_p_and_sample(
   if debug:
     debug_out_shapes = {
       "greedy_sampled": jax.ShapeDtypeStruct((batch_size, 1), jnp.int32),
-      "topk_logits_unsorted": jax.ShapeDtypeStruct(
-        (batch_size, k), jnp.float32
-      ),
-      "topk_topp_unnorm_probs_i32_unsorted": jax.ShapeDtypeStruct(
+      "topk_logits": jax.ShapeDtypeStruct((batch_size, k), jnp.float32),
+      "topk_idxs": jax.ShapeDtypeStruct((batch_size, k), jnp.int32),
+      "topk_topp_unnorm_probs_i32_topk_filtered_unsorted": jax.ShapeDtypeStruct(
         (batch_size, k), jnp.int32
       ),
       "random_unnorm_cdf_sampled": (
