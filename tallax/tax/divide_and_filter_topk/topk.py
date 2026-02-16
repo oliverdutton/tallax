@@ -205,6 +205,7 @@ def binned_topk(
 
   # Handle remaining elements if vocab_size doesn't divide num_bins
   # We do this first as we loop the array backwards, due to >= swap this leads to stable index ordering and cases where the top-k includes -inf
+  bins_topk_outs = (bins_topk_vals, bins_topk_idxs)
   rem_vals = _extract_remainder_slice(logits, num_bins)
   if rem_vals is not None:
     # Create idxs for the final segment
@@ -215,7 +216,7 @@ def binned_topk(
   bins_topk_outs = unrolled_fori_loop(
     num_full_slices,
     loop_body,
-    (bins_topk_vals, bins_topk_idxs),
+    bins_topk_outs,
     unroll=unroll,
   )
 
