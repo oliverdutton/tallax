@@ -106,6 +106,7 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
     # sort vals descending, indices ascending so we negate indices
     operands[1] = -operands[1]
   if pack:
+    operands[1] = 2**16 - 1 - operands[1]
     operands = [
       pack_bf16_u16_to_i32(*operands[:2], stable=stable),
       *operands[2:],
@@ -116,6 +117,7 @@ def bitonic_topk_arrays(operands, k, num_keys, val_dtype=None, max_index=None):
     operands = (
       list(unpack_bf16_u16_from_i32(operands[0], stable=stable)) + operands[1:]
     )
+    operands[1] = 2**16 - 1 - operands[1]
   if num_keys == 2 and not pack:
     # invert back so sort vals descending, indices ascending
     operands[1] = -operands[1]
