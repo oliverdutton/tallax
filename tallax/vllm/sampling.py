@@ -15,7 +15,14 @@ from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
 
 @functools.partial(
-  jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule", "debug")
+  jax.jit,
+  static_argnames=(
+    "max_k",
+    "num_bins",
+    "bins_topm_schedule",
+    "debug",
+    "stable",
+  ),
 )
 def bounded_topk_topp_and_sample(
   logits,
@@ -25,6 +32,7 @@ def bounded_topk_topp_and_sample(
   temperature,
   max_k: int,
   num_bins: int | None = None,
+  stable: bool = True,
   bins_topm_schedule: int | None = None,
   debug: bool = False,
 ):
@@ -51,6 +59,7 @@ def bounded_topk_topp_and_sample(
     num_bins=num_bins,
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
+    stable=stable,
   )
   outs = topp_and_sample(
     topk_logits=topk_logits,
