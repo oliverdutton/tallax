@@ -170,16 +170,18 @@ def top_p_and_sample_arrays(
       unnorm_probs_i32_unsorted.sum(0, keepdims=True).astype(jnp.uint32),
     ],
   )[1]
-  cumsums = cumsum_arrays(unnorm_probs_i32_unsorted, axis=0)
-  threshold_local_idx = sum((c < target_cumsum) for c in cumsums)
+  cumsum = cumsum_arrays(unnorm_probs_i32_unsorted, axis=0)
+  threshold_local_idx = (cumsum < target_cumsum).sum(0, keepdims=True)
 
   next_tokens = (
     idxs
     * (
       jax.lax.broadcasted_iota(jnp.int32, idxs.shape, 0) == threshold_local_idx
     )
-  ).sum(0)
-  result = jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
+  ).sum(0, keepdims=True)
+  result = jnp.where(
+    temperature[None, :] < _SAMPLING_EPS, greedy_sampled, next_tokens
+  )
 
   if not debug:
     return result
@@ -241,7 +243,7 @@ def _top_p_and_sample(
     jnp.broadcast_to(v, (batch_size,)) for v in (top_p, temperature)
   )
 
-  output_shape = jax.ShapeDtypeStruct((batch_size,), jnp.int32)
+  output_shape = jax.ShapeDtypeStruct((1, batch_size), jnp.int32)
 
   if debug:
     debug_out_shapes = {
@@ -261,7 +263,7 @@ def _top_p_and_sample(
   else:
     debug_out_shapes = None
 
-  results = pl.pallas_call(
+  sampled_tokens, debug_aux = pl.pallas_call(
     top_p_and_sample_refs,
     out_shape=(output_shape, debug_out_shapes),
   )(
@@ -272,16 +274,14 @@ def _top_p_and_sample(
     temperature,
   )
 
-  def trim(x):
-    if x.shape[1] == 1:
-      x = x.squeeze(1)
-    return x[:batch_size]
+  sampled_tokens = sampled_tokens.squeeze(0)
+  if not debug:
+    return sampled_tokens
 
-  sampled_tokens, debug_aux = jax.tree.map(trim, results)
-
-  if debug:
-    return sampled_tokens, debug_aux
-  return sampled_tokens
+  debug_aux = jax.tree.map(
+    lambda x: x.squeeze(1) if x.shape[1] == 1 else x, debug_aux
+  )
+  return sampled_tokens, debug_aux
 
 
 @functools.partial(
