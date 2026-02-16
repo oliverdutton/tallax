@@ -73,6 +73,7 @@ def reference_topk_topp_and_sample(
     Sampled token indices [batch], or (tokens, debug_dict) if debug=True
   """
   assert stable
+  underlying_logits_dtype = logits.dtype
   with jax.enable_x64(True):
     shape = logits.shape
     scale = 2**_SCALE_BITS - 1
@@ -139,7 +140,9 @@ def reference_topk_topp_and_sample(
 
     debug_results = {
       "greedy_sampled": greedy_sampled,
-      "topk_logits_unsorted": topk_logits_unsorted,
+      "topk_logits_unsorted": topk_logits_unsorted.astype(
+        underlying_logits_dtype
+      ),
       "topk_topp_unnorm_probs_i32_unsorted": unnorm_probs_i32,
       "random_unnorm_cdf_sampled": (
         sampled_total_high.squeeze(1),

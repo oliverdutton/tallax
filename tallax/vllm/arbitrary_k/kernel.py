@@ -178,7 +178,8 @@ def arbitrary_topk_topp_and_sample_kernel(
   # Debug: write full intermediate arrays if debug refs are provided
   if debug_arrays_ref is not None:
     debug_arrays_ref["greedy_sampled"][...] = greedy_sampled
-    debug_arrays_ref["topk_logits_unsorted"][...] = topk_logits_pre_temperature
+    ref = debug_arrays_ref["topk_logits_unsorted"]
+    ref[...] = topk_logits_pre_temperature.astype(ref.dtype)
     debug_arrays_ref["topk_topp_unnorm_probs_i32_unsorted"][...] = (
       unnorm_probs_i32
     )
@@ -256,7 +257,7 @@ def arbitrary_topk_topp_and_sample(
     debug_out_shapes = {
       "greedy_sampled": jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32),
       "topk_logits_unsorted": jax.ShapeDtypeStruct(
-        (padded_batch, vocab_size), jnp.float32
+        (padded_batch, vocab_size), logits.dtype
       ),
       "topk_topp_unnorm_probs_i32_unsorted": jax.ShapeDtypeStruct(
         (padded_batch, vocab_size), jnp.int32
