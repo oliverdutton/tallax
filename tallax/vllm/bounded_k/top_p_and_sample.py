@@ -389,9 +389,4 @@ def topp_and_sample(
   flat_outs = sharded_top_p_and_sample(
     topk_logits, topk_idx, random_u128_in_u32s, top_p, temperature
   )
-  sampled_tokens, debug_aux = jax.tree.unflatten(
-    jax.tree.structure(out_shapes), flat_outs
-  )
-  if debug:
-    return sampled_tokens, debug_aux
-  return sampled_tokens
+  return jax.tree.unflatten(jax.tree.structure(out_shapes), flat_outs)
