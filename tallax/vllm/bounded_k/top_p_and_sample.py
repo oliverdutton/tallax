@@ -22,11 +22,10 @@ from jax.sharding import NamedSharding, PartitionSpec as P
 from tallax.vllm.utils.high_precision_uint import modulo_u128_u64
 from tallax.vllm.utils.high_precision_uint import sample_random_u128_in_u32s
 from tallax.tax.bitonic.topk import bitonic_topk_arrays
+from tallax.constants import REPLACE_VAL, SAMPLING_EPS, SCALE_BITS
 from tallax.tax.cumsum import cumsum_arrays
 from tallax.tax.gather import take_along_axis_arrays
 from tallax.tax.utils import NUM_SUBLANES, NUM_LANES
-
-_SAMPLING_EPS = 1e-5
 
 
 def broadcast_to(x, shape):
@@ -59,7 +58,7 @@ def top_p_integer_mask(*, topk_logits, p, axis):
   shape = topk_logits.shape
 
   exp_logits = jnp.exp(topk_logits - topk_logits[:1, :])
-  scale = 2**24 - 1
+  scale = 2**SCALE_BITS - 1
   unnorm_probs_i32 = (exp_logits * scale).astype(jnp.int32)
   if unnorm_probs_i32.shape[axis] > 2**7:
     raise NotImplementedError(
@@ -79,17 +78,16 @@ def top_p_integer_mask(*, topk_logits, p, axis):
   return jnp.where(unnorm_probs_i32 >= thresholds, unnorm_probs_i32, 0)
 
 
-def top_p_mask(*, topk_logits, p, replace_val, axis):
+def top_p_mask(*, topk_logits, p, axis):
   """Apply top-p filtering mask to sorted logits (float version for backwards compat).
 
   Args:
     topk_logits: Sorted logits (descending order)
     p: Top-p threshold(s)
-    replace_val: Value to replace filtered logits with
     axis: Axis along which to apply filtering (must be 0)
 
   Returns:
-    Masked logits with values outside top-p set to replace_val
+    Masked logits with values outside top-p set to REPLACE_VAL
   """
   if axis != 0:
     raise NotImplementedError("topp_mask only supports axis=0")
@@ -104,7 +102,7 @@ def top_p_mask(*, topk_logits, p, replace_val, axis):
   thresholds = take_along_axis_arrays(
     topk_logits, broadcast_to(threshold_idx, shape), axis=0
   )
-  return jnp.where(topk_logits >= thresholds, topk_logits, replace_val)
+  return jnp.where(topk_logits >= thresholds, topk_logits, REPLACE_VAL)
 
 
 def top_p_and_sample_arrays(
@@ -177,7 +175,7 @@ def top_p_and_sample_arrays(
     )
   ).sum(0, keepdims=True)
   result = jnp.where(
-    temperature[None, :] < _SAMPLING_EPS, greedy_sampled, next_tokens
+    temperature[None, :] < SAMPLING_EPS, greedy_sampled, next_tokens
   )
 
   if not debug:
@@ -304,10 +302,6 @@ def topp_and_sample(
     rng_key: RNG key for sampling.
     top_p: Top-p threshold values.
     temperature: Temperature values.
-    vocab_size: Total vocabulary size.
-    max_k: Maximum k value (bounded implementation supports k <= 128).
-    replace_val: Value to replace filtered logits with.
-    interpret: If True, run in CPU interpret mode.
     debug: If True, return (tokens, debug_results) with intermediate values.
 
   Returns:

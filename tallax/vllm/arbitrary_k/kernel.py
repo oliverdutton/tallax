@@ -25,11 +25,10 @@ from tallax.vllm.utils.high_precision_uint import (
   modulo_u128_u64,
   sample_random_u128_in_u32s,
 )
+from tallax.constants import SAMPLING_EPS, SCALE_BITS
 from tallax.vllm.arbitrary_k.topp_mask import topp_mask
 from tallax.vllm.arbitrary_k.topk_mask import topk_mask, find_boundary_idx
 from tallax.tax.utils import NUM_LANES, map_reduce, get_dtype_info
-
-_SAMPLING_EPS = 1e-5
 
 
 def canonicalize_args(batch_size, block_token, *args_with_pad):
@@ -58,17 +57,17 @@ def canonicalize_args(batch_size, block_token, *args_with_pad):
   return (padded_batch, num_blocks, *result)
 
 
-def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
+def sample_probs(unnorm_probs_i32, random_u128_in_u32s):
   """Sample from unnormalized i32 probabilities using U48 arithmetic.
 
   Args:
     unnorm_probs_i32: Unnormalized probabilities [batch, vocab_size] in i32
     random_u128_in_u32s: List of 4 u32 arrays for random sampling
-    max_val: Maximum bound of unnorm_probs_i32 values
 
   Returns:
     Sampled token indices [batch, NUM_LANES]
   """
+  max_val = 2**SCALE_BITS - 1
   total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=max_val)
   sampled_u64_in_u32s = modulo_u128_u64(
     random_u128_in_u32s,
@@ -93,7 +92,6 @@ def arbitrary_topk_topp_and_sample_kernel(
   debug_arrays_ref=None,
   *,
   stable: bool,
-  replace_val: float,
   underlying_logits_dtype=None,
 ):
   """Pallas kernel body for combined topk + topp + sample.
@@ -107,7 +105,6 @@ def arbitrary_topk_topp_and_sample_kernel(
     sampled_tokens_ref: Output sampled tokens [block_token, 1]
     debug_arrays_ref: Optional dict of refs for full intermediate arrays
     stable: Whether to use stable masking
-    replace_val: Replacement value for masked elements
     underlying_logits_dtype: Original dtype if logits were cast
   """
   if logits_ref.dtype != jnp.float32:
@@ -123,7 +120,6 @@ def arbitrary_topk_topp_and_sample_kernel(
         sampled_tokens_ref,
         debug_arrays_ref=debug_arrays_ref,
         stable=stable,
-        replace_val=replace_val,
         underlying_logits_dtype=logits_ref.dtype,
       )
 
@@ -148,7 +144,6 @@ def arbitrary_topk_topp_and_sample_kernel(
   topk_logits = topk_mask(
     logits_ref,
     k_ref,
-    replace_val=replace_val,
     stable=stable,
     underlying_dtype=underlying_logits_dtype,
   )
@@ -169,10 +164,9 @@ def arbitrary_topk_topp_and_sample_kernel(
   next_tokens, random_unnorm_cdf_sampled = sample_probs(
     unnorm_probs_i32,
     [ref[...] for ref in random_u128_in_u32s_refs],
-    max_val=2**24 - 1,
   )
   sampled_tokens_ref[...] = jnp.where(
-    temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
+    temperature < SAMPLING_EPS, greedy_sampled, next_tokens
   )
 
   # Debug: write full intermediate arrays if debug refs are provided
@@ -197,7 +191,6 @@ def arbitrary_topk_topp_and_sample_kernel(
   jax.jit,
   static_argnames=[
     "stable",
-    "replace_val",
     "block_token",
     "interpret",
     "debug",
@@ -211,7 +204,6 @@ def arbitrary_topk_topp_and_sample(
   temperature: jax.Array,
   *,
   stable: bool = True,
-  replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
   debug: bool = False,
@@ -228,7 +220,6 @@ def arbitrary_topk_topp_and_sample(
     p: Top-p values [batch] or scalar
     temperature: Temperature values [batch] or scalar
     stable: Whether to use stable masking
-    replace_val: Replacement value for masked elements
     block_token: Number of tokens per block
     interpret: Whether to use interpret mode
     debug: If True, return (sampled_tokens, debug_results) dict
@@ -290,7 +281,6 @@ def arbitrary_topk_topp_and_sample(
     functools.partial(
       arbitrary_topk_topp_and_sample_kernel,
       stable=stable,
-      replace_val=replace_val,
     ),
     out_shape=(output_shape, debug_out_shapes),
     grid=(num_blocks,),

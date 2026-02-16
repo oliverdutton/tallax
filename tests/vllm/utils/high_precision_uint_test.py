@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tallax.constants import SCALE_BITS
 from tallax.vllm.utils.high_precision_uint import U48, modulo_u128_u64
 
 
@@ -12,7 +13,7 @@ from tallax.vllm.utils.high_precision_uint import U48, modulo_u128_u64
 def test_u48(seed):
   """U48.map_reduce_sum matches i64 sum and < operator is consistent."""
   key = jax.random.PRNGKey(seed)
-  scale = 2**24 - 1
+  scale = 2**SCALE_BITS - 1
   vals = jax.random.randint(key, (4, 512), 0, scale, dtype=jnp.int32)
   u48_sum = U48.map_reduce_sum(vals, max_val=scale)
 

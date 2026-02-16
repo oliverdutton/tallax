@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
 
+from tallax.constants import REPLACE_VAL
 from tallax.vllm.utils.binary_search import binary_search
 from tallax.tax.utils import (
   NUM_LANES,
@@ -148,7 +149,6 @@ def topk_mask(
   logits_ref,
   k_ref,
   *,
-  replace_val: float,
   stable: bool,
   underlying_dtype=None,
 ):
@@ -157,7 +157,6 @@ def topk_mask(
   Args:
     logits_ref: Input logits reference [batch, vocab_size]
     k_ref: Number of top elements to keep [batch, 1]
-    replace_val: Replacement value for masked elements
     stable: Whether to use stable masking (exactly k elements kept)
     underlying_dtype: Original dtype if logits were cast (for bf16 search convergence)
 
@@ -221,4 +220,4 @@ def topk_mask(
         jax.lax.broadcasted_iota(jnp.int32, logits_ref.shape, 1) <= boundary_idx
       )
     )
-  return jnp.where(mask, logits, replace_val).astype(logits_ref.dtype)
+  return jnp.where(mask, logits, REPLACE_VAL).astype(logits_ref.dtype)

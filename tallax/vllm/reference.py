@@ -12,9 +12,7 @@ import jax
 import jax.numpy as jnp
 
 from tallax.vllm.utils.high_precision_uint import sample_random_u128_in_u32s
-
-_SAMPLING_EPS = 1e-5
-_SCALE_BITS = 24
+from tallax.constants import REPLACE_VAL, SAMPLING_EPS, SCALE_BITS
 
 
 def _python_u128_modulo_u64_impl(r0, r1, r2, r3, m0, m1):
@@ -52,7 +50,6 @@ def reference_topk_topp_and_sample(
   temperature: jax.Array,
   *,
   stable: bool = True,
-  replace_val: float = -1e12,
   debug: bool = False,
 ) -> jax.Array:
   """Reference implementation of topk + topp + sample in pure JAX.
@@ -66,7 +63,6 @@ def reference_topk_topp_and_sample(
     p: Top-p values [batch] or scalar
     temperature: Temperature values [batch] or scalar
     stable: Must be True (reference assumes stable)
-    replace_val: Replacement value for masked elements
     debug: If True, return (tokens, debug_results) with intermediate values
 
   Returns:
@@ -76,7 +72,7 @@ def reference_topk_topp_and_sample(
   underlying_logits_dtype = logits.dtype
   with jax.enable_x64(True):
     shape = logits.shape
-    scale = 2**_SCALE_BITS - 1
+    scale = 2**SCALE_BITS - 1
 
     logits = logits.astype(jnp.float32)
 
@@ -87,7 +83,7 @@ def reference_topk_topp_and_sample(
     sorted_indices = logits.argsort(axis=1, stable=True, descending=True)
     sorted_logits = jnp.take_along_axis(logits, sorted_indices, axis=1)
     sorted_logits = jnp.where(
-      jnp.arange(shape[1])[None, :] < k[:, None], sorted_logits, replace_val
+      jnp.arange(shape[1])[None, :] < k[:, None], sorted_logits, REPLACE_VAL
     )
     topk_logits_unsorted = jnp.take_along_axis(
       sorted_logits, sorted_indices.argsort(), axis=1
@@ -129,7 +125,7 @@ def reference_topk_topp_and_sample(
       ],
     )
     next_tokens = (unnorm_probs_i32.cumsum(axis=1) < sampled_total).sum(axis=1)
-    result = jnp.where(temperature < _SAMPLING_EPS, greedy_sampled, next_tokens)
+    result = jnp.where(temperature < SAMPLING_EPS, greedy_sampled, next_tokens)
 
     if not debug:
       return result

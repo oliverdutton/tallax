@@ -8,6 +8,7 @@ For direct full-vocab binary-search path, use arbitrary_k.topk_topp_mask_and_sam
 
 import functools
 import jax
+from tallax.constants import REPLACE_VAL
 from tallax.vllm.bounded_k import topp_and_sample
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
@@ -41,7 +42,7 @@ def bounded_topk_topp_and_sample(
   topk_logits, topk_idxs = top_bounded_k(
     logits,
     k=tpu_sampling_metadata.top_k,
-    replace_val=-1e12,
+    replace_val=REPLACE_VAL,
     max_k=max_k,
     num_bins=num_bins,
     bins_topm_schedule=bins_topm_schedule,
