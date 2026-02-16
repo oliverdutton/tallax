@@ -79,7 +79,7 @@ def bounded_topk_topp_and_sample(
     )
     .at[ind]
     .set(updates)
-  )(debug_vals["topk_idxs"], debug_vals["topk_logits"])
+  )(debug_vals["topk_idxs"], debug_vals["topk_logits"]).astype(logits.dtype)
   debug_vals["topk_topp_unnorm_probs_i32_unsorted"] = jax.vmap(
     lambda ind, updates: jnp.zeros_like(
       updates,
