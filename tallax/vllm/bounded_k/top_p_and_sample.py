@@ -141,7 +141,7 @@ def top_p_and_sample_arrays(
   shape = topk_logits_transposed.shape
 
   # Greedy sample (before temperature scaling)
-  greedy_sampled = topk_idx[:1, :]
+  greedy_sampled = topk_idx_transposed[:1, :]
 
   # Temperature scaling
   topk_logits_scaled = topk_logits_transposed / temperature[None, :].astype(
@@ -190,14 +190,14 @@ def top_p_and_sample_arrays(
   random_unnorm_cdf_sampled_low = target_cumsum.T
 
   debug_results = {
-    "greedy_sampled": greedy_sampled,
-    "topk_logits_unsorted": topk_logits.T,  # Original sorted logits in batch-first format
+    "greedy_sampled": greedy_sampled.T,
+    "topk_logits_unsorted": topk_logits,  # Original sorted logits in batch-first format
     "topk_topp_unnorm_probs_i32_unsorted": unnorm_probs_i32_unsorted.T,  # Transpose back to [batch, k]
     "random_unnorm_cdf_sampled": (
       jnp.zeros_like(random_unnorm_cdf_sampled_low),
       random_unnorm_cdf_sampled_low,
     ),
-    "next_tokens": next_tokens,
+    "next_tokens": next_tokens.T,
   }
 
   return result, debug_results
