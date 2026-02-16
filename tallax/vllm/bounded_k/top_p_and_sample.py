@@ -141,7 +141,7 @@ def top_p_and_sample_arrays(
   shape = topk_logits_transposed.shape
 
   # Greedy sample (before temperature scaling)
-  greedy_sampled = topk_idx[:, :1]
+  greedy_sampled = topk_idx[:1, :]
 
   # Temperature scaling
   topk_logits_scaled = topk_logits_transposed / temperature[None, :].astype(
