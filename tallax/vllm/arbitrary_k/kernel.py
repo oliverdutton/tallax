@@ -25,48 +25,73 @@ from tallax.vllm.utils.high_precision_uint import (
   modulo_u128_u64,
   sample_random_u128_in_u32s,
 )
+from tallax.constants import SAMPLING_EPS, SCALE_BITS
 from tallax.vllm.arbitrary_k.topp_mask import topp_mask
 from tallax.vllm.arbitrary_k.topk_mask import topk_mask, find_boundary_idx
-from tallax.tax.utils import NUM_LANES, map_reduce
-
-_SAMPLING_EPS = 1e-5
+from tallax.tax.utils import NUM_LANES, map_reduce, get_dtype_info
 
 
-def sample_probs(unnorm_probs_i32, random_u128_in_u32s, max_val=2**24 - 1):
+def canonicalize_args(batch_size, block_token, *args_with_pad):
+  """Canonicalize per-sample args and pad batch to block_token multiple.
+
+  Each arg is (value, pad_constant). 1D/scalar args are broadcast to batch_size
+  and reshaped to (batch_size, 1). All args are padded to the next multiple
+  of block_token.
+
+  Returns (padded_batch, num_blocks, *padded_args)
+  """
+  num_blocks = pl.cdiv(batch_size, block_token)
+  padded_batch = num_blocks * block_token
+  pad_size = padded_batch - batch_size
+
+  result = []
+  for val, pad_val in args_with_pad:
+    val = jnp.atleast_1d(val)
+    if val.ndim == 1:
+      if val.shape[0] == 1:
+        val = jnp.broadcast_to(val, (batch_size,))
+      val = jnp.reshape(val, (batch_size, 1))
+    if pad_size > 0:
+      val = jnp.pad(val, ((0, pad_size), (0, 0)), constant_values=pad_val)
+    result.append(val)
+  return (padded_batch, num_blocks, *result)
+
+
+def sample_probs(unnorm_probs_i32, random_u128_in_u32s):
   """Sample from unnormalized i32 probabilities using U48 arithmetic.
 
   Args:
     unnorm_probs_i32: Unnormalized probabilities [batch, vocab_size] in i32
     random_u128_in_u32s: List of 4 u32 arrays for random sampling
-    max_val: Maximum bound of unnorm_probs_i32 values
 
   Returns:
     Sampled token indices [batch, NUM_LANES]
   """
+  max_val = 2**SCALE_BITS - 1
   total_sum_u48 = U48.map_reduce_sum(unnorm_probs_i32, max_val=max_val)
   sampled_u64_in_u32s = modulo_u128_u64(
     random_u128_in_u32s,
     total_sum_u48.to_u64_in_u32s(),
   )
-  target_u48 = U48.from_u64_in_u32s(sampled_u64_in_u32s)
+  random_unnorm_cdf_sampled = U48.from_u64_in_u32s(sampled_u64_in_u32s)
   return find_boundary_idx(
     unnorm_probs_i32,
     map_fn=lambda x: U48(x, max_val=max_val),
-    target=target_u48,
-  )
+    target=random_unnorm_cdf_sampled,
+    pad_val=0,
+  ), random_unnorm_cdf_sampled
 
 
-def topk_topp_mask_and_sample_kernel(
+def arbitrary_topk_topp_and_sample_kernel(
   logits_ref,
-  random_u128_in_u32s_ref,
+  random_u128_in_u32s_refs,
   k_ref,
   p_ref,
   temperature_ref,
   sampled_tokens_ref,
-  debug_results_ref=None,
+  debug_arrays_ref=None,
   *,
   stable: bool,
-  replace_val: float,
   underlying_logits_dtype=None,
 ):
   """Pallas kernel body for combined topk + topp + sample.
@@ -78,24 +103,23 @@ def topk_topp_mask_and_sample_kernel(
     p_ref: Top-p values [block_token, 1]
     temperature_ref: Temperature values [block_token, 1]
     sampled_tokens_ref: Output sampled tokens [block_token, 1]
-    debug_results_ref: Optional dict of SMEM refs for intermediate checks
+    debug_arrays_ref: Optional dict of refs for full intermediate arrays
     stable: Whether to use stable masking
-    replace_val: Replacement value for masked elements
     underlying_logits_dtype: Original dtype if logits were cast
   """
   if logits_ref.dtype != jnp.float32:
+
     def scoped_body(scoped_ref):
       scoped_ref[...] = logits_ref[...].astype(jnp.float32)
-      return topk_topp_mask_and_sample_kernel(
+      return arbitrary_topk_topp_and_sample_kernel(
         scoped_ref,
-        random_u128_in_u32s_ref,
+        random_u128_in_u32s_refs,
         k_ref,
         p_ref,
         temperature_ref,
         sampled_tokens_ref,
-        debug_results_ref=debug_results_ref,
+        debug_arrays_ref=debug_arrays_ref,
         stable=stable,
-        replace_val=replace_val,
         underlying_logits_dtype=logits_ref.dtype,
       )
 
@@ -112,6 +136,7 @@ def topk_topp_mask_and_sample_kernel(
       chunk == pltpu.repeat(logits_max_lanes, chunk.shape[1] // NUM_LANES, 1)
     ).astype(jnp.int32),
     target=jnp.broadcast_to(jnp.float32(1), logits_max_lanes.shape),
+    pad_val=get_dtype_info(logits_ref).min,
   )[:, :1]
 
   # Stage 2: Top-k masking
@@ -119,12 +144,12 @@ def topk_topp_mask_and_sample_kernel(
   topk_logits = topk_mask(
     logits_ref,
     k_ref,
-    replace_val=replace_val,
     stable=stable,
     underlying_dtype=underlying_logits_dtype,
   )
 
   # Stage 3: Temperature scaling
+  topk_logits_pre_temperature = topk_logits
   topk_logits /= temperature
   logits_max /= temperature
 
@@ -136,64 +161,42 @@ def topk_topp_mask_and_sample_kernel(
   )
 
   # Stage 5: Sample
-  next_tokens = sample_probs(
-    unnorm_probs_i32, [ref[...] for ref in random_u128_in_u32s_ref]
+  next_tokens, random_unnorm_cdf_sampled = sample_probs(
+    unnorm_probs_i32,
+    [ref[...] for ref in random_u128_in_u32s_refs],
   )
-
   sampled_tokens_ref[...] = jnp.where(
-    temperature < _SAMPLING_EPS, greedy_sampled, next_tokens
+    temperature < SAMPLING_EPS, greedy_sampled, next_tokens
   )
 
-  # Debug: write intermediate match checks if debug refs are provided
-  if debug_results_ref is not None:
-    _write_debug_results(
-      debug_results_ref,
-      greedy_sampled=greedy_sampled,
-      topk_logits=topk_logits,
-      unnorm_probs_i32=unnorm_probs_i32,
-      next_tokens=next_tokens,
+  # Debug: write full intermediate arrays if debug refs are provided
+  if debug_arrays_ref is not None:
+    debug_arrays_ref["greedy_sampled"][...] = greedy_sampled
+    ref = debug_arrays_ref["topk_logits_unsorted"]
+    ref[...] = topk_logits_pre_temperature.astype(ref.dtype)
+    debug_arrays_ref["topk_topp_unnorm_probs_i32_unsorted"][...] = (
+      unnorm_probs_i32
     )
-
-
-def _write_debug_results(
-  debug_refs,
-  *,
-  greedy_sampled,
-  topk_logits,
-  unnorm_probs_i32,
-  next_tokens,
-):
-  """Write debug intermediate values to SMEM refs.
-
-  Each ref is int32[1]: 1 if the intermediate matches the expected value,
-  0 if not. The expected values are written by the test harness.
-  """
-  if "greedy_sampled" in debug_refs:
-    debug_refs["greedy_sampled"][...] = greedy_sampled[:1, :1].astype(jnp.int32)
-  if "topk_logits_hash" in debug_refs:
-    # Store a simple checksum: sum of sign bits as a fingerprint
-    debug_refs["topk_logits_hash"][...] = (
-      (topk_logits != 0).astype(jnp.int32).sum(keepdims=True)[:1, :1]
-    )
-  if "topp_nonzero_count" in debug_refs:
-    debug_refs["topp_nonzero_count"][...] = (
-      (unnorm_probs_i32 != 0).astype(jnp.int32).sum(keepdims=True)[:1, :1]
-    )
-  if "next_tokens" in debug_refs:
-    debug_refs["next_tokens"][...] = next_tokens[:1, :1].astype(jnp.int32)
+    # Store as tuple of (high_u32, low_u32)
+    for ref, val in zip(
+      debug_arrays_ref["random_unnorm_cdf_sampled"],
+      random_unnorm_cdf_sampled.to_u64_in_u32s(),
+      strict=True,
+    ):
+      ref[...] = val
+    debug_arrays_ref["next_tokens"][...] = next_tokens
 
 
 @functools.partial(
   jax.jit,
   static_argnames=[
     "stable",
-    "replace_val",
     "block_token",
     "interpret",
     "debug",
   ],
 )
-def topk_topp_mask_and_sample(
+def arbitrary_topk_topp_and_sample(
   logits: jax.Array,
   rng_key: jax.Array,
   k: jax.Array,
@@ -201,7 +204,6 @@ def topk_topp_mask_and_sample(
   temperature: jax.Array,
   *,
   stable: bool = True,
-  replace_val: float = -1e12,
   block_token: int = 8,
   interpret: bool = False,
   debug: bool = False,
@@ -218,7 +220,6 @@ def topk_topp_mask_and_sample(
     p: Top-p values [batch] or scalar
     temperature: Temperature values [batch] or scalar
     stable: Whether to use stable masking
-    replace_val: Replacement value for masked elements
     block_token: Number of tokens per block
     interpret: Whether to use interpret mode
     debug: If True, return (sampled_tokens, debug_results) dict
@@ -228,103 +229,86 @@ def topk_topp_mask_and_sample(
   """
   batch_size, vocab_size = logits.shape
 
-  k = jnp.atleast_1d(k)
-  p = jnp.atleast_1d(p)
-  temperature = jnp.atleast_1d(temperature)
-
-  if k.shape[0] == 1:
-    k = jnp.broadcast_to(k, (batch_size,))
-  if p.shape[0] == 1:
-    p = jnp.broadcast_to(p, (batch_size,))
-  if temperature.shape[0] == 1:
-    temperature = jnp.broadcast_to(temperature, (batch_size,))
-
-  k = jnp.reshape(k, (batch_size, 1))
-  p = jnp.reshape(p, (batch_size, 1))
-  temperature = jnp.reshape(temperature, (batch_size, 1))
-
-  # Pad batch to multiple of block_token
-  num_blocks = pl.cdiv(batch_size, block_token)
-  padded_batch = num_blocks * block_token
-
-  if padded_batch != batch_size:
-    pad_size = padded_batch - batch_size
-    logits = jnp.pad(
-      logits, ((0, pad_size), (0, 0)), constant_values=replace_val
-    )
-    k = jnp.pad(k, ((0, pad_size), (0, 0)), constant_values=1)
-    p = jnp.pad(p, ((0, pad_size), (0, 0)), constant_values=1.0)
-    temperature = jnp.pad(
-      temperature, ((0, pad_size), (0, 0)), constant_values=1.0
-    )
+  padded_batch, num_blocks, logits, k, p, temperature = canonicalize_args(
+    batch_size,
+    block_token,
+    (logits, 0.0),
+    (k, 1),
+    (p, 1.0),
+    (temperature, 1.0),
+  )
 
   random_u128_in_u32s = tuple(
     sample_random_u128_in_u32s(rng_key, (padded_batch, 1))
   )
 
-  # Build debug output specs if requested
-  debug_shapes = {}
-  if debug:
-    for name in ["greedy_sampled", "topk_logits_hash", "topp_nonzero_count", "next_tokens"]:
-      debug_shapes[name] = jax.ShapeDtypeStruct((1, 1), jnp.int32)
-
   output_shape = jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32)
 
-  if not debug:
-    result = pl.pallas_call(
-      functools.partial(
-        topk_topp_mask_and_sample_kernel,
-        stable=stable,
-        replace_val=replace_val,
+  if debug:
+    debug_out_shapes = {
+      "greedy_sampled": jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32),
+      "topk_logits_unsorted": jax.ShapeDtypeStruct(
+        (padded_batch, vocab_size), logits.dtype
       ),
-      out_shape=output_shape,
-      grid=(num_blocks,),
-      in_specs=[
-        pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          random_u128_in_u32s,
-        ),
+      "topk_topp_unnorm_probs_i32_unsorted": jax.ShapeDtypeStruct(
+        (padded_batch, vocab_size), jnp.int32
+      ),
+      "random_unnorm_cdf_sampled": (
+        jax.ShapeDtypeStruct((padded_batch, 1), jnp.uint32),
+      )
+      * 2,
+      "next_tokens": jax.ShapeDtypeStruct((padded_batch, 1), jnp.int32),
+    }
+    debug_out_specs = {
+      "greedy_sampled": pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      "topk_logits_unsorted": pl.BlockSpec(
+        (block_token, vocab_size), lambda i: (i, 0)
+      ),
+      "topk_topp_unnorm_probs_i32_unsorted": pl.BlockSpec(
+        (block_token, vocab_size), lambda i: (i, 0)
+      ),
+      "random_unnorm_cdf_sampled": (
         pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      ],
-      out_specs=pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
-      interpret=interpret,
-    )(logits, random_u128_in_u32s, k, p, temperature)
-
-    return result[:batch_size, 0]
+      )
+      * 2,
+      "next_tokens": pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    }
   else:
-    # Debug mode: also output debug intermediates via SMEM
-    out_shapes = (output_shape, debug_shapes)
-    result, debug_results = pl.pallas_call(
-      functools.partial(
-        topk_topp_mask_and_sample_kernel,
-        stable=stable,
-        replace_val=replace_val,
-      ),
-      out_shape=out_shapes,
-      grid=(num_blocks,),
-      in_specs=[
-        pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-          random_u128_in_u32s,
-        ),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-      ],
-      out_specs=(
-        pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
-        jax.tree.map(
-          lambda _: pl.BlockSpec(memory_space=pltpu.SMEM),
-          debug_shapes,
-        ),
-      ),
-      compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
-      interpret=interpret,
-    )(logits, random_u128_in_u32s, k, p, temperature)
+    debug_out_shapes = None
+    debug_out_specs = None
 
-    return result[:batch_size, 0], debug_results
+  results = pl.pallas_call(
+    functools.partial(
+      arbitrary_topk_topp_and_sample_kernel,
+      stable=stable,
+    ),
+    out_shape=(output_shape, debug_out_shapes),
+    grid=(num_blocks,),
+    in_specs=[
+      pl.BlockSpec((block_token, vocab_size), lambda i: (i, 0)),
+      jax.tree.map(
+        lambda x: pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+        random_u128_in_u32s,
+      ),
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+    ],
+    out_specs=(
+      pl.BlockSpec((block_token, 1), lambda i: (i, 0)),
+      debug_out_specs,
+    ),
+    compiler_params=pltpu.CompilerParams(vmem_limit_bytes=int(0.9 * 2**27)),
+    interpret=interpret,
+  )(logits, random_u128_in_u32s, k, p, temperature)
+
+  def trim(x):
+    if x.shape[1] == 1:
+      x = x.squeeze(1)
+    return x[:batch_size]
+
+  sampled_tokens, debug_aux = jax.tree.map(trim, results)
+
+  if debug:
+    return sampled_tokens, debug_aux
+  return sampled_tokens

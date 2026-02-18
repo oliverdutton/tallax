@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tallax.constants import REPLACE_VAL
 from tallax.vllm.bounded_k.top_p_and_sample import top_p_mask as pallas_top_p_mask
 from tallax.vllm.tpu_inference_sampling_as_standalone_file import (
   topp_mask as tpu_inference_top_p_mask,
@@ -29,13 +30,11 @@ def test_top_p_mask(shape, seed, p_threshold):
   else:
     p_array = jnp.full(shape[:1], p_threshold, dtype=jnp.float32)
 
-  replace_val = -1e12
-
   sort_indices = jnp.argsort(logits, axis=1, descending=True)
   sorted_logits = jnp.take_along_axis(logits, sort_indices, axis=1)
 
   result_sorted = pallas_top_p_mask(
-    topk_logits=sorted_logits.T, p=p_array, replace_val=replace_val, axis=0,
+    topk_logits=sorted_logits.T, p=p_array, axis=0,
   ).T
 
   inverse_sort_indices = jnp.argsort(sort_indices, axis=1)
@@ -44,7 +43,7 @@ def test_top_p_mask(shape, seed, p_threshold):
   result_ref = jnp.zeros_like(logits)
   for i in range(shape[0]):
     result_ref = result_ref.at[i].set(
-      tpu_inference_top_p_mask(logits[i:i+1], float(p_array[i]), replace_val)[0]
+      tpu_inference_top_p_mask(logits[i:i+1], float(p_array[i]), REPLACE_VAL)[0]
     )
 
   np.testing.assert_array_equal(result_original_order, result_ref)

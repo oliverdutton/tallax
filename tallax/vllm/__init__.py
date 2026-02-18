@@ -8,14 +8,12 @@ Two code paths:
   - reference: Pure JAX reference implementation (no Pallas).
 """
 
-from tallax.vllm.sampling import topk_topp_and_sample
-from tallax.vllm.bounded_k import top_p_and_sample
-from tallax.vllm.arbitrary_k import topk_topp_mask_and_sample
-from tallax.vllm.reference import reference_topk_topp_mask_and_sample
+from tallax.vllm.sampling import bounded_topk_topp_and_sample
+from tallax.vllm.arbitrary_k import arbitrary_topk_topp_and_sample
+from tallax.vllm.reference import reference_topk_topp_and_sample
 
 __all__ = [
-  "topk_topp_and_sample",
-  "top_p_and_sample",
-  "topk_topp_mask_and_sample",
-  "reference_topk_topp_mask_and_sample",
+  "bounded_topk_topp_and_sample",
+  "arbitrary_topk_topp_and_sample",
+  "reference_topk_topp_and_sample",
 ]

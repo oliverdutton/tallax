@@ -13,6 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax.experimental.pallas import tpu as pltpu
 
+from tallax.constants import SCALE_BITS
 from tallax.tax.utils import NUM_LANES, map_reduce
 from tallax.vllm.utils.high_precision_uint import U48
 from tallax.vllm.utils.binary_search import binary_search
@@ -30,7 +31,6 @@ def topp_mask(
   logits: jax.Array,
   top_p: jax.Array,
   *,
-  scale_bits: int = 24,
   logits_max: jax.Array = None,
 ) -> jax.Array:
   """Apply top-p mask using binary search over integer probability space.
@@ -38,7 +38,6 @@ def topp_mask(
   Args:
     logits: Input logits [batch, vocab_size], float32
     top_p: Top-p threshold [batch, 1] or broadcastable
-    scale_bits: Precision bits for probability scaling (default 24)
     logits_max: Pre-computed max logits [batch, 1] (optional, computed if None)
 
   Returns:
@@ -52,7 +51,7 @@ def topp_mask(
   if logits_max is None:
     logits_max = map_reduce(logits, reduce_fn="max")
 
-  scale = 2**scale_bits - 1
+  scale = 2**SCALE_BITS - 1
   unnorm_probs_i32 = map_chunks(
     logits,
     lambda logits: (jnp.exp(logits - logits_max) * scale).astype(jnp.int32),
@@ -80,7 +79,7 @@ def topp_mask(
   threshold_i32, _, _ = binary_search(
     predicate_fn,
     *(jnp.full(bound_shape, v, jnp.int32) for v in (0, scale)),
-    num_iter=scale_bits,
+    num_iter=SCALE_BITS,
   )
 
   # Apply mask

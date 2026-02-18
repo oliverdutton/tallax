@@ -8,20 +8,33 @@ For direct full-vocab binary-search path, use arbitrary_k.topk_topp_mask_and_sam
 
 import functools
 import jax
-from tallax.vllm.bounded_k import top_p_and_sample
+from jax import numpy as jnp
+from tallax.constants import REPLACE_VAL
+from tallax.vllm.bounded_k import topp_and_sample
 from tallax.tax.divide_and_filter_topk.topk import top_bounded_k
 
 
 @functools.partial(
-  jax.jit, static_argnames=("max_k", "num_bins", "bins_topm_schedule")
+  jax.jit,
+  static_argnames=(
+    "max_k",
+    "num_bins",
+    "bins_topm_schedule",
+    "debug",
+    "stable",
+  ),
 )
-def topk_topp_and_sample(
-  rng_key,
+def bounded_topk_topp_and_sample(
   logits,
-  tpu_sampling_metadata,
+  rng_key,
+  top_k,
+  top_p,
+  temperature,
   max_k: int,
   num_bins: int | None = None,
+  stable: bool = True,
   bins_topm_schedule: int | None = None,
+  debug: bool = False,
 ):
   """Combined top-k, top-p filtering, and sampling for vLLM inference.
 
@@ -38,22 +51,47 @@ def topk_topp_and_sample(
   Returns:
     Sampled token indices.
   """
-  vocab_size = logits.shape[1]
   topk_logits, topk_idxs = top_bounded_k(
     logits,
-    k=tpu_sampling_metadata.top_k,
-    replace_val=-1e12,
+    k=top_k,
+    replace_val=REPLACE_VAL,
     max_k=max_k,
     num_bins=num_bins,
     bins_topm_schedule=bins_topm_schedule,
     guarantee_convergence=True,
+    stable=stable,
   )
-  return top_p_and_sample(
-    topk_logits,
-    topk_idxs,
-    rng_key,
-    top_p=tpu_sampling_metadata.top_p,
-    temperature=tpu_sampling_metadata.temperature,
-    vocab_size=vocab_size,
-    replace_val=-1e12,
+  outs = topp_and_sample(
+    topk_logits=topk_logits,
+    topk_idx=topk_idxs,
+    rng_key=rng_key,
+    top_p=top_p,
+    temperature=temperature,
+    debug=debug,
   )
+  if not debug:
+    return outs
+  sampled, debug_vals = outs
+  # Rebuild the unreduced shape arrays
+  debug_vals["topk_logits_unsorted"] = jax.vmap(
+    lambda ind, updates: jnp.full_like(
+      updates, REPLACE_VAL, shape=logits.shape[1:]
+    )
+    .at[ind]
+    .set(updates)
+  )(debug_vals["topk_idxs"], debug_vals["topk_logits"]).astype(logits.dtype)
+  debug_vals["topk_topp_unnorm_probs_i32_unsorted"] = jax.vmap(
+    lambda ind, updates: jnp.zeros_like(
+      updates,
+      shape=logits.shape[1:],
+    )
+    .at[ind]
+    .set(updates)
+  )(
+    debug_vals["topk_idxs"].sort(1),
+    debug_vals["topk_topp_unnorm_probs_i32_topk_filtered_unsorted"],
+  )
+  del debug_vals["topk_idxs"]
+  del debug_vals["topk_logits"]
+  del debug_vals["topk_topp_unnorm_probs_i32_topk_filtered_unsorted"]
+  return sampled, debug_vals
